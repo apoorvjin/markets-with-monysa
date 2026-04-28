@@ -129,7 +129,7 @@ Tariff data is hardcoded and does not require a database. To enable the full Pos
 DATABASE_URL=postgresql://user:password@localhost:5432/monysa
 
 # Push the schema
-npx drizzle-kit push
+npm run db:push
 ```
 
 ---
@@ -158,6 +158,12 @@ Keep this terminal open.
 ```bash
 npm run expo:dev
 ```
+
+> **Note for local development (non-Replit):** The `expo:dev` script uses `EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN:5000` to point the frontend at the backend. Outside Replit, `$REPLIT_DEV_DOMAIN` is empty, so API calls will fail. Add this line to your `.env` file:
+> ```
+> EXPO_PUBLIC_DOMAIN=localhost:5000
+> ```
+> Or run Expo directly: `npx expo start --localhost`
 
 Metro Bundler starts on **http://localhost:8081**. You will see a QR code and options:
 
@@ -201,16 +207,20 @@ markets-with-monysa/
 ├── app/asset/
 │   └── [symbol].tsx              # Asset detail (chart / signal / indicators / backtest / news)
 ├── server/                       # Express backend (TypeScript)
-│   ├── index.ts                  # Server entry — Express setup, CORS, routes
-│   ├── stocks.ts                 # /api/stocks routes
-│   ├── futures.ts                # /api/futures routes (indices/commodities/forex/COT)
+│   ├── index.ts                  # Server entry — Express setup, CORS, route mounting
+│   ├── routes.ts                 # All API route handlers (stocks, futures, volatility, debt)
 │   ├── trading.ts                # /api/trading routes (quotes/signals/history/backtest/news)
-│   └── volatility.ts             # /api/volatility routes
+│   ├── storage.ts                # In-memory cache + quote store
+│   └── templates/
+│       └── landing-page.html     # Static landing page served on port 5000
 ├── data/
 │   ├── tariffs.ts                # Hardcoded tariff data — 113 countries, 5 sectors each
 │   └── usa-debt.ts               # US national debt statistics with plain-English labels
 ├── components/
 │   ├── ChartModal.tsx            # Candlestick chart modal (Lightweight Charts v4)
+│   ├── AlertBanner.tsx           # In-app price alert banner
+│   ├── ExploreMap.tsx            # World map component (web)
+│   ├── ExploreMap.native.tsx     # World map component (iOS/Android)
 │   └── ErrorBoundary.tsx         # App-level error boundary
 ├── constants/
 │   └── colors.ts                 # Single dark theme colour tokens (teal accent)
@@ -222,7 +232,9 @@ markets-with-monysa/
 ├── lib/
 │   └── query-client.ts           # React Query client + API base URL helper
 ├── shared/
-│   └── schema.ts                 # Drizzle ORM PostgreSQL schema
+│   ├── schema.ts                 # Drizzle ORM PostgreSQL schema (users table)
+│   └── models/
+│       └── chat.ts               # Shared chat message type definitions
 ├── utils/
 │   ├── tradingFormat.ts          # Number/price formatting helpers
 │   └── accessibility.ts          # a11y annotation helpers
@@ -240,9 +252,12 @@ markets-with-monysa/
 | Script | What it does |
 |---|---|
 | `npm run server:dev` | Start Express backend on port 5000 (TypeScript via tsx) |
-| `npm run expo:dev` | Start Expo Metro bundler on port 8081 |
-| `npm run build` | Production build: Expo web export + esbuild backend bundle |
-| `npm run start` | Run the production build |
+| `npm run expo:dev` | Start Expo Metro bundler on port 8081 (Replit-aware) |
+| `npm run expo:static:build` | Export Expo web build to `dist/` |
+| `npm run server:build` | Bundle Express server with esbuild to `server_dist/` |
+| `npm run server:prod` | Run the bundled production server |
+| `npm run db:push` | Push Drizzle schema to PostgreSQL |
+| `npm run lint` | Run Expo ESLint checks |
 
 ---
 
