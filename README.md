@@ -144,11 +144,11 @@ You need **two terminal windows** open at the same time.
 npm run server:dev
 ```
 
-The Express server starts on **http://localhost:5000**. You should see:
+The Express server starts on **http://localhost:5001**. You should see:
 
 ```
-express server serving on port 5000
-baseUrl http://localhost:5000
+express server serving on port 5001
+baseUrl http://localhost:5001
 ```
 
 Keep this terminal open.
@@ -161,7 +161,7 @@ npm run expo:dev
 
 > **Note for local development (non-Replit):** The `expo:dev` script uses `EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN:5000` to point the frontend at the backend. Outside Replit, `$REPLIT_DEV_DOMAIN` is empty, so API calls will fail. Add this line to your `.env` file:
 > ```
-> EXPO_PUBLIC_DOMAIN=localhost:5000
+> EXPO_PUBLIC_DOMAIN=localhost:5001
 > ```
 > Or run Expo directly: `npx expo start --localhost`
 

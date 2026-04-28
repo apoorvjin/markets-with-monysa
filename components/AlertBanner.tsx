@@ -15,7 +15,7 @@ import { useColors } from "@/hooks/useColors";
 import { useAlerts } from "@/context/AlertContext";
 import { formatTradingPrice } from "@/utils/tradingFormat";
 
-const DISMISS_TIMEOUT_MS = Platform.OS === "web" ? 7000 : 5000;
+const DISMISS_TIMEOUT_MS = Platform.OS === "web" ? 7000 : 5001;
 const BANNER_MAX_WIDTH = 480;
 
 export function AlertBanner() {
