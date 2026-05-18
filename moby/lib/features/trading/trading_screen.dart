@@ -414,17 +414,20 @@ class _EmptySearch extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.manage_search_rounded, size: 48, color: c.textFaint),
-          const SizedBox(height: 12),
-          Text('Search any stock worldwide',
-              style: AppTypography.md.copyWith(color: c.textMuted)),
-          const SizedBox(height: 4),
-          Text('Tap a result to view Chart, Signal & more',
-              style: AppTypography.sm.copyWith(color: c.textFaint)),
-        ],
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.manage_search_rounded, size: 48, color: c.textFaint),
+            const SizedBox(height: 12),
+            Text('Search any stock worldwide',
+                style: AppTypography.md.copyWith(color: c.textMuted)),
+            const SizedBox(height: 4),
+            Text('Tap a result to view Chart, Signal & more',
+                style: AppTypography.sm.copyWith(color: c.textFaint)),
+          ],
+        ),
       ),
     );
   }
@@ -447,14 +450,17 @@ class _SearchResults extends ConsumerWidget {
       data: (results) {
         if (results.isEmpty) {
           return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.search_off_rounded, size: 40, color: c.textFaint),
-                const SizedBox(height: 8),
-                Text('No results for "$query"',
-                    style: AppTypography.md.copyWith(color: c.textMuted)),
-              ],
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.search_off_rounded, size: 40, color: c.textFaint),
+                  const SizedBox(height: 8),
+                  Text('No results for "$query"',
+                      style: AppTypography.md.copyWith(color: c.textMuted)),
+                ],
+              ),
             ),
           );
         }

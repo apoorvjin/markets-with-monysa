@@ -13,8 +13,14 @@ export function getApiUrl(): string {
     host = "localhost:5001";
   }
 
-  // Use http for localhost, https for remote domains
-  const protocol = host.includes("localhost") || host.includes("127.0.0.1") ? "http" : "https";
+  // Use http for localhost and LAN IP ranges (192.168.x, 10.x, 172.16-31.x)
+  const isLocal =
+    host.includes("localhost") ||
+    host.includes("127.0.0.1") ||
+    /^192\.168\./.test(host) ||
+    /^10\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+  const protocol = isLocal ? "http" : "https";
   const url = new URL(`${protocol}://${host}`);
 
   return url.href;

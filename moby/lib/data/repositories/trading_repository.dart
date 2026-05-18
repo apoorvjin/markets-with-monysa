@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../models/trading_signal.dart';
 import '../models/candle.dart';
 import '../../core/network/api_client.dart';
@@ -15,11 +16,19 @@ class TradingRepository {
   }
 
   Future<TradingSignal> fetchSignal(String symbol, {String timeframe = '1d', String strategy = '1'}) async {
-    final data = await ApiClient.instance.get(
-      ApiEndpoints.tradingSignal(symbol),
-      params: {'timeframe': timeframe, 'strategy': strategy},
-    );
-    return TradingSignal.fromJson(data as Map<String, dynamic>);
+    try {
+      final data = await ApiClient.instance.get(
+        ApiEndpoints.tradingSignal(symbol),
+        params: {'timeframe': timeframe, 'strategy': strategy},
+      );
+      return TradingSignal.fromJson(data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      final body = e.response?.data;
+      if (body is Map && body['error'] is String) {
+        throw Exception(body['error'] as String);
+      }
+      rethrow;
+    }
   }
 
   Future<List<Candle>> fetchHistory(String symbol, {String timeframe = '1d'}) async {

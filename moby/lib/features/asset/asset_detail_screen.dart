@@ -366,6 +366,14 @@ window.addEventListener('resize', () => chart.resize(window.innerWidth, window.i
 
 // ── Signal Tab ────────────────────────────────────────────────────────────────
 
+String _signalError(Object e) {
+  final s = e.toString();
+  if (s.startsWith('Exception: ')) return s.substring(11);
+  if (s.contains('insufficient') || s.contains('Insufficient')) return 'Insufficient historical data for this symbol';
+  if (s.contains('503')) return 'Signal unavailable — try a different symbol';
+  return 'Failed to load signal';
+}
+
 class _SignalTab extends ConsumerWidget {
   const _SignalTab({
     required this.symbol,
@@ -388,7 +396,7 @@ class _SignalTab extends ConsumerWidget {
       loading: () => Center(
           child: CircularProgressIndicator(color: c.accent)),
       error: (e, _) => ErrorView(
-        message: 'Failed to load signal',
+        message: _signalError(e),
         onRetry: () => ref.invalidate(_signalProvider(args)),
       ),
       data: (signal) => _SignalContent(signal: signal, strategy: strategy),

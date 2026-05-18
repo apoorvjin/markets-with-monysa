@@ -1,6 +1,6 @@
 abstract final class ApiEndpoints {
   // Base — override with env var MOBY_API_HOST at runtime
-  static String baseUrl = 'http://localhost:5001';
+  static String baseUrl = 'http://192.168.1.9:5001';
 
   static String get indicesFutures => '$baseUrl/api/futures/indices';
   static String get commoditiesFutures => '$baseUrl/api/futures/commodities';
