@@ -1,0 +1,53 @@
+name: moby
+description: Monysa — Global Financial Intelligence Dashboard
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Navigation
+  go_router: ^14.2.0
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # HTTP
+  dio: ^5.4.3+1
+
+  # Local Storage
+  shared_preferences: ^2.3.2
+
+  # Fonts
+  google_fonts: ^6.2.1
+
+  # Charts
+  fl_chart: ^0.68.0
+
+  # WebView (for Lightweight Charts v4 candlesticks)
+  webview_flutter: ^4.8.0
+
+  # Utils
+  intl: ^0.19.0
+  shimmer: ^3.0.0
+
+  cupertino_icons: ^1.0.8
+  url_launcher: ^6.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.11
+  riverpod_generator: ^2.4.3
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/data/

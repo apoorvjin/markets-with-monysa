@@ -1149,6 +1149,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── Stock Search ────────────────────────────────────────────────────────────
+  app.get("/api/search", async (req, res) => {
+    const q = ((req.query.q as string) || "").trim();
+    if (!q) return res.json({ results: [] });
+    const limit = Math.min(parseInt((req.query.limit as string) || "15"), 20);
+    try {
+      const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=${limit}&newsCount=0&lang=en-US&region=US`;
+      const resp = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" }
+      });
+      if (!resp.ok) return res.json({ results: [] });
+      const data = await resp.json() as any;
+      const quotes = ((data?.quotes as any[]) || []).filter((q: any) => q.isYahooFinance);
+      const results = quotes.map((q: any) => ({
+        symbol: q.symbol as string,
+        name: ((q.longname || q.shortname || q.symbol) as string),
+        exchange: (q.exchange || "") as string,
+        type: (q.quoteType || "EQUITY") as string,
+      }));
+      res.json({ results });
+    } catch {
+      res.status(500).json({ results: [] });
+    }
+  });
+
   let debtCache: { data: any; timestamp: number } | null = null;
   const DEBT_CACHE_DURATION = 12 * 60 * 60 * 1000;
 
@@ -1300,6 +1325,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
     countryDataCache[code] = { data: result, timestamp: Date.now() };
     res.json(result);
+  });
+
+  // ── Yield Curve (Bonds) ─────────────────────────────────────────────────────
+  let bondsCache: { data: unknown; timestamp: number } | null = null;
+  const BONDS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
+
+  app.get("/api/bonds", async (_req, res) => {
+    try {
+      if (bondsCache && Date.now() - bondsCache.timestamp < BONDS_CACHE_DURATION) {
+        return res.json(bondsCache.data);
+      }
+
+      const [r3m, r5y, r10y, r30y] = await Promise.all([
+        fetchYahooPrice("^IRX"),
+        fetchYahooPrice("^FVX"),
+        fetchYahooPrice("^TNX"),
+        fetchYahooPrice("^TYX"),
+      ]);
+
+      const us3m  = r3m?.price  ?? null;
+      const us5y  = r5y?.price  ?? null;
+      const us10y = r10y?.price ?? null;
+      const us30y = r30y?.price ?? null;
+
+      const spread3m10y = us10y != null && us3m != null
+        ? parseFloat((us10y - us3m).toFixed(4))
+        : null;
+
+      let curveStatus: "inverted" | "flat" | "normal" | null = null;
+      if (spread3m10y != null) {
+        if (spread3m10y < -0.2) curveStatus = "inverted";
+        else if (spread3m10y <= 0.2) curveStatus = "flat";
+        else curveStatus = "normal";
+      }
+
+      const result = {
+        us3m,
+        us5y,
+        us10y,
+        us30y,
+        spread3m10y,
+        curveStatus,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      bondsCache = { data: result, timestamp: Date.now() };
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching bond yield data:", error);
+      res.status(500).json({ error: "Failed to fetch bond yield data" });
+    }
+  });
+
+  // ── S&P 500 Sector ETF Performance ──────────────────────────────────────────
+  let sectorsCache: { data: unknown; timestamp: number } | null = null;
+  const SECTORS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+
+  const SECTOR_ETFS = [
+    { symbol: "XLF",  name: "Financials",      emoji: "🏦" },
+    { symbol: "XLK",  name: "Technology",       emoji: "💻" },
+    { symbol: "XLE",  name: "Energy",           emoji: "⚡" },
+    { symbol: "XLI",  name: "Industrials",      emoji: "🏭" },
+    { symbol: "XLU",  name: "Utilities",        emoji: "🔌" },
+    { symbol: "XLRE", name: "Real Estate",      emoji: "🏠" },
+    { symbol: "XLP",  name: "Cons. Staples",    emoji: "🛒" },
+    { symbol: "XLB",  name: "Materials",        emoji: "⛏️" },
+    { symbol: "XLY",  name: "Cons. Disc.",      emoji: "🛍️" },
+    { symbol: "XLV",  name: "Healthcare",       emoji: "💊" },
+    { symbol: "XLC",  name: "Comm. Services",   emoji: "📡" },
+  ] as const;
+
+  app.get("/api/sectors", async (_req, res) => {
+    try {
+      if (sectorsCache && Date.now() - sectorsCache.timestamp < SECTORS_CACHE_DURATION) {
+        return res.json(sectorsCache.data);
+      }
+
+      const sectorData = await Promise.all(
+        SECTOR_ETFS.map(async (etf) => {
+          const [quote, perf1W, perf1M] = await Promise.all([
+            fetchYahooPrice(etf.symbol),
+            fetchRangeData(etf.symbol, "5d"),
+            fetchRangeData(etf.symbol, "1mo"),
+          ]);
+          return {
+            symbol: etf.symbol,
+            name: etf.name,
+            emoji: etf.emoji,
+            price: quote?.price ?? null,
+            changePercent: quote?.changePercent ?? null,
+            perf1W: perf1W?.changePercent ?? null,
+            perf1M: perf1M?.changePercent ?? null,
+          };
+        })
+      );
+
+      const result = {
+        sectors: sectorData,
+        lastUpdated: new Date().toISOString(),
+      };
+
+      sectorsCache = { data: result, timestamp: Date.now() };
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching sector ETF data:", error);
+      res.status(500).json({ error: "Failed to fetch sector data" });
+    }
   });
 
   // AI Trading Signals module

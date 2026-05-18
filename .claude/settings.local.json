@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod +x /Users/apoorvjin/markets-with-monysa/start.sh)",
+      "Bash(bash -n start.sh)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(bash -x start.sh)"
+    ]
+  }
+}

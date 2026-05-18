@@ -5,12 +5,22 @@ import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { StatusBar } from "expo-status-bar";
-import { View } from "react-native";
+import { Text, View } from "react-native";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { queryClient } from "@/lib/query-client";
 import { StrategyProvider } from "@/context/StrategyContext";
 import { AlertProvider } from "@/context/AlertContext";
 import { AlertBanner } from "@/components/AlertBanner";
+import { TypeUITokens } from "@/constants/typeuiTokens";
+
+const defaultTextProps = (Text as any).defaultProps || {};
+(Text as any).defaultProps = {
+  ...defaultTextProps,
+  style: [
+    { fontFamily: TypeUITokens.font.family.stack, fontSize: TypeUITokens.font.size.xl, lineHeight: TypeUITokens.font.lineHeight.base },
+    ...(Array.isArray(defaultTextProps.style) ? defaultTextProps.style : [defaultTextProps.style]),
+  ],
+};
 
 import {
   useFonts,

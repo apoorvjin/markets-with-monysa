@@ -5,9 +5,9 @@ export const glassColors = {
   surface: "rgba(255, 255, 255, 0.07)",
   surfaceElevated: "rgba(255, 255, 255, 0.12)",
   border: "rgba(255, 255, 255, 0.12)",
-  text: "#FFFFFF",
-  textSecondary: "rgba(255,255,255,0.68)",
-  textMuted: "rgba(255,255,255,0.40)",
+  text: Colors.textInverse,
+  textSecondary: "rgba(255, 255, 255, 0.68)",
+  textMuted: "rgba(255, 255, 255, 0.40)",
   accent: Colors.accent,
   accentDim: "rgba(0, 212, 170, 0.18)",
   danger: Colors.danger,
@@ -16,8 +16,8 @@ export const glassColors = {
   warningDim: Colors.warningDim,
   positive: Colors.positive,
   positiveDim: Colors.positiveDim,
-  headerBg: "rgba(6, 10, 22, 0.55)",
-  searchBg: "rgba(255,255,255,0.06)",
+  headerBg: "rgba(0, 0, 0, 0.55)",
+  searchBg: Colors.searchBg,
 };
 
 export function getThemeColors(isGlass: boolean) {

@@ -1,0 +1,78 @@
+export const TypeUITokens = {
+  font: {
+    family: {
+      primary: "Geist",
+      stack: "Geist, Geist Fallback",
+    },
+    size: {
+      xs: 10,
+      sm: 11,
+      md: 12,
+      lg: 14,
+      xl: 16,
+      "2xl": 18,
+      "3xl": 20,
+      "4xl": 24,
+    },
+    weight: {
+      base: "400",
+      medium: "500",
+      semibold: "600",
+      bold: "700",
+    },
+    lineHeight: {
+      base: 24,
+    },
+  },
+  color: {
+    textPrimary: "#171717",
+    textSecondary: "lab(47.8878 1.65477 -5.77283)",
+    textInverse: "#ffffff",
+    surfaceBase: "#000000",
+    surfaceRaised: "oklab(0.984998 -0.00000956655 0.0000230074 / 0.5)",
+    surfaceStrong: "lab(98.26 0 0)",
+    border: "rgba(255, 255, 255, 0.12)",
+    accent: "#00D4AA",
+    accentDim: "rgba(0, 212, 170, 0.12)",
+    danger: "#FF4D6A",
+    dangerDim: "rgba(255, 77, 106, 0.12)",
+    warning: "#FFB84D",
+    warningDim: "rgba(255, 184, 77, 0.12)",
+    positive: "#00D4AA",
+    positiveDim: "rgba(0, 212, 170, 0.12)",
+    headerBg: "rgba(0, 0, 0, 0.82)",
+    searchBg: "rgba(255, 255, 255, 0.06)",
+    light: {
+      text: "#171717",
+      background: "#ffffff",
+      tint: "#00D4AA",
+      tabIconDefault: "#6E7A8F",
+      tabIconSelected: "#00D4AA",
+    },
+  },
+  space: {
+    1: 4,
+    2: 6,
+    3: 8,
+    4: 12,
+    5: 16,
+    6: 20,
+    7: 24,
+    8: 32,
+  },
+  radius: {
+    xs: 6,
+    sm: 8,
+    md: 12,
+    lg: 100,
+    xl: 16777200,
+  },
+  shadow: {
+    1: "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.1) 0px 1px 2px -1px",
+  },
+  motion: {
+    duration: {
+      instant: 150,
+    },
+  },
+};
