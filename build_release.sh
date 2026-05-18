@@ -59,6 +59,13 @@ echo -e "${BOLD}  Building release and installing on ${DEVICE_NAME}...${NC}"
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
+flutter clean
+
+echo ""
+echo -e "${BLUE}▶ Reinstalling CocoaPods...${NC}"
+cd ios && pod deintegrate --quiet && pod install --silent && cd ..
+
+echo ""
 flutter run --release -d "$DEVICE_ID"
 
 echo ""
