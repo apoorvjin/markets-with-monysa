@@ -1,9 +1,11 @@
 const { defineConfig } = require('eslint/config');
-const expoConfig = require('eslint-config-expo/flat');
 
 module.exports = defineConfig([
-  expoConfig,
   {
-    ignores: ["dist/*"],
-  }
+    files: ["server/**/*.ts"],
+    ignores: ["dist/*", "server_dist/*", "node_modules/*"],
+    rules: {
+      "no-unused-vars": "warn",
+    },
+  },
 ]);

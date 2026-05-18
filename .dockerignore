@@ -1,11 +1,7 @@
 node_modules/
 moby/
-app/
-assets/
 .expo/
 server_dist/
-patches/
-scripts/
 build/
 .git/
 *.md

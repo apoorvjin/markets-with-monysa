@@ -4,7 +4,10 @@ set -euo pipefail
 # ── Config ────────────────────────────────────────────────────────────────────
 DEFAULT_IOS_DEVICE="iPhone 17 Pro"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BACKEND_PORT=5001
+PROD_BACKEND="https://monysa-api.fly.dev"
+LOCAL_BACKEND="http://localhost:$BACKEND_PORT"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -17,9 +20,8 @@ error()   { echo -e "${RED}✗ $*${RESET}" >&2; }
 header()  { echo -e "\n${BOLD}$*${RESET}"; }
 
 # ── Parse flags ───────────────────────────────────────────────────────────────
-PLATFORM="ios"         # ios | android
+PLATFORM="ios"
 DEVICE="${DEFAULT_IOS_DEVICE}"
-SKIP_BACKEND=false
 NO_HOT_RELOAD=false
 
 usage() {
@@ -31,7 +33,6 @@ Build and run Moby in a simulator/emulator.
 Options:
   -p, --platform   ios | android   (default: ios)
   -d, --device     device name or ID (default: "$DEFAULT_IOS_DEVICE")
-  --no-backend     skip backend health check
   --release        run in release mode (no hot reload)
   -h, --help       show this help
 
@@ -48,17 +49,16 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--platform) PLATFORM="$2"; shift 2 ;;
     -d|--device)   DEVICE="$2";   shift 2 ;;
-    --no-backend)  SKIP_BACKEND=true; shift ;;
     --release)     NO_HOT_RELOAD=true; shift ;;
     -h|--help)     usage ;;
     *) error "Unknown option: $1"; usage ;;
   esac
 done
 
-# ── Pre-flight ────────────────────────────────────────────────────────────────
+# ── Banner ────────────────────────────────────────────────────────────────────
 header "Moby — Flutter Simulator Runner"
 
-# Flutter
+# Flutter check
 if ! command -v flutter &>/dev/null; then
   error "Flutter not found in PATH. Install from https://flutter.dev"
   exit 1
@@ -68,15 +68,71 @@ success "Flutter: $FLUTTER_VERSION"
 
 cd "$SCRIPT_DIR"
 
-# ── Backend health check ──────────────────────────────────────────────────────
-if [[ "$SKIP_BACKEND" == false ]]; then
-  info "Checking backend on port $BACKEND_PORT..."
-  if curl -sf "http://localhost:$BACKEND_PORT/api/usa-debt" -o /dev/null --max-time 3; then
-    success "Local backend running on :$BACKEND_PORT"
+# ── Backend selection ─────────────────────────────────────────────────────────
+echo ""
+echo -e "${BOLD}  Which backend do you want to use?${RESET}"
+echo -e "  ${CYAN}[L]${RESET} Local   — http://localhost:$BACKEND_PORT"
+echo -e "  ${CYAN}[S]${RESET} Server  — $PROD_BACKEND"
+echo ""
+read -rp "  Enter choice [L/S]: " BACKEND_CHOICE
+
+case "$(echo "$BACKEND_CHOICE" | tr '[:lower:]' '[:upper:]')" in
+  L|LOCAL)
+    BACKEND_URL="$LOCAL_BACKEND"
+    USE_LOCAL=true
+    ;;
+  S|SERVER)
+    BACKEND_URL="$PROD_BACKEND"
+    USE_LOCAL=false
+    ;;
+  *)
+    error "Invalid choice \"$BACKEND_CHOICE\" — enter L or S"
+    exit 1
+    ;;
+esac
+
+echo ""
+success "Backend: $BACKEND_URL"
+
+# ── Start local backend if needed ─────────────────────────────────────────────
+if [[ "$USE_LOCAL" == true ]]; then
+  if curl -sf "http://localhost:$BACKEND_PORT/" -o /dev/null --max-time 2; then
+    success "Local backend already running on :$BACKEND_PORT"
   else
-    warn "Local backend not detected on :$BACKEND_PORT"
-    warn "App will use production backend: https://monysa-api.fly.dev"
-    warn "To test local changes: ./start.sh first, then re-run this script"
+    info "Local backend not running — starting it now..."
+    if command -v osascript &>/dev/null; then
+      # macOS: open a dedicated Terminal window for the server
+      osascript - "$REPO_DIR" 2>/dev/null <<'APPLESCRIPT'
+on run argv
+  set repoDir to item 1 of argv
+  tell application "Terminal"
+    activate
+    do script "cd " & quoted form of repoDir & " && npm run server:dev"
+  end tell
+end run
+APPLESCRIPT
+    else
+      # Fallback: background process
+      npm --prefix "$REPO_DIR" run server:dev > /tmp/markets-server.log 2>&1 &
+      echo -e "  Server log: /tmp/markets-server.log"
+    fi
+
+    # Wait for backend to be ready
+    echo -ne "  Waiting for backend"
+    for i in $(seq 1 40); do
+      if curl -sf "http://localhost:$BACKEND_PORT/" -o /dev/null --max-time 1; then
+        echo -e " ${GREEN}ready!${RESET}"
+        break
+      fi
+      if [[ "$i" -eq 40 ]]; then
+        echo -e " ${RED}timed out!${RESET}"
+        error "Backend did not start in time. Check /tmp/markets-server.log"
+        exit 1
+      fi
+      echo -n "."
+      sleep 0.5
+    done
+    success "Local backend ready on :$BACKEND_PORT"
   fi
 fi
 
@@ -89,13 +145,11 @@ success "Dependencies ready"
 header "2/3 — Starting simulator"
 
 if [[ "$PLATFORM" == "ios" ]]; then
-  # Verify xcrun is available
   if ! command -v xcrun &>/dev/null; then
     error "xcrun not found — Xcode required for iOS simulator"
     exit 1
   fi
 
-  # Check for an already-booted simulator first (unless -d was explicitly passed)
   BOOTED_UDID=$(xcrun simctl list devices booted 2>/dev/null \
     | grep -oE '[A-F0-9-]{36}' | head -1)
   BOOTED_NAME=$(xcrun simctl list devices booted 2>/dev/null \
@@ -105,7 +159,6 @@ if [[ "$PLATFORM" == "ios" ]]; then
     info "Using already-booted simulator: ${BOOTED_NAME} ($BOOTED_UDID)"
     UDID="$BOOTED_UDID"
   else
-    # No simulator running — boot the requested (or default) device
     UDID=$(xcrun simctl list devices available 2>/dev/null \
       | grep -F "$DEVICE" \
       | grep -oE '[A-F0-9-]{36}' \
@@ -134,14 +187,12 @@ elif [[ "$PLATFORM" == "android" ]]; then
     exit 1
   fi
 
-  # List AVDs
   AVDS=$(emulator -list-avds 2>/dev/null || avdmanager list avd -c 2>/dev/null)
   if [[ -z "$AVDS" ]]; then
     error "No Android Virtual Devices found. Create one in Android Studio."
     exit 1
   fi
 
-  # Pick device (exact match or first available)
   if echo "$AVDS" | grep -qF "$DEVICE"; then
     AVD_NAME=$(echo "$AVDS" | grep -F "$DEVICE" | head -1)
   else
@@ -149,14 +200,12 @@ elif [[ "$PLATFORM" == "android" ]]; then
     warn "Device \"$DEVICE\" not found — using: $AVD_NAME"
   fi
 
-  # Start emulator in background if not running
   if ! flutter devices 2>/dev/null | grep -qi "emulator"; then
     info "Launching Android emulator: $AVD_NAME..."
     nohup emulator -avd "$AVD_NAME" -no-audio -no-boot-anim \
       &>/tmp/moby_emulator.log &
     info "Waiting for emulator to boot (this may take ~30s)..."
     adb wait-for-device
-    # Wait for boot complete
     until adb shell getprop sys.boot_completed 2>/dev/null | grep -q "^1$"; do
       sleep 2
     done
@@ -171,11 +220,11 @@ else
 fi
 
 # ── Run ───────────────────────────────────────────────────────────────────────
-header "3/3 — Launching Moby"
+header "3/3 — Launching Moby → $BACKEND_URL"
 
-BUILD_MODE=""
+BUILD_FLAGS=""
 if [[ "$NO_HOT_RELOAD" == true ]]; then
-  BUILD_MODE="--release"
+  BUILD_FLAGS="--release"
   info "Running in release mode"
 else
   info "Running in debug mode (hot reload enabled — press 'r' to reload, 'R' to restart)"
@@ -183,6 +232,7 @@ fi
 
 flutter run \
   --device-id "$FLUTTER_DEVICE" \
-  $BUILD_MODE
+  --dart-define=API_BASE_URL="$BACKEND_URL" \
+  $BUILD_FLAGS
 
 success "Done."
