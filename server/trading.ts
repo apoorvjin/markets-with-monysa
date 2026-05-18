@@ -256,6 +256,8 @@ function startFinnhubWebSocket() {
                   change,
                   changePercent,
                   updatedAt: Date.now(),
+                  preMarketPrice: existing?.preMarketPrice ?? null,
+                  preMarketChangePercent: existing?.preMarketChangePercent ?? null,
                 });
               }
             }

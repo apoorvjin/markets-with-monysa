@@ -38,9 +38,9 @@ final _tabs = [
 // Tracks last active main tab so detail screens keep it highlighted.
 final lastMainTabProvider = StateProvider<int>((ref) => 0);
 
-// Approximate height of the floating pill + its margins (excluding device safe area).
+// Height of the nav bar content row (excluding device safe area).
 // Used so screens can add bottom padding via MediaQuery.
-const double _navBarPillHeight = 80.0;
+const double _navBarPillHeight = 58.0;
 
 class AppShell extends ConsumerWidget {
   const AppShell({super.key, required this.child});
@@ -97,64 +97,47 @@ class _BottomBar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final screenWidth = MediaQuery.of(context).size.width;
     final bottomSafe = MediaQuery.of(context).padding.bottom;
 
-    return Padding(
-      // Float the pill: side margins + space above/below.
-      padding: EdgeInsets.fromLTRB(16, 8, 16, bottomSafe + 10),
-      child: Container(
-        height: 62,
-        // Shadow lives outside ClipRRect so it isn't clipped away.
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(40),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 90 : 35),
-              blurRadius: 30,
-              spreadRadius: -4,
-              offset: const Offset(0, 8),
+    // Inactive label/icon color with enough contrast against glass.
+    final inactiveColor = isDark
+        ? Colors.white.withAlpha(160)
+        : Colors.black.withAlpha(130);
+
+    return ClipRect(
+      child: BackdropFilter(
+        // Strong blur — the defining trait of liquid glass.
+        filter: ImageFilter.blur(sigmaX: 48, sigmaY: 48),
+        child: Container(
+          decoration: BoxDecoration(
+            // Near-transparent fill: content behind is clearly visible.
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: isDark
+                  ? [
+                      const Color(0x18FFFFFF), // ~9% white at top
+                      const Color(0x0CFFFFFF), // ~5% white at bottom
+                    ]
+                  : [
+                      const Color(0x55FFFFFF), // ~33% white at top
+                      const Color(0x40FFFFFF), // ~25% white at bottom
+                    ],
             ),
-            // Secondary diffuse shadow for depth
-            BoxShadow(
-              color: Colors.black.withAlpha(isDark ? 50 : 18),
-              blurRadius: 60,
-              spreadRadius: -2,
-              offset: const Offset(0, 16),
-            ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(40),
-          child: BackdropFilter(
-            // Strong blur so underlying content is clearly frosted.
-            filter: ImageFilter.blur(sigmaX: 32, sigmaY: 32),
-            child: Container(
-              decoration: BoxDecoration(
-                // Top-lit gradient: brighter at crown, slightly less at base —
-                // mimics the specular refraction in Apple's Liquid Glass spec.
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: isDark
-                      ? [
-                          const Color(0x32FFFFFF), // 20% white at top
-                          const Color(0x1AFFFFFF), // 10% white at bottom
-                        ]
-                      : [
-                          const Color(0xE0FFFFFF), // 88% white at top
-                          const Color(0xC8FFFFFF), // 78% white at bottom
-                        ],
-                ),
-                borderRadius: BorderRadius.circular(40),
-                // Thin specular rim — the bright inner edge of the glass.
-                border: Border.all(
-                  color: isDark
-                      ? const Color(0x45FFFFFF) // 27% white
-                      : const Color(0xB0FFFFFF), // 69% white
-                  width: 0.6,
-                ),
+            // Specular top rim — the bright edge of the glass pane.
+            border: Border(
+              top: BorderSide(
+                color: isDark
+                    ? const Color(0x55FFFFFF) // 33% white
+                    : const Color(0x99FFFFFF), // 60% white
+                width: 0.5,
               ),
+            ),
+          ),
+          child: Padding(
+            padding: EdgeInsets.only(bottom: bottomSafe),
+            child: SizedBox(
+              height: _navBarPillHeight,
               child: Row(
                 children: _tabs.asMap().entries.map((entry) {
                   final i = entry.key;
@@ -171,7 +154,7 @@ class _BottomBar extends ConsumerWidget {
                         onTap: () => onTap(i),
                         behavior: HitTestBehavior.opaque,
                         child: SizedBox(
-                          height: 62,
+                          height: _navBarPillHeight,
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             mainAxisSize: MainAxisSize.min,
@@ -180,16 +163,12 @@ class _BottomBar extends ConsumerWidget {
                                 clipBehavior: Clip.none,
                                 children: [
                                   AnimatedSwitcher(
-                                    duration:
-                                        const Duration(milliseconds: 200),
+                                    duration: const Duration(milliseconds: 200),
                                     child: Icon(
                                       tab.icon,
                                       key: ValueKey(isActive),
                                       size: 24,
-                                      color: isActive
-                                          ? c.accent
-                                          : c.textSecondary
-                                              .withAlpha(isDark ? 160 : 140),
+                                      color: isActive ? c.accent : inactiveColor,
                                     ),
                                   ),
                                   if (showBadge)
@@ -214,23 +193,18 @@ class _BottomBar extends ConsumerWidget {
                                     ),
                                 ],
                               ),
-                              if (screenWidth >= 360) ...[
-                                const SizedBox(height: 3),
-                                AnimatedDefaultTextStyle(
-                                  duration: const Duration(milliseconds: 200),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: isActive
-                                        ? c.accent
-                                        : c.textSecondary.withAlpha(
-                                            isDark ? 145 : 125),
-                                    fontWeight: isActive
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
-                                  child: Text(tab.label),
+                              const SizedBox(height: 3),
+                              AnimatedDefaultTextStyle(
+                                duration: const Duration(milliseconds: 200),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: isActive ? c.accent : inactiveColor,
+                                  fontWeight: isActive
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
                                 ),
-                              ],
+                                child: Text(tab.label),
+                              ),
                             ],
                           ),
                         ),

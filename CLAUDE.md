@@ -79,8 +79,9 @@ GET /api/sectors              → { sectors: [{ emoji, name, changePercent, perf
 ### Environment Variables
 
 ```
-FINNHUB_API_KEY   optional — Finnhub WebSocket for sub-second crypto prices
-OPENAI_API_KEY    optional — GPT-4o-mini AI market briefings
+FINNHUB_API_KEY                    optional — Finnhub WebSocket for sub-second crypto prices
+AI_INTEGRATIONS_OPENAI_API_KEY     optional — GPT-4o-mini AI market briefings (volatility briefing + futures news summary)
+AI_INTEGRATIONS_OPENAI_BASE_URL    optional — custom OpenAI-compatible base URL (defaults to api.openai.com)
 ```
 
 Both features degrade gracefully when keys are absent.
