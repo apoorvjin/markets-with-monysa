@@ -72,13 +72,11 @@ cd "$SCRIPT_DIR"
 if [[ "$SKIP_BACKEND" == false ]]; then
   info "Checking backend on port $BACKEND_PORT..."
   if curl -sf "http://localhost:$BACKEND_PORT/api/usa-debt" -o /dev/null --max-time 3; then
-    success "Backend is running on :$BACKEND_PORT"
+    success "Local backend running on :$BACKEND_PORT"
   else
-    warn "Backend not detected on :$BACKEND_PORT"
-    warn "Start it first (from repo root): ./start.sh  or  npm run dev"
-    echo ""
-    read -rp "  Continue anyway? [y/N] " ans
-    [[ "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" == "y" ]] || exit 1
+    warn "Local backend not detected on :$BACKEND_PORT"
+    warn "App will use production backend: https://monysa-api.fly.dev"
+    warn "To test local changes: ./start.sh first, then re-run this script"
   fi
 fi
 

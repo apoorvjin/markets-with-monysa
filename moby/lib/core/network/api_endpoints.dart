@@ -1,6 +1,8 @@
 abstract final class ApiEndpoints {
-  // Base — override with env var MOBY_API_HOST at runtime
-  static String baseUrl = 'http://192.168.1.9:5001';
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'https://monysa-api.fly.dev',
+  );
 
   static String get indicesFutures => '$baseUrl/api/futures/indices';
   static String get commoditiesFutures => '$baseUrl/api/futures/commodities';
