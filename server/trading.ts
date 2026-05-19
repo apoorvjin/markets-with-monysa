@@ -219,31 +219,45 @@ setInterval(() => pollAllPrices().catch(() => {}), 10_000);
 
 const FINNHUB_KEY = process.env.FINNHUB_API_KEY;
 
+// Free tier supports ~5 concurrent subscriptions; limit to highest-liquidity crypto.
+const FINNHUB_SYMBOLS = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD"];
+
 function startFinnhubWebSocket() {
   if (!FINNHUB_KEY) return;
 
-  let reconnectDelay = 3000;
+  let reconnectDelay = 15_000;
+  let gotTrade = false;
 
-  const cryptoAssets = TRADING_ASSETS.filter(a => a.category === "Crypto" && a.finnhubSymbol);
+  const cryptoAssets = TRADING_ASSETS.filter(
+    a => a.finnhubSymbol && FINNHUB_SYMBOLS.includes(a.symbol),
+  );
 
   const connect = () => {
+    gotTrade = false;
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const WsConstructor = require("ws") as new (url: string) => WsLike;
       const ws = new WsConstructor(`wss://ws.finnhub.io?token=${FINNHUB_KEY}`);
 
       ws.on("open", () => {
-        reconnectDelay = 3000;
-        for (const asset of cryptoAssets) {
-          ws.send(JSON.stringify({ type: "subscribe", symbol: asset.finnhubSymbol }));
-        }
-        console.log("[Finnhub WS] Connected — subscribed to", cryptoAssets.length, "crypto streams");
+        // Stagger subscribes 200 ms apart to avoid triggering Finnhub's burst limit.
+        cryptoAssets.forEach((asset, i) => {
+          setTimeout(
+            () => ws.send(JSON.stringify({ type: "subscribe", symbol: asset.finnhubSymbol })),
+            i * 200,
+          );
+        });
+        console.log("[Finnhub WS] Connected — subscribing to", cryptoAssets.length, "crypto streams");
       });
 
       ws.on("message", (raw: Buffer) => {
         try {
           const msg = JSON.parse(raw.toString()) as FinnhubMessage;
           if (msg.type === "trade" && Array.isArray(msg.data)) {
+            if (!gotTrade) {
+              gotTrade = true;
+              reconnectDelay = 15_000; // reset backoff only after confirmed data
+            }
             for (const trade of msg.data) {
               const asset = TRADING_ASSETS.find(a => a.finnhubSymbol === trade.s);
               if (asset && trade.p) {
@@ -272,7 +286,7 @@ function startFinnhubWebSocket() {
       ws.on("close", () => {
         console.warn(`[Finnhub WS] Disconnected — reconnecting in ${reconnectDelay}ms`);
         setTimeout(connect, reconnectDelay);
-        reconnectDelay = Math.min(reconnectDelay * 2, 60_000);
+        reconnectDelay = Math.min(reconnectDelay * 2, 120_000);
       });
     } catch (err) {
       console.warn("[Finnhub WS] Could not start:", err);

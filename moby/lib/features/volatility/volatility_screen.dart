@@ -18,8 +18,20 @@ final _volAssetsProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>(
         (_) => VolatilityRepository.instance.fetchAssets());
 
-final _briefingProvider = FutureProvider.autoDispose<String>(
-    (_) => VolatilityRepository.instance.fetchBriefing());
+final _briefingProvider = FutureProvider.autoDispose<String>((ref) async {
+  final assets = await ref.watch(_volAssetsProvider.future);
+  final vixMap = assets['vix'] as Map<String, dynamic>?;
+  final items = (assets['items'] as List? ?? []).cast<Map<String, dynamic>>();
+  num? pct1M(String sym) =>
+      items.firstWhere((a) => a['symbol'] == sym, orElse: () => {})['changePercent1M'] as num?;
+  return VolatilityRepository.instance.fetchBriefing({
+    'vix': (vixMap?['price'] as num?)?.toDouble(),
+    'vixBand': vixMap?['band'] as String?,
+    'goldPct1M': pct1M('GC=F')?.toDouble(),
+    'oilPct1M': pct1M('CL=F')?.toDouble(),
+    'dxyPct1M': pct1M('DX-Y.NYB')?.toDouble(),
+  });
+});
 
 final _bondsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
     (_) => MarketsRepository.instance.fetchBonds());
@@ -527,7 +539,7 @@ class _AiBriefingCard extends ConsumerWidget {
               ),
             ),
             error: (_, __) => Text(
-              'AI briefing unavailable — configure OPENAI_API_KEY on the server',
+              'AI briefing unavailable.',
               style: AppTypography.md.copyWith(color: c.textMuted),
             ),
             data: (briefing) => Text(

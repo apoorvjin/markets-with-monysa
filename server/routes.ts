@@ -971,7 +971,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // AI Crisis Briefing (streaming SSE)
+  // AI Crisis Briefing
   const briefingCache: Map<string, { briefing: string; generatedAt: string; timestamp: number }> = new Map();
   const BRIEFING_CACHE_DURATION = 30 * 60 * 1000;
 
@@ -980,7 +980,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       vix?: number; vixBand?: string; goldPct1M?: number; oilPct1M?: number; dxyPct1M?: number;
     };
 
-    // Cache key includes all inputs to avoid stale mismatches
     const cacheKey = [
       Math.round((vix || 0) * 10),
       Math.round((goldPct1M || 0) * 10),
@@ -989,26 +988,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       vixBand || "unknown",
     ].join("-");
 
-    // SSE headers — flush immediately so the client can start reading
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-
     const cached = briefingCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < BRIEFING_CACHE_DURATION) {
-      // Replay cached briefing as a single chunk
-      res.write(`data: ${JSON.stringify({ content: cached.briefing })}\n\n`);
-      res.write(`data: ${JSON.stringify({ generatedAt: cached.generatedAt })}\n\n`);
-      res.write("data: [DONE]\n\n");
-      res.end();
-      return;
+      return res.json({ briefing: cached.briefing, generatedAt: cached.generatedAt });
     }
 
     if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-      res.write(`data: ${JSON.stringify({ error: "AI integration not available" })}\n\n`);
-      res.end();
-      return;
+      return res.status(503).json({ error: "AI integration not available" });
     }
 
     try {
@@ -1019,7 +1005,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       const fmt = (v?: number) => v != null ? `${v >= 0 ? "+" : ""}${v.toFixed(1)}%` : "N/A";
 
-      const stream = await openai.chat.completions.create({
+      const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           {
@@ -1032,30 +1018,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
         ],
         max_tokens: 250,
-        stream: true,
       });
 
-      let fullText = "";
+      const briefing = completion.choices[0]?.message?.content?.trim() ?? "";
       const generatedAt = new Date().toISOString();
 
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || "";
-        if (content) {
-          fullText += content;
-          res.write(`data: ${JSON.stringify({ content })}\n\n`);
-        }
-      }
-
-      res.write(`data: ${JSON.stringify({ generatedAt })}\n\n`);
-      res.write("data: [DONE]\n\n");
-      res.end();
-
-      // Cache the completed response
-      briefingCache.set(cacheKey, { briefing: fullText, generatedAt, timestamp: Date.now() });
+      briefingCache.set(cacheKey, { briefing, generatedAt, timestamp: Date.now() });
+      res.json({ briefing, generatedAt });
     } catch (err) {
-      console.error("Briefing stream error:", err);
-      res.write(`data: ${JSON.stringify({ error: "Failed to generate briefing" })}\n\n`);
-      res.end();
+      console.error("Briefing error:", err);
+      res.status(500).json({ error: "Failed to generate briefing" });
     }
   });
 

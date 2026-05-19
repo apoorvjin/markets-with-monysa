@@ -10,8 +10,11 @@ class VolatilityRepository {
     return data as Map<String, dynamic>;
   }
 
-  Future<String> fetchBriefing() async {
-    final data = await ApiClient.instance.post(ApiEndpoints.volatilityBriefing);
-    return (data['briefing'] ?? data['summary'] ?? '') as String;
+  Future<String> fetchBriefing(Map<String, Object?> params) async {
+    final data = await ApiClient.instance.post(
+      ApiEndpoints.volatilityBriefing,
+      data: params,
+    );
+    return (data['briefing'] ?? '') as String;
   }
 }
