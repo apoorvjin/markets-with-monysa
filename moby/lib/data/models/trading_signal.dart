@@ -53,6 +53,7 @@ class TradingSignal {
     required this.timeframe,
     required this.indicators,
     required this.generatedAt,
+    this.analystNote,
   });
 
   final String symbol;
@@ -68,6 +69,7 @@ class TradingSignal {
   final String timeframe;
   final Map<String, double?> indicators;
   final DateTime generatedAt;
+  final String? analystNote;
 
   factory TradingSignal.fromJson(Map<String, dynamic> j) => TradingSignal(
         symbol: j['symbol'] as String,
@@ -87,6 +89,7 @@ class TradingSignal {
         generatedAt: j['timestamp'] != null
             ? DateTime.parse(j['timestamp'] as String).toLocal()
             : DateTime.now(),
+        analystNote: j['analystNote'] as String?,
       );
 }
 

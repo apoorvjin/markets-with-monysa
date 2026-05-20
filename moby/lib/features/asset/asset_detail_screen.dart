@@ -39,6 +39,16 @@ final _newsProvider = FutureProvider.autoDispose
   (ref, symbol) => TradingRepository.instance.fetchNews(symbol),
 );
 
+final _noteProvider = FutureProvider.autoDispose
+    .family<String?, ({String symbol, String strategy, String direction, double confidence})>(
+  (ref, args) => TradingRepository.instance.fetchAnalystNote(
+    args.symbol,
+    strategy: args.strategy,
+    direction: args.direction,
+    confidence: args.confidence,
+  ),
+);
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class AssetDetailScreen extends StatefulWidget {
@@ -404,13 +414,13 @@ class _SignalTab extends ConsumerWidget {
   }
 }
 
-class _SignalContent extends StatelessWidget {
+class _SignalContent extends ConsumerWidget {
   const _SignalContent({required this.signal, required this.strategy});
   final TradingSignal signal;
   final TradingStrategy strategy;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     final color = c.signalColor(signal.direction);
 
@@ -492,29 +502,57 @@ class _SignalContent extends StatelessWidget {
         Text('Analysis',
             style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
         const SizedBox(height: AppSpacing.s3),
-        ...signal.reasoning.map((r) => Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.s3),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    margin: const EdgeInsets.only(top: 5),
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                    ),
+        ...signal.reasoning.map((r) {
+          final label = _reasoningLabel(r);
+          final labelColor = _labelColor(label, c);
+          return Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.s4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: labelColor.withAlpha(25),
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                    border: Border.all(color: labelColor.withAlpha(60)),
                   ),
-                  const SizedBox(width: AppSpacing.s3),
-                  Expanded(
-                    child: Text(r,
-                        style: AppTypography.lg.copyWith(
-                            color: c.textSecondary, height: 1.5)),
-                  ),
-                ],
-              ),
-            )),
+                  child: Text(label,
+                      style: AppTypography.xs.copyWith(
+                          color: labelColor,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.4)),
+                ),
+                const SizedBox(height: AppSpacing.s2),
+                Text(r,
+                    style: AppTypography.lg.copyWith(
+                        color: c.textSecondary, height: 1.5)),
+              ],
+            ),
+          );
+        }),
+        Builder(builder: (context) {
+          final noteArgs = (
+            symbol: signal.symbol,
+            strategy: strategy.serverParam,
+            direction: signal.direction,
+            confidence: signal.confidence,
+          );
+          final noteAsync = ref.watch(_noteProvider(noteArgs));
+          return noteAsync.when(
+            loading: () => const Padding(
+              padding: EdgeInsets.only(top: AppSpacing.s2),
+              child: _NoteShimmer(),
+            ),
+            error: (_, __) => const SizedBox.shrink(),
+            data: (note) => note != null && note.isNotEmpty
+                ? Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.s2),
+                    child: _AnalystNoteCard(note: note),
+                  )
+                : const SizedBox.shrink(),
+          );
+        }),
         const SizedBox(height: AppSpacing.s5),
         _MultiTfMatrix(symbol: signal.symbol, strategy: strategy.serverParam),
         const SizedBox(height: AppSpacing.s4),
@@ -540,6 +578,183 @@ class _SignalContent extends StatelessWidget {
     final h = dt.hour.toString().padLeft(2, '0');
     final m = dt.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+
+  String _reasoningLabel(String r) {
+    final s = r.toLowerCase();
+    if (s.contains('rsi') || s.contains('macd') || s.contains('volume') ||
+        s.contains('momentum') || s.contains('crossover') || s.contains('oversold') ||
+        s.contains('overbought') || s.contains('breakout') || s.contains('obv') ||
+        s.contains('atr') || s.contains('stoch') || s.contains('ema') ||
+        s.contains('sma') || s.contains('timeframe') || s.contains('higher timeframe') ||
+        s.contains('trend') || s.contains('compression') || s.contains('squeeze')) {
+      return 'Momentum';
+    }
+    if (s.contains('earn') || s.contains('revenue') || s.contains('p/e') ||
+        s.contains('fundamental') || s.contains('valuation') || s.contains('fcf') ||
+        s.contains('eps') || s.contains('guidance') || s.contains('sector') ||
+        s.contains('peer') || s.contains('market cap') || s.contains('smart money')) {
+      return 'Fundamentals';
+    }
+    if (s.contains('risk') || s.contains('resistance') || s.contains('support') ||
+        s.contains('event') || s.contains('volatile') || s.contains('caution') ||
+        s.contains('warning') || s.contains('weak') || s.contains('mixed') ||
+        s.contains('ranging') || s.contains('dampens') || s.contains('low volatility') ||
+        s.contains('high volatility')) {
+      return 'Risk';
+    }
+    return 'Context';
+  }
+
+  Color _labelColor(String label, AppPalette c) {
+    switch (label) {
+      case 'Momentum':
+        return c.accent;
+      case 'Fundamentals':
+        return c.warning;
+      case 'Risk':
+        return c.danger;
+      default:
+        return c.textMuted;
+    }
+  }
+}
+
+class _AnalystNoteCard extends StatelessWidget {
+  const _AnalystNoteCard({required this.note});
+  final String note;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final hasEarningsFlag = note.toLowerCase().contains('earn');
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded, size: 14, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Text('Analyst Note',
+                  style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: c.accentDim,
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                ),
+                child: Text('AI',
+                    style: AppTypography.xs.copyWith(
+                        color: c.accent, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          Text(note,
+              style: AppTypography.md.copyWith(
+                  color: c.textSecondary, height: 1.6)),
+          if (hasEarningsFlag) ...[
+            const SizedBox(height: AppSpacing.s3),
+            Row(
+              children: [
+                Icon(Icons.warning_amber_rounded, size: 14, color: c.warning),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Earnings event detected — review position sizing',
+                    style: AppTypography.sm.copyWith(color: c.warning),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _NoteShimmer extends StatefulWidget {
+  const _NoteShimmer();
+
+  @override
+  State<_NoteShimmer> createState() => _NoteShimmerState();
+}
+
+class _NoteShimmerState extends State<_NoteShimmer>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (_, __) {
+        final opacity = 0.3 + 0.4 * _anim.value;
+        return GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.auto_awesome_rounded, size: 14, color: c.accent.withAlpha((opacity * 255).toInt())),
+                  const SizedBox(width: AppSpacing.s2),
+                  Container(
+                    width: 90,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: c.textMuted.withAlpha((opacity * 255).toInt()),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    width: 24,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: c.accentDim.withAlpha((opacity * 255).toInt()),
+                      borderRadius: BorderRadius.circular(AppRadius.full),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              ...List.generate(3, (i) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Container(
+                  width: i == 2 ? 120 : double.infinity,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: c.textMuted.withAlpha((opacity * 180).toInt()),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              )),
+            ],
+          ),
+        );
+      },
+    );
   }
 }
 

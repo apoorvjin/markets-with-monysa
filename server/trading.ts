@@ -11,6 +11,7 @@
  */
 
 import { Router, type Request, type Response } from "express";
+import Anthropic from "@anthropic-ai/sdk";
 
 // ─── External API Response Types ─────────────────────────────────────────────
 
@@ -1979,6 +1980,31 @@ async function fetchNewsForSymbol(symbol: string): Promise<NewsResult> {
   return result;
 }
 
+// ─── Analyst Note — Claude Haiku with rate limiting ──────────────────────────
+
+const _anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+const _noteCache = new Map<string, { note: string; ts: number }>();
+const _notePending = new Map<string, Promise<string>>();
+const NOTE_TTL = 15 * 60 * 1000;
+
+async function _callClaude(symbol: string, strategy: string, direction: string, confidence: number): Promise<string> {
+  if (!_anthropic) return "";
+  const msg = await _anthropic.messages.create({
+    model: "claude-haiku-4-5",
+    max_tokens: 150,
+    system: "You are a concise financial analyst writing brief trader notes. Write 2-3 sentences adding macro and event context beyond what technical indicators already show. Be specific to the asset and direction. No disclaimers.",
+    messages: [{
+      role: "user",
+      content: `${symbol} ${direction} signal — ${Math.round(confidence)}% confidence, Strategy S${strategy}. Add: (1) relevant sector/macro backdrop for this direction, (2) any near-term risk event traders should watch (earnings, Fed, macro data), (3) one positioning insight. Do not repeat technical indicator language.`,
+    }],
+  });
+  const block = msg.content[0];
+  return block.type === "text" ? block.text.trim() : "";
+}
+
 // ─── Express Router ───────────────────────────────────────────────────────────
 
 export function createTradingRouter(): Router {
@@ -2066,6 +2092,43 @@ export function createTradingRouter(): Router {
       return res.status(503).json({ error: "Insufficient historical data to generate signal" });
     }
     return res.json(signal);
+  });
+
+  // GET /api/trading/analyst-note/:symbol
+  router.get("/analyst-note/:symbol", async (req: Request, res: Response) => {
+    const symbol = paramStr(req.params.symbol);
+    const strategy = (req.query.strategy as string) ?? "1";
+    const direction = (req.query.direction as string) ?? "HOLD";
+    const confidence = parseFloat(req.query.confidence as string) || 50;
+    const key = `${symbol}_${strategy}_${direction}`;
+
+    const cached = _noteCache.get(key);
+    if (cached && Date.now() - cached.ts < NOTE_TTL) {
+      return res.json({ note: cached.note });
+    }
+
+    if (!_anthropic) return res.json({ note: null });
+
+    if (!_notePending.has(key)) {
+      const promise = _callClaude(symbol, strategy, direction, confidence)
+        .then(note => {
+          _noteCache.set(key, { note, ts: Date.now() });
+          _notePending.delete(key);
+          return note;
+        })
+        .catch(err => {
+          _notePending.delete(key);
+          throw err;
+        });
+      _notePending.set(key, promise);
+    }
+
+    try {
+      const note = await _notePending.get(key)!;
+      return res.json({ note });
+    } catch {
+      return res.status(503).json({ error: "Failed to generate analyst note" });
+    }
   });
 
   // GET /api/trading/history/:symbol

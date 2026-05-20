@@ -21,6 +21,8 @@ abstract final class ApiEndpoints {
       '$baseUrl/api/trading/backtest/$symbol';
   static String tradingNews(String symbol) =>
       '$baseUrl/api/trading/news/$symbol';
+  static String tradingAnalystNote(String symbol) =>
+      '$baseUrl/api/trading/analyst-note/$symbol';
 
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';

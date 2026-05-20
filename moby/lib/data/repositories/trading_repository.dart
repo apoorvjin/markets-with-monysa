@@ -59,6 +59,23 @@ class TradingRepository {
     return articles.map((e) => NewsArticle.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  Future<String?> fetchAnalystNote(
+    String symbol, {
+    required String strategy,
+    required String direction,
+    required double confidence,
+  }) async {
+    final data = await ApiClient.instance.get(
+      ApiEndpoints.tradingAnalystNote(symbol),
+      params: {
+        'strategy': strategy,
+        'direction': direction,
+        'confidence': confidence.toStringAsFixed(1),
+      },
+    ) as Map<String, dynamic>;
+    return data['note'] as String?;
+  }
+
   Future<List<StockSearchResult>> searchStocks(String query) async {
     if (query.trim().isEmpty) return [];
     final data = await ApiClient.instance.get(
