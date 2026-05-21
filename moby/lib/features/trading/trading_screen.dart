@@ -120,7 +120,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab> {
   @override
   void initState() {
     super.initState();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 30),
+    _refreshTimer = Timer.periodic(const Duration(seconds: 15),
         (_) => ref.invalidate(_quotesProvider));
   }
 
@@ -196,8 +196,9 @@ class _DashboardTabState extends ConsumerState<_DashboardTab> {
           onRetry: () => ref.invalidate(_quotesProvider),
         ),
         data: (quotes) {
+          final watchSet = watchlist.toSet();
           final filtered =
-              quotes.where((q) => watchlist.contains(q.symbol)).toList();
+              quotes.where((q) => watchSet.contains(q.symbol)).toList();
           return Column(
             children: [
               _CategoryFilter(
@@ -211,6 +212,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab> {
                   backgroundColor: c.surface,
                   onRefresh: () => ref.refresh(_quotesProvider.future),
                   child: ListView.builder(
+                    padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
                     itemCount: filtered.length,
                     itemBuilder: (ctx, i) => _AssetRow(item: filtered[i]),
                   ),
@@ -248,6 +250,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab> {
                 backgroundColor: c.surface,
                 onRefresh: () => ref.refresh(_quotesProvider.future),
                 child: ListView.builder(
+                  padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
                   itemCount: filtered.length,
                   itemBuilder: (ctx, i) => _AssetRow(item: filtered[i]),
                 ),
@@ -413,9 +416,10 @@ class _EmptySearch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Center(
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 60),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -465,6 +469,7 @@ class _SearchResults extends ConsumerWidget {
           );
         }
         return ListView.builder(
+          padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
           itemCount: results.length,
           itemBuilder: (_, i) => _StockResultRow(result: results[i]),
         );
@@ -657,38 +662,25 @@ void _showStrategyInfo(BuildContext context) {
       initialChildSize: 0.75,
       minChildSize: 0.4,
       maxChildSize: 0.92,
-      builder: (_, scrollController) => Column(
+      builder: (_, scrollController) => ListView(
+        controller: scrollController,
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s8),
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-                AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: c.border,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.s5),
-                Text('Trading Strategies',
-                    style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
-                const SizedBox(height: AppSpacing.s4),
-              ],
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: c.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
-          Expanded(
-            child: ListView(
-              controller: scrollController,
-              padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.s5, 0, AppSpacing.s5, AppSpacing.s8),
-              children: [
+          const SizedBox(height: AppSpacing.s5),
+          Text('Trading Strategies',
+              style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s4),
           _StrategyInfoRow(
             label: 'S1',
             title: 'Technical Analysis',
@@ -752,8 +744,13 @@ void _showStrategyInfo(BuildContext context) {
             detail: 'Strong Trend: S7 50% · S4 35% · S5 15% · Ranging: S5 45% · S7 35% · S4 20% · Volatile Break: S7 55% · S4 35% · S5 10% · Full position on 3/3 · 60% size on 2/3 · No trade on 1/3 or split',
             accentColor: c.positive,
           ),
-              ],
-            ),
+          const SizedBox(height: AppSpacing.s4),
+          _StrategyInfoRow(
+            label: 'S9',
+            title: 'Silver Liquidity Sweep',
+            description: 'Session-gated stop-hunt entries at Fibonacci confluence — optimised for Silver (SI=F) intraday. Fires only when all four conditions align simultaneously.',
+            detail: 'London KZ (02:00–05:00 ET) · NY KZ (07:00–10:00 ET) · Liquidity sweep (wick beyond recent H/L, close back inside) · 9 EMA power candle (body >60% of range) · Fib 0.618/0.786 long · Fib 0.236/0.382 short',
+            accentColor: const Color(0xFFC0C0C0),
           ),
         ],
       ),
@@ -841,15 +838,17 @@ class _SignalsTabState extends ConsumerState<_SignalsTab> {
     final c = context.colors;
     final strategy = ref.watch(strategyProvider);
     final quotesAsync = ref.watch(_quotesProvider);
+    final isS9 = strategy == TradingStrategy.s9;
+    final effectiveType = isS9 ? 'Commodities' : _type;
 
     return Column(
       children: [
         _SignalFilters(
-          type: _type,
+          type: effectiveType,
           timeframe: _timeframe,
           direction: _direction,
           strategy: strategy,
-          onType: (t) => setState(() => _type = t),
+          onType: isS9 ? (_) {} : (t) => setState(() => _type = t),
           onTimeframe: (t) => setState(() => _timeframe = t),
           onDirection: (d) => setState(() => _direction = d),
           onStrategy: (s) => ref.read(strategyProvider.notifier).setStrategy(s),
@@ -857,21 +856,53 @@ class _SignalsTabState extends ConsumerState<_SignalsTab> {
           timeframes: _timeframes,
           directions: _directions,
         ),
+        if (isS9)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFC0C0C0).withAlpha(18),
+              border: Border(
+                  bottom: BorderSide(color: const Color(0xFFC0C0C0).withAlpha(50))),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    size: 14, color: Color(0xFFC0C0C0)),
+                const SizedBox(width: AppSpacing.s2),
+                Expanded(
+                  child: Text(
+                    'S9 targets Silver (SI=F) on 1h — signals fire only during London (02:00–05:00 ET) or NY (07:00–10:00 ET) kill zones when a liquidity sweep, 9 EMA power candle, and Fibonacci confluence all align simultaneously.',
+                    style: AppTypography.xs.copyWith(
+                      color: const Color(0xFFC0C0C0),
+                      height: 1.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.1,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         Expanded(
           child: quotesAsync.when(
             loading: () => Center(
                 child: CircularProgressIndicator(color: c.accent)),
             error: (e, _) => const ErrorView(message: 'Failed to load assets'),
             data: (quotes) {
-              final byType = _type == 'ALL'
-                  ? quotes
-                  : quotes.where((q) => q.category == _type).toList();
+              final filtered = isS9
+                  ? quotes.where((q) => q.symbol == 'SI=F').toList()
+                  : (effectiveType == 'ALL'
+                      ? quotes
+                      : quotes.where((q) => q.category == effectiveType).toList());
 
               return ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
-                itemCount: byType.length,
+                padding: EdgeInsets.only(top: AppSpacing.s3, bottom: AppSpacing.s3 + MediaQuery.of(context).padding.bottom),
+                itemCount: filtered.length,
                 itemBuilder: (ctx, i) => _SignalCard(
-                  quote: byType[i],
+                  quote: filtered[i],
                   timeframe: _timeframe,
                   strategy: strategy.serverParam,
                   directionFilter: _direction,
@@ -955,32 +986,44 @@ class _SignalFilters extends StatelessWidget {
               Text('Strategy:',
                   style: AppTypography.sm.copyWith(color: c.textMuted)),
               const SizedBox(width: AppSpacing.s3),
-              ...TradingStrategy.values.map((s) => GestureDetector(
-                    onTap: () => onStrategy(s),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: AppSpacing.s2),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: strategy == s
-                            ? c.accentDim
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(AppRadius.full),
-                        border: Border.all(
-                            color: strategy == s
-                                ? c.accent
-                                : c.border),
-                      ),
-                      child: Text(
-                        s.label,
-                        style: AppTypography.sm.copyWith(
-                          color: strategy == s
-                              ? c.accent
-                              : c.textSecondary,
-                          fontWeight: FontWeight.w600,
+              ...TradingStrategy.values.map((s) {
+                    // S9 is Silver-only — hide chip when the type filter can't show Silver
+                    if (s == TradingStrategy.s9 &&
+                        strategy != TradingStrategy.s9 &&
+                        type != 'ALL' &&
+                        type != 'Commodities') {
+                      return const SizedBox.shrink();
+                    }
+                    const silver = Color(0xFFC0C0C0);
+                    final isSelected = strategy == s;
+                    final isS9Chip = s == TradingStrategy.s9;
+                    final chipColor = isS9Chip
+                        ? Color.lerp(c.accent, silver, 0.5)!
+                        : c.accent;
+                    final chipDim = isS9Chip
+                        ? Color.lerp(c.accentDim, silver.withAlpha(30), 0.5)!
+                        : c.accentDim;
+                    return GestureDetector(
+                      onTap: () => onStrategy(s),
+                      child: Container(
+                        margin: const EdgeInsets.only(right: AppSpacing.s2),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: isSelected ? chipDim : Colors.transparent,
+                          borderRadius: BorderRadius.circular(AppRadius.full),
+                          border: Border.all(
+                              color: isSelected ? chipColor : c.border),
+                        ),
+                        child: Text(
+                          s.label,
+                          style: AppTypography.sm.copyWith(
+                            color: isSelected ? chipColor : c.textSecondary,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
-                    ),
-                  )),
+                    );
+                  }),
               const Spacer(),
               GestureDetector(
                 onTap: () => _showStrategyInfo(context),
@@ -1052,6 +1095,46 @@ class _ChipRow extends StatelessWidget {
   }
 }
 
+class _SignalErrorRow extends StatelessWidget {
+  const _SignalErrorRow({required this.quote, required this.onRetry});
+  final QuoteItem quote;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: onRetry,
+      child: Container(
+        margin: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+        decoration: BoxDecoration(
+          color: c.surfaceCard,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: c.border),
+        ),
+        child: Row(
+          children: [
+            if (quote.flag.isNotEmpty)
+              Text(quote.flag, style: const TextStyle(fontSize: 16)),
+            const SizedBox(width: AppSpacing.s2),
+            Expanded(
+              child: Text(quote.name,
+                  style: AppTypography.labelMd
+                      .copyWith(color: c.textMuted),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis),
+            ),
+            Icon(Icons.refresh_rounded, size: 16, color: c.textFaint),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _SignalCard extends ConsumerWidget {
   const _SignalCard({
     required this.quote,
@@ -1072,7 +1155,10 @@ class _SignalCard extends ConsumerWidget {
 
     return signalAsync.when(
       loading: () => _LoadingRow(name: quote.name),
-      error: (_, __) => const SizedBox.shrink(),
+      error: (_, __) => _SignalErrorRow(
+        quote: quote,
+        onRetry: () => ref.invalidate(_signalProvider(args)),
+      ),
       data: (signal) {
         if (directionFilter != 'ALL' &&
             signal.direction.toUpperCase() != directionFilter) {
@@ -1264,7 +1350,8 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
     final alerts = ref.watch(alertProvider);
 
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.s5),
+      padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5, AppSpacing.s5,
+          AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
       children: [
         // Add new alert
         Container(

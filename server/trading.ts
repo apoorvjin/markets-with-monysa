@@ -160,6 +160,20 @@ interface PriceEntry {
 
 export const latestPrices = new Map<string, PriceEntry>();
 
+let _lastPollAt: number | null = null;
+let _finnhubConnected = false;
+
+export function getHealthStatus() {
+  return {
+    status: "ok",
+    uptime: Math.floor(process.uptime()),
+    lastPollAt: _lastPollAt ? new Date(_lastPollAt).toISOString() : null,
+    finnhubConnected: _finnhubConnected,
+    openaiConfigured: Boolean(process.env.AI_INTEGRATIONS_OPENAI_API_KEY),
+    anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+  };
+}
+
 // ─── Yahoo Finance Helpers ────────────────────────────────────────────────────
 
 const YF_HEADERS = {
@@ -210,6 +224,7 @@ async function pollAllPrices() {
       }
     });
   }
+  _lastPollAt = Date.now();
 }
 
 // Boot: immediate poll, then every 10 s
@@ -257,6 +272,7 @@ function startFinnhubWebSocket() {
           if (msg.type === "trade" && Array.isArray(msg.data)) {
             if (!gotTrade) {
               gotTrade = true;
+              _finnhubConnected = true;
               reconnectDelay = 15_000; // reset backoff only after confirmed data
             }
             for (const trade of msg.data) {
@@ -285,6 +301,7 @@ function startFinnhubWebSocket() {
       });
 
       ws.on("close", () => {
+        _finnhubConnected = false;
         console.warn(`[Finnhub WS] Disconnected — reconnecting in ${reconnectDelay}ms`);
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 120_000);
@@ -315,6 +332,7 @@ export interface Indicators {
   macd: number | null;
   macdSignal: number | null;
   macdHistogram: number | null;
+  ema9: number | null;
   ema12: number | null;
   ema26: number | null;
   ema50: number | null;
@@ -423,15 +441,26 @@ function calcAdx(ohlcvs: OHLCV[], period = 14): number | null {
   return adxArr.length > 0 ? Math.round(adxArr[adxArr.length - 1] * 100) / 100 : null;
 }
 
-function calcObvSlope(candles: OHLCV[], period = 14): number | null {
-  if (candles.length < period + 1) return null;
+const _obvCache = new Map<number, number[]>();
+
+function _buildObvArr(candles: OHLCV[]): number[] {
+  const lastTs = candles[candles.length - 1].time;
+  const hit = _obvCache.get(lastTs);
+  if (hit) return hit;
   let obv = 0;
-  const obvArr: number[] = [];
+  const arr: number[] = [];
   for (let i = 1; i < candles.length; i++) {
     if (candles[i].close > candles[i - 1].close) obv += candles[i].volume;
     else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
-    obvArr.push(obv);
+    arr.push(obv);
   }
+  _obvCache.set(lastTs, arr);
+  return arr;
+}
+
+function calcObvSlope(candles: OHLCV[], period = 14): number | null {
+  if (candles.length < period + 1) return null;
+  const obvArr = _buildObvArr(candles);
   if (obvArr.length < period) return null;
   return obvArr[obvArr.length - 1] - obvArr[obvArr.length - period];
 }
@@ -445,11 +474,13 @@ function calcVolumeSma(candles: OHLCV[], period = 20): number | null {
 function calculateIndicators(candles: OHLCV[]): Indicators {
   const closes = candles.map(c => c.close);
 
+  const ema9Arr  = calcEma(closes, 9);
   const ema12Arr = calcEma(closes, 12);
   const ema26Arr = calcEma(closes, 26);
   const ema50Arr = calcEma(closes, 50);
   const ema200Arr = calcEma(closes, 200);
 
+  const ema9  = ema9Arr.length  > 0 ? ema9Arr[ema9Arr.length   - 1] : null;
   const ema12 = ema12Arr.length > 0 ? ema12Arr[ema12Arr.length - 1] : null;
   const ema26 = ema26Arr.length > 0 ? ema26Arr[ema26Arr.length - 1] : null;
   const ema50 = ema50Arr.length > 0 ? ema50Arr[ema50Arr.length - 1] : null;
@@ -480,6 +511,7 @@ function calculateIndicators(candles: OHLCV[]): Indicators {
     macd: macd !== null ? Math.round(macd * 10000) / 10000 : null,
     macdSignal: macdSignal !== null ? Math.round(macdSignal * 10000) / 10000 : null,
     macdHistogram: macdHistogram !== null ? Math.round(macdHistogram * 10000) / 10000 : null,
+    ema9:  ema9  !== null ? Math.round(ema9  * 10000) / 10000 : null,
     ema12: ema12 !== null ? Math.round(ema12 * 100) / 100 : null,
     ema26: ema26 !== null ? Math.round(ema26 * 100) / 100 : null,
     ema50: ema50 !== null ? Math.round(ema50 * 100) / 100 : null,
@@ -569,7 +601,7 @@ async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
 // ─── Signal Generation ────────────────────────────────────────────────────────
 
 type SignalDirection = "BUY" | "HOLD" | "SELL";
-type StrategyId = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8";
+type StrategyId = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
 type Regime5 = "quiet_trend" | "quiet_range" | "volatile_trend" | "chaotic";
 
 export interface SignalResult {
@@ -591,10 +623,23 @@ export interface SignalResult {
   positionRiskPct?: number;
   htfAlignment?: string;
   tradeable?: boolean;
+  ivPercentile?: number;
 }
 
 const signalCache = new Map<string, { data: SignalResult; ts: number }>();
 const SIGNAL_TTL = 30_000;
+
+interface FundamentalsResult {
+  symbol: string;
+  sector: string | null;
+  industry: string | null;
+  quoteType: string | null;
+  currency: string | null;
+  week52High: number | null;
+  week52Low: number | null;
+}
+const _fundCache = new Map<string, { data: FundamentalsResult; ts: number }>();
+const FUND_TTL = 4 * 60 * 60 * 1000;
 
 /**
  * Returns a composite score in [-1, +1].
@@ -1597,25 +1642,204 @@ function strategyEnsemble(
   return { score: consensus, bullets, regime, apexResult: r7, agreementCount };
 }
 
+// ─── S9: Silver Liquidity Sweep Strategy ─────────────────────────────────────
+// Mirrors the Pine Script "SLS" indicator:
+// London/NY kill-zone session gate + liquidity sweep (stop hunt wick) +
+// 9 EMA power candle + Fibonacci 0.618/0.786 (long) or 0.236/0.382 (short).
+
+function isLondonKZ(unixSec: number): boolean {
+  // 03:00–06:00 ET → 07:00–11:00 UTC (covers both EDT and EST)
+  const h = new Date(unixSec * 1000).getUTCHours();
+  return h >= 7 && h < 11;
+}
+
+function isNYKZ(unixSec: number): boolean {
+  // 08:30–10:00 ET → 12:30–15:00 UTC (covers both EDT and EST)
+  const d = new Date(unixSec * 1000);
+  const totalMin = d.getUTCHours() * 60 + d.getUTCMinutes();
+  return totalMin >= 12 * 60 + 30 && totalMin < 15 * 60;
+}
+
+function isPostNewsCZ(unixSec: number): boolean {
+  // 10:00–11:00 ET trend continuation → 14:00–16:00 UTC (covers both EDT and EST)
+  const h = new Date(unixSec * 1000).getUTCHours();
+  return h >= 14 && h < 16;
+}
+
+interface S9Result { score: number; bullets: string[]; swingHigh: number; swingLow: number; }
+
+function strategyS9(
+  candles: OHLCV[],
+  ind: Indicators,
+  price: number,
+  tf: string,
+): S9Result {
+  const bullets: string[] = [];
+  const n = candles.length;
+  const SWEEP_LB = 10;
+  const FIB_LB   = 20;
+  if (n < FIB_LB + SWEEP_LB + 2) {
+    return { score: 0, bullets: ["Insufficient candle data for S9"], swingHigh: price, swingLow: price };
+  }
+
+  const cur = candles[n - 1];
+
+  // Session gate — bypass on daily/4h or when running backtest simulation
+  const bypassSession  = tf === "1d" || tf === "4h" || tf === "backtest";
+  const londonActive   = !bypassSession && isLondonKZ(cur.time);
+  const nyActive       = !bypassSession && isNYKZ(cur.time);
+  const postNewsActive = !bypassSession && isPostNewsCZ(cur.time);
+  const inSession      = bypassSession || londonActive || nyActive || postNewsActive;
+  const sessionLabel   = londonActive   ? "London Kill Zone (03:00–06:00 ET)"
+                       : nyActive       ? "New York Kill Zone (08:30–10:00 ET)"
+                       : postNewsActive ? "Post-News Continuation Window (10:00–11:00 ET)"
+                       : bypassSession  ? "session gate bypassed on daily/4h"
+                       : "off-session";
+
+  // Liquidity sweep — compare to prior SWEEP_LB bars (excluding current)
+  const lookSlice = candles.slice(n - SWEEP_LB - 1, n - 1);
+  const prevLow  = Math.min(...lookSlice.map(c => c.low));
+  const prevHigh = Math.max(...lookSlice.map(c => c.high));
+
+  const bullSweep = cur.low < prevLow  && cur.close > prevLow;
+  const bearSweep = cur.high > prevHigh && cur.close < prevHigh;
+
+  // 9 EMA power candle (0.5 body threshold in backtest — 1h candles have less wick definition)
+  const ema9 = ind.ema9;
+  const range   = cur.high - cur.low;
+  const body    = Math.abs(cur.close - cur.open);
+  const bodyPct = range > 0 ? body / range : 0;
+  const bodyThreshold = tf === "backtest" ? 0.5 : 0.6;
+  const bullPower = bodyPct > bodyThreshold && cur.close > cur.open && ema9 !== null && cur.close > ema9;
+  const bearPower = bodyPct > bodyThreshold && cur.close < cur.open && ema9 !== null && cur.close < ema9;
+
+  // Fibonacci 44–61.8% POI zone over last FIB_LB candles
+  const fibSlice = candles.slice(n - FIB_LB, n);
+  const swingHigh = Math.max(...fibSlice.map(c => c.high));
+  const swingLow  = Math.min(...fibSlice.map(c => c.low));
+  const fibRange  = swingHigh - swingLow;
+
+  // Long POI: 44–61.8% measured from swing low upward
+  const poiLongLow  = swingLow  + fibRange * 0.44;
+  const poiLongHigh = swingLow  + fibRange * 0.618;
+  // Short POI: 44–61.8% measured from swing high downward (mirror)
+  const poiShortLow  = swingHigh - fibRange * 0.618;
+  const poiShortHigh = swingHigh - fibRange * 0.44;
+
+  const nearFibLong  = price >= poiLongLow  * 0.998 && price <= poiLongHigh  * 1.002;
+  const nearFibShort = price >= poiShortLow * 0.998 && price <= poiShortHigh * 1.002;
+
+  // In backtest mode (1h candles), skip the POI zone — Fib precision requires
+  // 1m charts. Sweep + power candle is the core signal; POI adds entry precision.
+  const backtestMode = tf === "backtest";
+  const longSignal  = bullSweep && inSession && bullPower && (backtestMode || nearFibLong);
+  const shortSignal = bearSweep && inSession && bearPower && (backtestMode || nearFibShort);
+
+  if (longSignal) {
+    bullets.push(`Bullish liquidity sweep — wick below ${prevLow.toFixed(3)}, close recovered above (stop hunt)`);
+    bullets.push(`${sessionLabel} active`);
+    bullets.push(`Power candle: body ${(bodyPct * 100).toFixed(0)}% of range, closing above 9 EMA (${ema9!.toFixed(3)})`);
+    bullets.push(`Price in 44–61.8% POI zone (${poiLongLow.toFixed(3)}–${poiLongHigh.toFixed(3)})`);
+    bullets.push(`Risk 3–5% per setup — silver is moderate volatility vs. gold`);
+    return { score: 1.0, bullets, swingHigh, swingLow };
+  }
+
+  if (shortSignal) {
+    bullets.push(`Bearish liquidity sweep — wick above ${prevHigh.toFixed(3)}, close rejected below (stop hunt)`);
+    bullets.push(`${sessionLabel} active`);
+    bullets.push(`Power candle: body ${(bodyPct * 100).toFixed(0)}% of range, closing below 9 EMA (${ema9!.toFixed(3)})`);
+    bullets.push(`Price in 44–61.8% POI zone from top (${poiShortLow.toFixed(3)}–${poiShortHigh.toFixed(3)})`);
+    bullets.push(`Risk 3–5% per setup — silver is moderate volatility vs. gold`);
+    return { score: -1.0, bullets, swingHigh, swingLow };
+  }
+
+  // Partial condition diagnostics
+  if (bullSweep)       bullets.push(`Bullish sweep detected below ${prevLow.toFixed(3)} — awaiting ${!inSession ? "session + " : ""}${!bullPower ? "power candle + " : ""}${!nearFibLong ? "44–61.8% POI zone" : "confirmation"}`);
+  else if (bearSweep)  bullets.push(`Bearish sweep detected above ${prevHigh.toFixed(3)} — awaiting ${!inSession ? "session + " : ""}${!bearPower ? "power candle + " : ""}${!nearFibShort ? "44–61.8% POI zone" : "confirmation"}`);
+  else                 bullets.push(`No liquidity sweep on current bar (range: ${prevLow.toFixed(3)}–${prevHigh.toFixed(3)})`);
+
+  if (!inSession && !bypassSession) bullets.push(`Outside kill zones — ${sessionLabel}`);
+  if (!nearFibLong && !nearFibShort) bullets.push(`Price outside POI zone — long: ${poiLongLow.toFixed(3)}–${poiLongHigh.toFixed(3)}, short: ${poiShortLow.toFixed(3)}–${poiShortHigh.toFixed(3)}`);
+  if (ema9 !== null) bullets.push(`9 EMA: ${ema9.toFixed(3)} — price ${price > ema9 ? "above" : "below"}`);
+
+  return { score: 0, bullets, swingHigh, swingLow };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 function scoreToConfidence(score: number): number {
   const abs = Math.abs(score);
   // Maps 0..1 → 50..95
   return Math.round(50 + abs * 45);
 }
 
+function atrPercentile(candles: OHLCV[], currentAtr: number): number {
+  const atrs = candles.slice(1).map((c, i) => {
+    const hl = c.high - c.low;
+    const hpc = Math.abs(c.high - candles[i].close);
+    const lpc = Math.abs(c.low - candles[i].close);
+    return Math.max(hl, hpc, lpc);
+  });
+  const below = atrs.filter(a => a <= currentAtr).length;
+  return below / atrs.length;
+}
+
 function buildRiskLevels(
   direction: SignalDirection,
   price: number,
   atr: number | null,
-): { stopLoss: number; takeProfit: number; riskReward: number } {
-  const risk = atr ? atr * 1.5 : price * 0.02;
-  const reward = risk * 2.5;
+  ivPct = 0.5,
+): { stopLoss: number; takeProfit: number; riskReward: number; ivFlag: string | null } {
+  const base = atr ?? price * 0.02;
+  const slMult = ivPct > 0.75 ? 2.0 : ivPct < 0.25 ? 1.1 : 1.5;
+  const tpMult = slMult * 2.5;
+  const risk = base * slMult;
+  const reward = base * tpMult;
   const sl = direction === "BUY" ? price - risk : price + risk;
   const tp = direction === "BUY" ? price + reward : price - reward;
+  const ivFlag = ivPct > 0.75
+    ? `High volatility (${Math.round(ivPct * 100)}th pct) — SL widened to reduce noise stops`
+    : ivPct < 0.25
+      ? `Low volatility (${Math.round(ivPct * 100)}th pct) — tight SL, watch for expansion`
+      : null;
   return {
     stopLoss: Math.round(sl * 10000) / 10000,
     takeProfit: Math.round(tp * 10000) / 10000,
-    riskReward: Math.round((reward / risk) * 100) / 100,
+    riskReward: Math.round((tpMult / slMult) * 100) / 100,
+    ivFlag,
+  };
+}
+
+function buildRiskLevelsS9(
+  direction: SignalDirection,
+  price: number,
+  swingHigh: number,
+  swingLow: number,
+  atr: number | null,
+): { stopLoss: number; takeProfit: number; riskReward: number; tp2: number } {
+  const fibRange = swingHigh - swingLow;
+  const atrBuf   = atr ?? fibRange * 0.05;
+
+  // SL just beyond the sweep extreme (0.5 ATR buffer)
+  const sl = direction === "BUY"
+    ? Math.round((swingLow  - atrBuf * 0.5) * 10000) / 10000
+    : Math.round((swingHigh + atrBuf * 0.5) * 10000) / 10000;
+
+  // TP1 = 0.272 extension (first scalp target), TP2 = 0.618 extension (runner)
+  const tp1 = direction === "BUY"
+    ? Math.round((swingHigh + fibRange * 0.272) * 10000) / 10000
+    : Math.round((swingLow  - fibRange * 0.272) * 10000) / 10000;
+  const tp2 = direction === "BUY"
+    ? Math.round((swingHigh + fibRange * 0.618) * 10000) / 10000
+    : Math.round((swingLow  - fibRange * 0.618) * 10000) / 10000;
+
+  const risk   = Math.abs(price - sl);
+  const reward = Math.abs(tp1  - price);
+  return {
+    stopLoss:   sl,
+    takeProfit: tp1,
+    riskReward: risk > 0 ? Math.round((reward / risk) * 100) / 100 : 0,
+    tp2,
   };
 }
 
@@ -1650,6 +1874,8 @@ async function generateSignal(
   let apexPositionRisk = 0;
   let apexTradeable = false;
   let apexThreshold = 0.25;
+  let s9SwingHigh = currentPrice;
+  let s9SwingLow  = currentPrice;
 
   if (strategy === "1") {
     ({ score, bullets } = strategyS1(ind, currentPrice));
@@ -1676,6 +1902,10 @@ async function generateSignal(
     apexPositionRisk = Math.round(r.apexResult.positionRiskPct * (r.agreementCount === 3 ? 1.0 : 0.6) * 100) / 100;
     apexTradeable = r.agreementCount >= 2;
     apexThreshold = 0.40;
+  } else if (strategy === "9") {
+    const r9 = strategyS9(candles, ind, currentPrice, tf);
+    score = r9.score; bullets = r9.bullets;
+    s9SwingHigh = r9.swingHigh; s9SwingLow = r9.swingLow;
   } else {
     const { score: s1, bullets: b1 } = strategyS1(ind, currentPrice);
     ({ score, bullets } = strategyS3(s1, newsSentiment, b1));
@@ -1686,11 +1916,24 @@ async function generateSignal(
     strategy === "5" ? (score > s5threshold ? "BUY" : score < -s5threshold ? "SELL" : "HOLD") :
     strategy === "6" ? (score > 0.45 ? "BUY" : score < -0.35 ? "SELL" : "HOLD") :
     (strategy === "7" || strategy === "8") ? (score > apexThreshold ? "BUY" : score < -apexThreshold ? "SELL" : "HOLD") :
+    strategy === "9" ? (score > 0.5 ? "BUY" : score < -0.5 ? "SELL" : "HOLD") :
     scoreToSignal(score);
   const confidence = (strategy === "5" || strategy === "6" || strategy === "7" || strategy === "8") ? calibrateConfidenceS5(Math.abs(score)) : scoreToConfidence(score);
-  const { stopLoss, takeProfit, riskReward } = (strategy === "7" || strategy === "8")
-    ? buildRiskLevelsAPEX(direction, currentPrice, ind.atr, apexRegime)
-    : buildRiskLevels(direction, currentPrice, ind.atr);
+  const ivPct = ind.atr ? atrPercentile(candles.slice(-20), ind.atr) : 0.5;
+  let stopLoss: number, takeProfit: number, riskReward: number;
+  let ivFlag: string | null = null;
+  if (strategy === "7" || strategy === "8") {
+    ({ stopLoss, takeProfit, riskReward } = buildRiskLevelsAPEX(direction, currentPrice, ind.atr, apexRegime));
+  } else if (strategy === "9") {
+    const r9Risk = buildRiskLevelsS9(direction, currentPrice, s9SwingHigh, s9SwingLow, ind.atr);
+    ({ stopLoss, takeProfit, riskReward } = r9Risk);
+    if (direction !== "HOLD") {
+      bullets.push(`TP2 runner: ${r9Risk.tp2.toFixed(3)} (0.618 extension)`);
+    }
+  } else {
+    ({ stopLoss, takeProfit, riskReward, ivFlag } = buildRiskLevels(direction, currentPrice, ind.atr, ivPct));
+  }
+  if (ivFlag) bullets.push(ivFlag);
 
   const result: SignalResult = {
     symbol,
@@ -1701,11 +1944,12 @@ async function generateSignal(
     stopLoss,
     takeProfit,
     riskReward,
-    reasoning: bullets.slice(0, (strategy === "3" || strategy === "5" || strategy === "6" || strategy === "7" || strategy === "8") ? 6 : 5),
+    reasoning: bullets.slice(0, (strategy === "3" || strategy === "5" || strategy === "6" || strategy === "7" || strategy === "8" || strategy === "9") ? 6 : 5),
     indicators: ind,
     strategy,
     timeframe: tf,
     timestamp: new Date().toISOString(),
+    ivPercentile: Math.round(ivPct * 1000) / 1000,
     ...((strategy === "7" || strategy === "8") ? { quality: apexQuality, apexRegime, positionRiskPct: apexPositionRisk, htfAlignment: apexHtfAlignment, tradeable: apexTradeable } : {}),
   };
 
@@ -1737,14 +1981,15 @@ interface BacktestResult {
   symbol: string;
   timeframe: Timeframe;
   strategies: Record<StrategyId, StrategyPerf>;
+  backtestNotes: Partial<Record<StrategyId, string>>;
   timestamp: string;
 }
 
 const backtestCache = new Map<string, { data: BacktestResult; ts: number }>();
 const BACKTEST_TTL = 10 * 60_000;
 
-function runBacktestOnSeries(closes: number[], strategyFn: (i: number) => SignalDirection): StrategyPerf {
-  const splitIdx = Math.floor(closes.length * 0.7);
+function runBacktestOnSeries(closes: number[], strategyFn: (i: number) => SignalDirection, splitRatio = 0.7): StrategyPerf {
+  const splitIdx = Math.floor(closes.length * splitRatio);
   const testCloses = closes.slice(splitIdx);
   if (testCloses.length < 10) {
     return { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
@@ -1866,18 +2111,52 @@ async function runBacktest(symbol: string, tf: Timeframe): Promise<BacktestResul
     return scoreToSignal(score);
   };
 
+  const strategyIds = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
+  const strategyResults = await Promise.all(
+    strategyIds.map((id) =>
+      Promise.resolve(runBacktestOnSeries(closes, (i) => getSignal(i, id)))
+    )
+  );
+
+  // S9 backtest runs on intraday candles. Try 1h first; fall back to 4h if < 50 bars
+  // (Yahoo Finance has limited 1h history for some futures symbols, e.g. SI=F).
+  const S9_WARMUP = 32; // FIB_LB(20) + SWEEP_LB(10) + buffer
+  let s9Perf: StrategyPerf = { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
+  const s9CandlesRaw = await fetchHistory(symbol, "1h");
+  const s9Candles = s9CandlesRaw.length >= 50 ? s9CandlesRaw : await fetchHistory(symbol, "4h");
+  if (s9Candles.length >= S9_WARMUP + 10) {
+    const s9Closes = s9Candles.map(c => c.close);
+    const s9Inds: (Indicators | null)[] = [];
+    // Include bar i itself so ema9 is current (not lagged by 1 bar)
+    for (let i = S9_WARMUP; i < s9Candles.length; i++) {
+      s9Inds.push(calculateIndicators(s9Candles.slice(0, i + 1)));
+    }
+    // S9 is purely rule-based (no fitted parameters) so split the full series
+    // to avoid the 70/30 train window swallowing the rare signal events.
+    s9Perf = runBacktestOnSeries(s9Closes, (i) => {
+      const idx = i - S9_WARMUP;
+      if (idx < 0 || idx >= s9Inds.length) return "HOLD";
+      const ind9 = s9Inds[idx];
+      if (!ind9) return "HOLD";
+      const slice = s9Candles.slice(0, i + 1);
+      const { score: s9score } = strategyS9(slice, ind9, s9Closes[i], "backtest");
+      return s9score > 0.5 ? "BUY" : s9score < -0.5 ? "SELL" : "HOLD";
+    }, 0);
+  }
+
+  const strategies = {
+    ...Object.fromEntries(strategyIds.map((id, idx) => [id, strategyResults[idx]])),
+    "9": s9Perf,
+  } as BacktestResult["strategies"];
+
   const result: BacktestResult = {
     symbol,
     timeframe: tf,
-    strategies: {
-      "1": runBacktestOnSeries(closes, (i) => getSignal(i, "1")),
-      "2": runBacktestOnSeries(closes, (i) => getSignal(i, "2")),
-      "3": runBacktestOnSeries(closes, (i) => getSignal(i, "3")),
-      "4": runBacktestOnSeries(closes, (i) => getSignal(i, "4")),
-      "5": runBacktestOnSeries(closes, (i) => getSignal(i, "5")),
-      "6": runBacktestOnSeries(closes, (i) => getSignal(i, "6")),
-      "7": runBacktestOnSeries(closes, (i) => getSignal(i, "7")),
-      "8": runBacktestOnSeries(closes, (i) => getSignal(i, "8")),
+    strategies,
+    backtestNotes: {
+      "3": "S3 (Hybrid) is backtested without live news — news sentiment is fixed at 0 for all bars, so results approximate S1. Live signals incorporate real-time news weighting.",
+      "6": "S6 (Adaptive Hybrid) is backtested using S2 technical scores only — source-credibility news weighting is not applied. Live signals incorporate real-time news.",
+      "9": "S9 (Silver Liquidity Sweep) is backtested across all available intraday candles (no train/test split — S9 has no fitted parameters). Session gate and POI zone bypassed — 1h candles are too broad for Fibonacci entry precision; core signal is liquidity sweep + 9 EMA power candle. Live signals additionally require London (03:00–06:00 ET), NY (08:30–10:00 ET), or Post-News (10:00–11:00 ET) kill-zone timing and 44–61.8% POI confluence.",
     },
     timestamp: new Date().toISOString(),
   };
@@ -1990,17 +2269,25 @@ const _noteCache = new Map<string, { note: string; ts: number }>();
 const _notePending = new Map<string, Promise<string>>();
 const NOTE_TTL = 15 * 60 * 1000;
 
+const CLAUDE_TIMEOUT_MS = 10_000;
+
 async function _callClaude(symbol: string, strategy: string, direction: string, confidence: number): Promise<string> {
   if (!_anthropic) return "";
-  const msg = await _anthropic.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 150,
-    system: "You are a concise financial analyst writing brief trader notes. Write 2-3 sentences adding macro and event context beyond what technical indicators already show. Be specific to the asset and direction. No disclaimers.",
-    messages: [{
-      role: "user",
-      content: `${symbol} ${direction} signal — ${Math.round(confidence)}% confidence, Strategy S${strategy}. Add: (1) relevant sector/macro backdrop for this direction, (2) any near-term risk event traders should watch (earnings, Fed, macro data), (3) one positioning insight. Do not repeat technical indicator language.`,
-    }],
-  });
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error("Claude timeout")), CLAUDE_TIMEOUT_MS)
+  );
+  const msg = await Promise.race([
+    _anthropic.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 150,
+      system: "You are a concise financial analyst writing brief trader notes. Write 2-3 sentences adding macro and event context beyond what technical indicators already show. Be specific to the asset and direction. No disclaimers.",
+      messages: [{
+        role: "user",
+        content: `${symbol} ${direction} signal — ${Math.round(confidence)}% confidence, Strategy S${strategy}. Add: (1) relevant sector/macro backdrop for this direction, (2) any near-term risk event traders should watch (earnings, Fed, macro data), (3) one positioning insight. Do not repeat technical indicator language.`,
+      }],
+    }),
+    timeout,
+  ]);
   const block = msg.content[0];
   return block.type === "text" ? block.text.trim() : "";
 }
@@ -2032,7 +2319,11 @@ export function createTradingRouter(): Router {
   });
 
   const VALID_TF: Timeframe[] = ["1m", "5m", "1h", "4h", "1d"];
-  const VALID_STRAT: StrategyId[] = ["1", "2", "3", "4", "5", "6", "7", "8"];
+  const VALID_STRAT: StrategyId[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+  // Allowlist: letters, digits, and the punctuation Yahoo Finance symbols use (=, ^, ., -, _)
+  const SYMBOL_RE = /^[A-Z0-9=^._-]{1,20}$/i;
+  const validateSymbol = (s: string) => SYMBOL_RE.test(s);
 
   /** Resolve timeframe from `interval` (spec) or `timeframe` (alias), defaulting to "1d". */
   function resolveTimeframe(query: Request["query"]): Timeframe | null {
@@ -2052,6 +2343,9 @@ export function createTradingRouter(): Router {
     const tf = resolveTimeframe(req.query);
     const strategy = (req.query.strategy as StrategyId) ?? "1";
 
+    if (!validateSymbol(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
     if (!tf) {
       return res.status(400).json({ error: "Invalid interval/timeframe. Use: 1m, 5m, 1h, 4h, 1d" });
     }
@@ -2097,6 +2391,9 @@ export function createTradingRouter(): Router {
   // GET /api/trading/analyst-note/:symbol
   router.get("/analyst-note/:symbol", async (req: Request, res: Response) => {
     const symbol = paramStr(req.params.symbol);
+    if (!validateSymbol(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
     const strategy = (req.query.strategy as string) ?? "1";
     const direction = (req.query.direction as string) ?? "HOLD";
     const confidence = parseFloat(req.query.confidence as string) || 50;
@@ -2137,6 +2434,9 @@ export function createTradingRouter(): Router {
     const symbol = paramStr(req.params.symbol);
     const tf = resolveTimeframe(req.query);
 
+    if (!validateSymbol(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
     if (!tf) {
       return res.status(400).json({ error: "Invalid interval/timeframe. Use: 1m, 5m, 1h, 4h, 1d" });
     }
@@ -2153,6 +2453,9 @@ export function createTradingRouter(): Router {
     const symbol = paramStr(req.params.symbol);
     const tf = resolveTimeframe(req.query);
 
+    if (!validateSymbol(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
     if (!tf) {
       return res.status(400).json({ error: "Invalid interval/timeframe. Use: 1m, 5m, 1h, 4h, 1d" });
     }
@@ -2167,8 +2470,55 @@ export function createTradingRouter(): Router {
   // GET /api/trading/news/:symbol
   router.get("/news/:symbol", async (req: Request, res: Response) => {
     const symbol = paramStr(req.params.symbol);
+    if (!validateSymbol(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
     const result = await fetchNewsForSymbol(symbol);
     return res.json(result);
+  });
+
+  // GET /api/trading/fundamentals/:symbol
+  router.get("/fundamentals/:symbol", async (req: Request, res: Response) => {
+    const symbol = paramStr(req.params.symbol);
+    if (!validateSymbol(symbol)) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
+    const cached = _fundCache.get(symbol);
+    if (cached && Date.now() - cached.ts < FUND_TTL) return res.json(cached.data);
+
+    try {
+      // Fetch chart meta (52W range, currency) and search result (sector, industry) in parallel
+      const [chartData, searchData] = await Promise.allSettled([
+        yfFetch<YFChartResponse>(
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`
+        ),
+        yfFetch<any>(
+          `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(symbol)}&quotesCount=1&newsCount=0`
+        ),
+      ]);
+
+      const meta = (chartData.status === "fulfilled"
+        ? (chartData.value?.chart?.result?.[0]?.meta ?? {})
+        : {}) as Record<string, any>;
+
+      const searchQuote = (searchData.status === "fulfilled"
+        ? (searchData.value?.quotes?.[0] ?? null)
+        : null) as Record<string, any> | null;
+
+      const result: FundamentalsResult = {
+        symbol,
+        sector: searchQuote?.sector ?? null,
+        industry: searchQuote?.industry ?? null,
+        quoteType: searchQuote?.quoteType ?? null,
+        currency: meta.currency ?? null,
+        week52High: meta.fiftyTwoWeekHigh ?? null,
+        week52Low: meta.fiftyTwoWeekLow ?? null,
+      };
+      _fundCache.set(symbol, { data: result, ts: Date.now() });
+      return res.json(result);
+    } catch {
+      return res.status(503).json({ error: "Failed to fetch fundamentals" });
+    }
   });
 
   return router;

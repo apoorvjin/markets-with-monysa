@@ -1,5 +1,6 @@
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
+import '../models/trading_signal.dart';
 
 class VolatilityRepository {
   const VolatilityRepository();
@@ -16,5 +17,14 @@ class VolatilityRepository {
       data: params,
     );
     return (data['briefing'] ?? '') as String;
+  }
+
+  Future<({List<CrisisEvent> crises, String dataAsOf})> fetchCrises() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.crises) as Map<String, dynamic>;
+    final list = (data['crises'] as List).cast<Map<String, dynamic>>();
+    return (
+      crises: list.map(CrisisEvent.fromJson).toList(),
+      dataAsOf: data['dataAsOf'] as String? ?? '',
+    );
   }
 }

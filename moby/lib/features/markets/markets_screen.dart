@@ -38,6 +38,8 @@ const _cbRates = {
   'CAD': {'label': 'BoC', 'rate': 2.75},
 };
 
+enum _MarketSort { price, change }
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class MarketsScreen extends StatefulWidget {
@@ -137,6 +139,123 @@ class _SearchField extends StatelessWidget {
   }
 }
 
+// ── Sort Header ───────────────────────────────────────────────────────────────
+
+class _SortHeader extends StatelessWidget {
+  const _SortHeader({
+    required this.sortBy,
+    required this.ascending,
+    required this.onSortChange,
+  });
+  final _MarketSort sortBy;
+  final bool ascending;
+  final void Function(_MarketSort) onSortChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text('ASSET',
+                style: AppTypography.labelXs.copyWith(color: c.textMuted)),
+          ),
+          SizedBox(
+            width: 80,
+            child: _SortBtn(
+              label: 'PRICE',
+              active: sortBy == _MarketSort.price,
+              ascending: ascending,
+              onTap: () => onSortChange(_MarketSort.price),
+              palette: c,
+              align: TextAlign.end,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.s3),
+          SizedBox(
+            width: 70,
+            child: _SortBtn(
+              label: '% CHG',
+              active: sortBy == _MarketSort.change,
+              ascending: ascending,
+              onTap: () => onSortChange(_MarketSort.change),
+              palette: c,
+              align: TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SortBtn extends StatelessWidget {
+  const _SortBtn({
+    required this.label,
+    required this.active,
+    required this.ascending,
+    required this.onTap,
+    required this.palette,
+    this.align = TextAlign.start,
+  });
+  final String label;
+  final bool active;
+  final bool ascending;
+  final VoidCallback onTap;
+  final AppPalette palette;
+  final TextAlign align;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = palette;
+    return GestureDetector(
+      onTap: onTap,
+      child: Row(
+        mainAxisSize: MainAxisSize.max,
+        mainAxisAlignment: align == TextAlign.end
+            ? MainAxisAlignment.end
+            : align == TextAlign.center
+                ? MainAxisAlignment.center
+                : MainAxisAlignment.start,
+        children: [
+          Text(label,
+              style: AppTypography.labelXs.copyWith(
+                  color: active ? c.accent : c.textMuted)),
+          if (active)
+            Icon(
+              ascending ? Icons.arrow_upward : Icons.arrow_downward,
+              size: 10,
+              color: c.accent,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+List<MarketItem> _sortItems(
+    List<MarketItem> items, _MarketSort sortBy, bool ascending) {
+  final sorted = [...items];
+  sorted.sort((a, b) {
+    double aVal, bVal;
+    if (sortBy == _MarketSort.price) {
+      aVal = a.price ?? double.negativeInfinity;
+      bVal = b.price ?? double.negativeInfinity;
+    } else {
+      aVal = a.changePercent ?? double.negativeInfinity;
+      bVal = b.changePercent ?? double.negativeInfinity;
+    }
+    return ascending ? aVal.compareTo(bVal) : bVal.compareTo(aVal);
+  });
+  return sorted;
+}
+
 // ── Indices Tab ───────────────────────────────────────────────────────────────
 
 class _IndicesTab extends ConsumerStatefulWidget {
@@ -148,6 +267,19 @@ class _IndicesTab extends ConsumerStatefulWidget {
 
 class _IndicesTabState extends ConsumerState<_IndicesTab> {
   String _query = '';
+  _MarketSort _sortBy = _MarketSort.change;
+  bool _ascending = false;
+
+  void _handleSort(_MarketSort field) {
+    setState(() {
+      if (_sortBy == field) {
+        _ascending = !_ascending;
+      } else {
+        _sortBy = field;
+        _ascending = false;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -167,9 +299,15 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
                     i.name.toLowerCase().contains(_query) ||
                     i.symbol.toLowerCase().contains(_query))
                 .toList();
+        final sorted = _sortItems(filtered, _sortBy, _ascending);
         return Column(
           children: [
             _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
+            _SortHeader(
+              sortBy: _sortBy,
+              ascending: _ascending,
+              onSortChange: _handleSort,
+            ),
             Expanded(
               child: filtered.isEmpty && _query.isNotEmpty
                   ? Center(
@@ -180,10 +318,11 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
                       backgroundColor: c.surface,
                       onRefresh: () => ref.refresh(_indicesProvider.future),
                       child: ListView.builder(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: AppSpacing.s3),
-                        itemCount: filtered.length,
-                        itemBuilder: (ctx, i) => _MarketRow(item: filtered[i]),
+                        padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).padding.bottom +
+                                AppSpacing.s3),
+                        itemCount: sorted.length,
+                        itemBuilder: (ctx, i) => _MarketRow(item: sorted[i]),
                       ),
                     ),
             ),
@@ -205,6 +344,19 @@ class _CommoditiesTab extends ConsumerStatefulWidget {
 
 class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
   String _query = '';
+  _MarketSort _sortBy = _MarketSort.change;
+  bool _ascending = false;
+
+  void _handleSort(_MarketSort field) {
+    setState(() {
+      if (_sortBy == field) {
+        _ascending = !_ascending;
+      } else {
+        _sortBy = field;
+        _ascending = false;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -226,9 +378,15 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
                     i.name.toLowerCase().contains(_query) ||
                     i.symbol.toLowerCase().contains(_query))
                 .toList();
+        final sorted = _sortItems(filtered, _sortBy, _ascending);
         return Column(
           children: [
             _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
+            _SortHeader(
+              sortBy: _sortBy,
+              ascending: _ascending,
+              onSortChange: _handleSort,
+            ),
             Expanded(
               child: filtered.isEmpty && _query.isNotEmpty
                   ? Center(
@@ -242,9 +400,11 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
                   ref.invalidate(_cotProvider);
                 },
                 child: ListView(
-                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
+                  padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).padding.bottom +
+                          AppSpacing.s3),
                   children: [
-                    ...filtered.map((item) => _MarketRow(item: item)),
+                    ...sorted.map((item) => _MarketRow(item: item)),
                     if (_query.isEmpty) ...[
                       const SizedBox(height: AppSpacing.s5),
                       Padding(
@@ -292,6 +452,19 @@ class _ForexTab extends ConsumerStatefulWidget {
 
 class _ForexTabState extends ConsumerState<_ForexTab> {
   String _query = '';
+  _MarketSort _sortBy = _MarketSort.change;
+  bool _ascending = false;
+
+  void _handleSort(_MarketSort field) {
+    setState(() {
+      if (_sortBy == field) {
+        _ascending = !_ascending;
+      } else {
+        _sortBy = field;
+        _ascending = false;
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -311,10 +484,16 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                     i.name.toLowerCase().contains(_query) ||
                     i.symbol.toLowerCase().contains(_query))
                 .toList();
+        final sorted = _sortItems(filtered, _sortBy, _ascending);
 
         return Column(
           children: [
             _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
+            _SortHeader(
+              sortBy: _sortBy,
+              ascending: _ascending,
+              onSortChange: _handleSort,
+            ),
             Expanded(
               child: filtered.isEmpty && _query.isNotEmpty
                   ? Center(
@@ -326,11 +505,17 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                 onRefresh: () => ref.refresh(_forexProvider.future),
                 child: _query.isEmpty
                     ? ListView(
-                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
+                        padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).padding.bottom +
+                                AppSpacing.s3),
                         children: (() {
                           final grouped = <String, List<MarketItem>>{};
                           for (final item in items) {
                             (grouped[item.region ?? 'Other'] ??= []).add(item);
+                          }
+                          // Sort within each group
+                          for (final key in grouped.keys) {
+                            grouped[key] = _sortItems(grouped[key]!, _sortBy, _ascending);
                           }
                           return grouped.entries.expand((entry) => [
                             Padding(
@@ -347,10 +532,12 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                         })(),
                       )
                     : ListView.builder(
-                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
-                        itemCount: filtered.length,
+                        padding: EdgeInsets.only(
+                            bottom: MediaQuery.of(context).padding.bottom +
+                                AppSpacing.s3),
+                        itemCount: sorted.length,
                         itemBuilder: (ctx, i) =>
-                            _MarketRow(item: filtered[i], isForex: true),
+                            _MarketRow(item: sorted[i], isForex: true),
                       ),
               ),
             ),
@@ -411,25 +598,30 @@ class _MarketRow extends StatelessWidget {
                 ],
               ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  _formatPrice(item.price, item.unit),
-                  style: AppTypography.numericLg.copyWith(color: c.textPrimary),
+            // Price column
+            SizedBox(
+              width: 80,
+              child: Text(
+                _formatPrice(item.price, item.unit),
+                style: AppTypography.numericLg.copyWith(color: c.textPrimary),
+                textAlign: TextAlign.end,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.s3),
+            // % Change column
+            SizedBox(
+              width: 70,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isUp ? c.positiveDim : c.dangerDim,
+                  borderRadius: BorderRadius.circular(4),
                 ),
-                const SizedBox(height: 2),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: isUp ? c.positiveDim : c.dangerDim,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(pctStr,
-                      style: AppTypography.sm.copyWith(
-                          color: pctColor, fontWeight: FontWeight.w600)),
-                ),
-              ],
+                child: Text(pctStr,
+                    style: AppTypography.sm.copyWith(
+                        color: pctColor, fontWeight: FontWeight.w600),
+                    textAlign: TextAlign.center),
+              ),
             ),
           ],
         ),
@@ -609,11 +801,31 @@ class _FxDifferential extends StatelessWidget {
 
 // ── Sectors Tab ───────────────────────────────────────────────────────────────
 
-class _SectorsTab extends ConsumerWidget {
+class _SectorsTab extends ConsumerStatefulWidget {
   const _SectorsTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SectorsTab> createState() => _SectorsTabState();
+}
+
+class _SectorsTabState extends ConsumerState<_SectorsTab> {
+  // Sort: null = default (1M perf), otherwise the field name
+  String _sortField = 'perf1M';
+  bool _ascending = false;
+
+  void _handleSort(String field) {
+    setState(() {
+      if (_sortField == field) {
+        _ascending = !_ascending;
+      } else {
+        _sortField = field;
+        _ascending = false;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
     final async = ref.watch(_sectorsProvider);
     return async.when(
@@ -623,37 +835,121 @@ class _SectorsTab extends ConsumerWidget {
         onRetry: () => ref.invalidate(_sectorsProvider),
       ),
       data: (sectors) {
-        final sorted = [...sectors]..sort((a, b) =>
-            ((b['perf1M'] as num?) ?? 0).compareTo((a['perf1M'] as num?) ?? 0));
-        return RefreshIndicator(
-          color: c.accent,
-          backgroundColor: c.surface,
-          onRefresh: () => ref.refresh(_sectorsProvider.future),
-          child: ListView.builder(
-            itemCount: sorted.length,
-            itemBuilder: (_, i) => _SectorRow(sector: sorted[i], rank: i + 1),
-          ),
+        final sorted = [...sectors]..sort((a, b) {
+            final aVal = (a[_sortField] as num?)?.toDouble() ?? double.negativeInfinity;
+            final bVal = (b[_sortField] as num?)?.toDouble() ?? double.negativeInfinity;
+            return _ascending ? aVal.compareTo(bVal) : bVal.compareTo(aVal);
+          });
+        return Column(
+          children: [
+            _SectorSortHeader(
+              sortField: _sortField,
+              ascending: _ascending,
+              onSort: _handleSort,
+            ),
+            Expanded(
+              child: RefreshIndicator(
+                color: c.accent,
+                backgroundColor: c.surface,
+                onRefresh: () => ref.refresh(_sectorsProvider.future),
+                child: ListView.builder(
+                  padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).padding.bottom +
+                          AppSpacing.s3),
+                  itemCount: sorted.length,
+                  itemBuilder: (_, i) =>
+                      _SectorRow(sector: sorted[i], rank: i + 1, sortField: _sortField),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );
   }
 }
 
-class _SectorRow extends StatelessWidget {
-  const _SectorRow({required this.sector, required this.rank});
-  final Map<String, dynamic> sector;
-  final int rank;
+class _SectorSortHeader extends StatelessWidget {
+  const _SectorSortHeader({
+    required this.sortField,
+    required this.ascending,
+    required this.onSort,
+  });
+  final String sortField;
+  final bool ascending;
+  final void Function(String) onSort;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final perf1M = (sector['perf1M'] as num?)?.toDouble() ?? 0;
+    final fields = [
+      ('1D', 'changePercent'),
+      ('1W', 'perf1W'),
+      ('1M', 'perf1M'),
+      ('3M', 'perf3M'),
+      ('6M', 'perf6M'),
+      ('1Y', 'perf1Y'),
+    ];
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text('SECTOR',
+                style: AppTypography.labelXs.copyWith(color: c.textMuted)),
+          ),
+          ...fields.map((f) => GestureDetector(
+                onTap: () => onSort(f.$2),
+                child: Padding(
+                  padding: const EdgeInsets.only(left: AppSpacing.s4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(f.$1,
+                          style: AppTypography.labelXs.copyWith(
+                              color: sortField == f.$2 ? c.accent : c.textMuted)),
+                      if (sortField == f.$2)
+                        Icon(
+                          ascending ? Icons.arrow_upward : Icons.arrow_downward,
+                          size: 9,
+                          color: c.accent,
+                        ),
+                    ],
+                  ),
+                ),
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectorRow extends StatelessWidget {
+  const _SectorRow({
+    required this.sector,
+    required this.rank,
+    required this.sortField,
+  });
+  final Map<String, dynamic> sector;
+  final int rank;
+  final String sortField;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final activePerf = (sector[sortField] as num?)?.toDouble() ?? 0;
     final isTop = rank <= 3;
     final isBottom = rank >= 9;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: AppSpacing.s4, vertical: AppSpacing.s1),
-      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s4, vertical: AppSpacing.s1),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
       decoration: BoxDecoration(
         color: isTop
             ? c.positive.withAlpha(15)
@@ -665,18 +961,48 @@ class _SectorRow extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Text(sector['emoji'] as String? ?? '', style: const TextStyle(fontSize: 20)),
+          Text(sector['emoji'] as String? ?? '',
+              style: const TextStyle(fontSize: 20)),
           const SizedBox(width: AppSpacing.s3),
           Expanded(
             child: Text(sector['name'] as String? ?? '',
                 style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
           ),
           _PctCell(
-              label: '1D', value: (sector['changePercent'] as num?)?.toDouble(), palette: c),
-          const SizedBox(width: AppSpacing.s3),
-          _PctCell(label: '1W', value: (sector['perf1W'] as num?)?.toDouble(), palette: c),
-          const SizedBox(width: AppSpacing.s3),
-          _PctCell(label: '1M', value: perf1M, palette: c),
+              label: '1D',
+              value: (sector['changePercent'] as num?)?.toDouble(),
+              active: sortField == 'changePercent',
+              palette: c),
+          const SizedBox(width: AppSpacing.s4),
+          _PctCell(
+              label: '1W',
+              value: (sector['perf1W'] as num?)?.toDouble(),
+              active: sortField == 'perf1W',
+              palette: c),
+          const SizedBox(width: AppSpacing.s4),
+          _PctCell(
+              label: '1M',
+              value: (sector['perf1M'] as num?)?.toDouble(),
+              active: sortField == 'perf1M',
+              palette: c),
+          const SizedBox(width: AppSpacing.s4),
+          _PctCell(
+              label: '3M',
+              value: (sector['perf3M'] as num?)?.toDouble(),
+              active: sortField == 'perf3M',
+              palette: c),
+          const SizedBox(width: AppSpacing.s4),
+          _PctCell(
+              label: '6M',
+              value: (sector['perf6M'] as num?)?.toDouble(),
+              active: sortField == 'perf6M',
+              palette: c),
+          const SizedBox(width: AppSpacing.s4),
+          _PctCell(
+              label: '1Y',
+              value: (sector['perf1Y'] as num?)?.toDouble(),
+              active: sortField == 'perf1Y',
+              palette: c),
         ],
       ),
     );
@@ -684,23 +1010,40 @@ class _SectorRow extends StatelessWidget {
 }
 
 class _PctCell extends StatelessWidget {
-  const _PctCell({required this.label, required this.value, required this.palette});
+  const _PctCell({
+    required this.label,
+    required this.value,
+    required this.palette,
+    this.active = false,
+  });
   final String label;
   final double? value;
   final AppPalette palette;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
     final v = value;
-    final color = v == null ? palette.textMuted : (v >= 0 ? palette.positive : palette.danger);
-    final str = v == null ? '--' : '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)}%';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Text(label, style: AppTypography.xs.copyWith(color: palette.textMuted)),
-        Text(str,
-            style: AppTypography.sm.copyWith(color: color, fontWeight: FontWeight.w600)),
-      ],
+    final color = v == null
+        ? palette.textMuted
+        : (v >= 0 ? palette.positive : palette.danger);
+    final str = v == null
+        ? '--'
+        : '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)}%';
+    return SizedBox(
+      width: 36,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(label,
+              style: AppTypography.xs.copyWith(
+                  color: active ? palette.accent : palette.textMuted,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w400)),
+          Text(str,
+              style: AppTypography.sm.copyWith(
+                  color: color, fontWeight: FontWeight.w600)),
+        ],
+      ),
     );
   }
 }
@@ -733,63 +1076,62 @@ void _showAbout(BuildContext context) {
           borderRadius: const BorderRadius.vertical(
               top: Radius.circular(AppRadius.lg)),
         ),
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.s5,
-          AppSpacing.s4,
-          AppSpacing.s5,
-          AppSpacing.s5 + MediaQuery.of(ctx).viewInsets.bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: c.border,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s5),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: c.border,
+                      borderRadius: BorderRadius.circular(AppRadius.full),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: AppSpacing.s5),
+                Text('Moby — Market Intelligence',
+                    style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+                const SizedBox(height: AppSpacing.s2),
+                Text('Real-time tariff exposure, global markets, and AI trading signals.',
+                    style: AppTypography.sm.copyWith(color: c.textSecondary)),
+                const SizedBox(height: AppSpacing.s5),
+                Text('DATA SOURCES',
+                    style: AppTypography.labelXs.copyWith(color: c.textMuted)),
+                const SizedBox(height: AppSpacing.s2),
+                Text(
+                  'Market prices from Yahoo Finance · CFTC Disaggregated COT Report · '
+                  'US Treasury FiscalData API · Tariff data reflects April 2025 USTR schedules.',
+                  style: AppTypography.sm.copyWith(color: c.textSecondary),
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                Text('PRIVACY',
+                    style: AppTypography.labelXs.copyWith(color: c.textMuted)),
+                const SizedBox(height: AppSpacing.s2),
+                Text(
+                  'Moby does not collect, store, or share any personal data. '
+                  'No account or registration is required. All market data is fetched '
+                  'in real time from public APIs and is not retained on our servers.',
+                  style: AppTypography.sm.copyWith(color: c.textSecondary),
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                Text('DISCLAIMER',
+                    style: AppTypography.labelXs.copyWith(color: c.textMuted)),
+                const SizedBox(height: AppSpacing.s2),
+                Text(
+                  'Trading signals are for informational purposes only and do not '
+                  'constitute financial advice. Past performance is not indicative '
+                  'of future results.',
+                  style: AppTypography.sm.copyWith(color: c.textSecondary),
+                ),
+                const SizedBox(height: AppSpacing.s5),
+              ],
             ),
-            const SizedBox(height: AppSpacing.s5),
-            Text('Moby — Market Intelligence',
-                style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
-            const SizedBox(height: AppSpacing.s2),
-            Text('Real-time tariff exposure, global markets, and AI trading signals.',
-                style: AppTypography.sm.copyWith(color: c.textSecondary)),
-            const SizedBox(height: AppSpacing.s5),
-            Text('DATA SOURCES',
-                style: AppTypography.labelXs.copyWith(color: c.textMuted)),
-            const SizedBox(height: AppSpacing.s2),
-            Text(
-              'Market prices from Yahoo Finance · CFTC Disaggregated COT Report · '
-              'US Treasury FiscalData API · Tariff data reflects April 2025 USTR schedules.',
-              style: AppTypography.sm.copyWith(color: c.textSecondary),
-            ),
-            const SizedBox(height: AppSpacing.s4),
-            Text('PRIVACY',
-                style: AppTypography.labelXs.copyWith(color: c.textMuted)),
-            const SizedBox(height: AppSpacing.s2),
-            Text(
-              'Moby does not collect, store, or share any personal data. '
-              'No account or registration is required. All market data is fetched '
-              'in real time from public APIs and is not retained on our servers.',
-              style: AppTypography.sm.copyWith(color: c.textSecondary),
-            ),
-            const SizedBox(height: AppSpacing.s4),
-            Text('DISCLAIMER',
-                style: AppTypography.labelXs.copyWith(color: c.textMuted)),
-            const SizedBox(height: AppSpacing.s2),
-            Text(
-              'Trading signals are for informational purposes only and do not '
-              'constitute financial advice. Past performance is not indicative '
-              'of future results.',
-              style: AppTypography.sm.copyWith(color: c.textSecondary),
-            ),
-            const SizedBox(height: AppSpacing.s5),
-          ],
+          ),
         ),
       );
     },

@@ -1,7 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum TradingStrategy { s1, s2, s3, s4, s5, s6, s7, s8 }
+// Injected at app startup so providers can read prefs synchronously.
+final sharedPreferencesProvider = Provider<SharedPreferences>(
+  (_) => throw UnimplementedError('sharedPreferencesProvider must be overridden in ProviderScope'),
+);
+
+enum TradingStrategy { s1, s2, s3, s4, s5, s6, s7, s8, s9 }
 
 extension TradingStrategyExt on TradingStrategy {
   String get label => switch (this) {
@@ -13,9 +18,10 @@ extension TradingStrategyExt on TradingStrategy {
         TradingStrategy.s6 => 'S6',
         TradingStrategy.s7 => 'S7',
         TradingStrategy.s8 => 'S8',
+        TradingStrategy.s9 => 'S9',
       };
 
-  // Server expects "1"–"8" not "S1"–"S8"
+  // Server expects "1"–"9" not "S1"–"S9"
   String get serverParam => switch (this) {
         TradingStrategy.s1 => '1',
         TradingStrategy.s2 => '2',
@@ -25,6 +31,7 @@ extension TradingStrategyExt on TradingStrategy {
         TradingStrategy.s6 => '6',
         TradingStrategy.s7 => '7',
         TradingStrategy.s8 => '8',
+        TradingStrategy.s9 => '9',
       };
 
   String get name => switch (this) {
@@ -36,6 +43,7 @@ extension TradingStrategyExt on TradingStrategy {
         TradingStrategy.s6 => 'Adaptive Hybrid',
         TradingStrategy.s7 => 'APEX',
         TradingStrategy.s8 => 'Ensemble',
+        TradingStrategy.s9 => 'Silver Liquidity Sweep',
       };
 
   String get description => switch (this) {
@@ -47,6 +55,7 @@ extension TradingStrategyExt on TradingStrategy {
         TradingStrategy.s6 => 'S2 tech + regime-adaptive news blend · freshness decay · source credibility · asymmetric thresholds',
         TradingStrategy.s7 => '5-regime APEX · direction engine per regime · divergence veto · HTF permission · quality gate (60/100) · cross-asset confirmation · regime-aware risk sizing',
         TradingStrategy.s8 => 'S4 + S5 + S7 weighted by per-regime accuracy · 2/3 consensus required · disagreement = no trade · full/reduced position by agreement count',
+        TradingStrategy.s9 => 'London/NY kill-zone sessions · liquidity sweep detection · 9 EMA power candle · Fibonacci 44–61.8% POI zone · 0.272/0.618 extension TPs · optimised for Silver (SI=F) intraday',
       };
 }
 
@@ -55,24 +64,18 @@ class StrategyNotifier extends Notifier<TradingStrategy> {
 
   @override
   TradingStrategy build() {
-    _load();
-    return TradingStrategy.s1;
-  }
-
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = ref.watch(sharedPreferencesProvider);
     final saved = prefs.getString(_key);
-    if (saved != null) {
-      state = TradingStrategy.values.firstWhere(
-        (s) => s.label == saved,
-        orElse: () => TradingStrategy.s1,
-      );
-    }
+    if (saved == null) return TradingStrategy.s1;
+    return TradingStrategy.values.firstWhere(
+      (s) => s.label == saved,
+      orElse: () => TradingStrategy.s1,
+    );
   }
 
   Future<void> setStrategy(TradingStrategy s) async {
     state = s;
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(_key, s.label);
   }
 }

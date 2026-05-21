@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../data/models/trading_signal.dart';
 import '../../data/repositories/volatility_repository.dart';
 import '../../data/repositories/markets_repository.dart';
 import '../../shared/widgets/glass_card.dart';
@@ -35,6 +36,11 @@ final _briefingProvider = FutureProvider.autoDispose<String>((ref) async {
 
 final _bondsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
     (_) => MarketsRepository.instance.fetchBonds());
+
+final _crisesProvider = FutureProvider.autoDispose<
+    ({List<CrisisEvent> crises, String dataAsOf})>(
+  (_) => VolatilityRepository.instance.fetchCrises(),
+);
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -76,13 +82,26 @@ class VolatilityScreen extends ConsumerWidget {
             },
             child: MaxWidthLayout(
               child: ListView(
-                padding: const EdgeInsets.all(AppSpacing.s5),
+                padding: EdgeInsets.fromLTRB(
+                  AppSpacing.s5,
+                  AppSpacing.s5,
+                  AppSpacing.s5,
+                  AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+                ),
                 children: [
                   _MacroRegimePanel(vixPrice: vix),
                   const SizedBox(height: AppSpacing.s3),
-                  _StressMeter(vix: vix),
-                  const SizedBox(height: AppSpacing.s5),
-                  _VixGauge(vix: vix),
+                  // VIX gauge and Stress Meter side by side
+                  IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: _VixGauge(vix: vix)),
+                        const SizedBox(width: AppSpacing.s3),
+                        Expanded(child: _StressMeter(vix: vix)),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: AppSpacing.s5),
                   Text('Crisis-Response Assets',
                       style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
@@ -134,40 +153,25 @@ class _StressMeter extends StatelessWidget {
     final color = _color(c);
     return GlassCard(
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.speed, color: c.accent, size: 20),
-              const SizedBox(width: AppSpacing.s3),
-              Text('Market Stress Meter',
-                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _label,
-                style: AppTypography.xl3.copyWith(
-                    color: color, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(width: AppSpacing.s3),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: color.withAlpha(30),
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-                child: Text(
-                  'VIX ${vix.toStringAsFixed(1)}',
-                  style: AppTypography.sm
-                      .copyWith(color: color, fontWeight: FontWeight.w700),
-                ),
+              Icon(Icons.speed, color: c.accent, size: 16),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Stress Meter',
+                    style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
               ),
             ],
           ),
           const SizedBox(height: AppSpacing.s4),
+          Text(
+            _label,
+            style: AppTypography.xl2.copyWith(
+                color: color, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: AppSpacing.s2),
           // Stress bar
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
@@ -175,18 +179,30 @@ class _StressMeter extends StatelessWidget {
               value: min(vix / 50, 1.0),
               backgroundColor: c.border,
               valueColor: AlwaysStoppedAnimation(color),
-              minHeight: 8,
+              minHeight: 6,
             ),
           ),
-          const SizedBox(height: AppSpacing.s3),
+          const SizedBox(height: AppSpacing.s2),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Low', style: TextStyle(color: c.textMuted, fontSize: 10)),
-              Text('Moderate', style: TextStyle(color: c.textMuted, fontSize: 10)),
-              Text('High', style: TextStyle(color: c.textMuted, fontSize: 10)),
-              Text('Extreme', style: TextStyle(color: c.textMuted, fontSize: 10)),
+              Text('Low', style: TextStyle(color: c.textMuted, fontSize: 9)),
+              Text('High', style: TextStyle(color: c.textMuted, fontSize: 9)),
+              Text('Extreme', style: TextStyle(color: c.textMuted, fontSize: 9)),
             ],
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: color.withAlpha(30),
+              borderRadius: BorderRadius.circular(AppRadius.full),
+            ),
+            child: Text(
+              'VIX ${vix.toStringAsFixed(1)}',
+              style: AppTypography.xs
+                  .copyWith(color: color, fontWeight: FontWeight.w700),
+            ),
           ),
         ],
       ),
@@ -207,28 +223,30 @@ class _VixGauge extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('VIX Index',
-              style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-          const SizedBox(height: AppSpacing.s4),
           Row(
             children: [
-              Text(
-                vix.toStringAsFixed(2),
-                style: AppTypography.xl4.copyWith(
-                    fontWeight: FontWeight.w800,
-                    color: c.textPrimary,
-                    fontFeatures: [const FontFeature.tabularFigures()]),
-              ),
-              const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _Band('< 15', 'Normal', c.positive),
-                  _Band('15–25', 'Elevated', c.warning),
-                  const _Band('25–35', 'High', Color(0xFFFF8C42)),
-                  _Band('> 35', 'Extreme', c.danger),
-                ],
-              ),
+              Icon(Icons.show_chart_rounded, color: c.accent, size: 16),
+              const SizedBox(width: AppSpacing.s2),
+              Text('VIX Index',
+                  style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          Text(
+            vix.toStringAsFixed(2),
+            style: AppTypography.xl3.copyWith(
+                fontWeight: FontWeight.w800,
+                color: c.textPrimary,
+                fontFeatures: [const FontFeature.tabularFigures()]),
+          ),
+          const Spacer(),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _Band('< 15', 'Normal', c.positive),
+              _Band('15–25', 'Elevated', c.warning),
+              const _Band('25–35', 'High', Color(0xFFFF8C42)),
+              _Band('> 35', 'Extreme', c.danger),
             ],
           ),
         ],
@@ -347,22 +365,39 @@ class _GeopoliticalChain extends StatelessWidget {
 
   static const _phases = [
     (
-      period: '0–48h',
-      title: 'Immediate Shock',
-      events: ['Safe havens spike (Gold, CHF, JPY)', 'Risk assets sell off',
-          'VIX surges > 30'],
+      period: '0–72h',
+      title: 'Shock Response',
+      events: [
+        'Safe havens surge — Gold, US Treasuries (TLT), CHF, JPY',
+        'Algorithmic selling across equities; bid-ask spreads widen sharply',
+        'VIX spikes above 30; put/call ratio spikes — hedging demand surges',
+        'Oil reprices instantly on supply disruption fears',
+        'Dollar strengthens as global capital seeks USD-denominated safety',
+      ],
     ),
     (
-      period: '1–4 weeks',
-      title: 'Adjustment Phase',
-      events: ['Supply chain rerouting begins', 'Energy prices reprice',
-          'Central bank positioning'],
+      period: '1–6 weeks',
+      title: 'Repricing & Sector Rotation',
+      events: [
+        'Central bank emergency statements; potential unscheduled rate cuts',
+        'Corporate earnings guidance cuts begin; analyst downgrades',
+        'Defense, energy, gold miners benefit; travel, tech, consumer discretionary fall',
+        'FX markets reprice geopolitical risk premium — EM currencies weaken',
+        'Commodities stabilize or extend based on conflict scope and sanctions',
+        'Credit spreads widen; high-yield bonds underperform',
+      ],
     ),
     (
-      period: '1–6 months',
-      title: 'Structural Shift',
-      events: ['Sector rotation complete', 'New equilibrium established',
-          'Policy responses priced in'],
+      period: '2–12 months',
+      title: 'Structural Realignment',
+      events: [
+        'Supply chain diversification accelerates; trade routes reconfigured',
+        'Fiscal stimulus, sanctions regimes, and aid packages fully priced in',
+        'Inflation outlook shifts — central bank pivot or acceleration',
+        'Equity markets find a new equilibrium; earnings expectations reset',
+        'Structural beneficiaries emerge (defense, domestic energy, nearshoring)',
+        'EM markets either decouple or remain pressured based on contagion',
+      ],
     ),
   ];
 
@@ -435,66 +470,154 @@ class _PhaseCard extends StatelessWidget {
 
 // ── Historical Playbook ───────────────────────────────────────────────────────
 
-class _HistoricalPlaybook extends StatelessWidget {
+class _HistoricalPlaybook extends ConsumerWidget {
   const _HistoricalPlaybook();
 
-  static const _crises = [
-    (name: '2008 GFC', vix: 89.5, outcome: 'S&P -57%, Gold +25%'),
-    (name: 'COVID 2020', vix: 85.5, outcome: 'S&P -34%, BTC -65% then +1000%'),
-    (name: '1973 Oil Crisis', vix: 0.0, outcome: 'S&P -48%, Oil +400%'),
-    (name: 'Ukraine 2022', vix: 38.9, outcome: 'Oil +80%, Wheat +60%'),
-    (name: 'Euro Crisis 2012', vix: 48.2, outcome: 'EUR -25%, PIIGS bonds spiked'),
-  ];
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_crisesProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Crisis Playbook',
+            style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+        const SizedBox(height: AppSpacing.s3),
+        async.when(
+          loading: () => Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.s5),
+              child: CircularProgressIndicator(color: c.accent),
+            ),
+          ),
+          error: (_, __) => _CrisisErrorRow(onRetry: () => ref.invalidate(_crisesProvider)),
+          data: (result) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ...result.crises.map((e) => _CrisisCard(event: e)),
+              const SizedBox(height: AppSpacing.s2),
+              Text(
+                'Data as of ${result.dataAsOf}',
+                style: AppTypography.xs.copyWith(color: c.textSecondary),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CrisisCard extends StatelessWidget {
+  const _CrisisCard({required this.event});
+  final CrisisEvent event;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Historical Crisis Playbook',
-            style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-        const SizedBox(height: AppSpacing.s3),
-        ..._crises.map((crisis) => Container(
-              margin: const EdgeInsets.only(bottom: AppSpacing.s3),
-              padding: const EdgeInsets.all(AppSpacing.s4),
-              decoration: BoxDecoration(
-                color: c.surfaceCard,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                border: Border.all(color: c.border),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(crisis.name,
-                            style: AppTypography.labelLg.copyWith(color: c.textPrimary)),
-                        Text(crisis.outcome,
-                            style: AppTypography.sm.copyWith(
-                                color: c.textSecondary)),
-                      ],
-                    ),
-                  ),
-                  if (crisis.vix > 0)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: c.dangerDim,
-                        borderRadius: BorderRadius.circular(AppRadius.full),
-                      ),
-                      child: Text(
-                        'VIX ${crisis.vix.toStringAsFixed(0)}',
+
+    Color? statusColor;
+    String? statusLabel;
+    if (event.status == 'ongoing') {
+      statusColor = c.danger;
+      statusLabel = 'ONGOING';
+    } else if (event.status == 'recent') {
+      statusColor = c.warning;
+      statusLabel = 'RECENT';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.s3),
+      padding: const EdgeInsets.all(AppSpacing.s4),
+      decoration: BoxDecoration(
+        color: c.surfaceCard,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(
+          color: event.status == 'ongoing'
+              ? c.danger.withAlpha(80)
+              : c.border,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(event.name,
+                        style: AppTypography.headingSm.copyWith(
+                            color: c.textPrimary,
+                            fontWeight: FontWeight.w800)),
+                    Text(event.period,
                         style: AppTypography.xs.copyWith(
-                            color: c.danger,
-                            fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                ],
+                            color: c.textSecondary)),
+                  ],
+                ),
               ),
-            )),
+              if (statusLabel != null)
+                Container(
+                  margin: const EdgeInsets.only(left: AppSpacing.s2),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: statusColor!.withAlpha(30),
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                    border: Border.all(color: statusColor.withAlpha(80)),
+                  ),
+                  child: Text(
+                    statusLabel,
+                    style: AppTypography.xs.copyWith(
+                        color: statusColor, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              if (event.vixPeak > 0)
+                Container(
+                  margin: const EdgeInsets.only(left: AppSpacing.s2),
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: c.dangerDim,
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                  ),
+                  child: Text(
+                    'VIX ${event.vixPeak.toStringAsFixed(0)}',
+                    style: AppTypography.xs.copyWith(
+                        color: c.danger, fontWeight: FontWeight.w700),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s2),
+          Text(event.outcome,
+              style: AppTypography.sm.copyWith(
+                  color: c.textPrimary, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 3),
+          Text(event.description,
+              style: AppTypography.xs.copyWith(color: c.textSecondary)),
+        ],
+      ),
+    );
+  }
+}
+
+class _CrisisErrorRow extends StatelessWidget {
+  const _CrisisErrorRow({required this.onRetry});
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Text('Failed to load crisis data',
+            style: AppTypography.sm.copyWith(color: c.textSecondary)),
+        const SizedBox(width: AppSpacing.s3),
+        TextButton(
+          onPressed: onRetry,
+          child: Text('Retry', style: AppTypography.sm.copyWith(color: c.accent)),
+        ),
       ],
     );
   }
@@ -502,13 +625,19 @@ class _HistoricalPlaybook extends StatelessWidget {
 
 // ── AI Briefing ───────────────────────────────────────────────────────────────
 
-class _AiBriefingCard extends ConsumerWidget {
+class _AiBriefingCard extends ConsumerStatefulWidget {
   const _AiBriefingCard();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_AiBriefingCard> createState() => _AiBriefingCardState();
+}
+
+class _AiBriefingCardState extends ConsumerState<_AiBriefingCard> {
+  bool _requested = false;
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
-    final async = ref.watch(_briefingProvider);
 
     return GlassCard(
       child: Column(
@@ -522,8 +651,7 @@ class _AiBriefingCard extends ConsumerWidget {
                   color: c.accentDim,
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Icon(Icons.auto_awesome,
-                    color: c.accent, size: 16),
+                child: Icon(Icons.auto_awesome, color: c.accent, size: 16),
               ),
               const SizedBox(width: AppSpacing.s3),
               Text('AI Market Briefing',
@@ -531,24 +659,71 @@ class _AiBriefingCard extends ConsumerWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.s4),
-          async.when(
-            loading: () => Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: CircularProgressIndicator(color: c.accent),
+          if (!_requested)
+            GestureDetector(
+              onTap: () => setState(() => _requested = true),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                decoration: BoxDecoration(
+                  color: c.accentDim,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: c.accent.withAlpha(60)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.auto_awesome_rounded, size: 15, color: c.accent),
+                    const SizedBox(width: AppSpacing.s2),
+                    Text('Generate AI Briefing',
+                        style: AppTypography.labelMd.copyWith(color: c.accent)),
+                  ],
+                ),
               ),
-            ),
-            error: (_, __) => Text(
-              'AI briefing unavailable.',
-              style: AppTypography.md.copyWith(color: c.textMuted),
-            ),
-            data: (briefing) => Text(
-              briefing.isEmpty
-                  ? 'No briefing available at this time.'
-                  : briefing,
-              style: AppTypography.lg.copyWith(color: c.textSecondary, height: 1.6),
-            ),
-          ),
+            )
+          else
+            Builder(builder: (ctx) {
+              final async = ref.watch(_briefingProvider);
+              return async.when(
+                loading: () => Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: CircularProgressIndicator(color: c.accent),
+                  ),
+                ),
+                error: (_, __) => GestureDetector(
+                  onTap: () => ref.invalidate(_briefingProvider),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                    decoration: BoxDecoration(
+                      color: c.dangerDim,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: c.danger.withAlpha(60)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.refresh_rounded, size: 15, color: c.danger),
+                        const SizedBox(width: AppSpacing.s2),
+                        Text('Try again',
+                            style: AppTypography.labelMd
+                                .copyWith(color: c.danger)),
+                      ],
+                    ),
+                  ),
+                ),
+                data: (briefing) => Text(
+                  briefing.isEmpty
+                      ? 'No briefing available at this time.'
+                      : briefing,
+                  style: AppTypography.lg
+                      .copyWith(color: c.textSecondary, height: 1.6),
+                ),
+              );
+            }),
         ],
       ),
     );
@@ -642,82 +817,83 @@ void _showYieldCurveInfo(BuildContext context) {
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
     isScrollControlled: true,
-    builder: (_) => Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: c.border,
-                borderRadius: BorderRadius.circular(2),
+    builder: (_) => SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s5),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: c.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Text('Understanding the Yield Curve',
-              style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
-          const SizedBox(height: AppSpacing.s3),
-          Text(
-            'The yield curve plots US Treasury bond yields across maturities — '
-            'from 3-month bills to 30-year bonds. It is one of the most reliable leading '
-            'indicators of economic health.',
-            style: AppTypography.sm.copyWith(color: c.textSecondary),
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          _YieldCurveInfoRow(
-            icon: Icons.trending_up_rounded,
-            color: c.positive,
-            title: 'Normal (upward sloping)',
-            description: 'Long-term bonds yield more than short-term. '
-                'Signals a healthy, growing economy with inflation expectations.',
-          ),
-          const SizedBox(height: AppSpacing.s4),
-          _YieldCurveInfoRow(
-            icon: Icons.remove_rounded,
-            color: c.warning,
-            title: 'Flat',
-            description: 'Short and long yields are similar. '
-                'Signals economic uncertainty — often a transition between normal and inverted.',
-          ),
-          const SizedBox(height: AppSpacing.s4),
-          _YieldCurveInfoRow(
-            icon: Icons.trending_down_rounded,
-            color: c.danger,
-            title: 'Inverted (danger signal)',
-            description: 'Short-term yields exceed long-term yields. '
-                'Has preceded every US recession in the last 50 years. Watch the 3M-10Y spread.',
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.s4),
-            decoration: BoxDecoration(
-              color: c.accent.withAlpha(15),
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: Border.all(color: c.accent.withAlpha(50)),
+            const SizedBox(height: AppSpacing.s5),
+            Text('Understanding the Yield Curve',
+                style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            const SizedBox(height: AppSpacing.s3),
+            Text(
+              'The yield curve plots US Treasury bond yields across maturities — '
+              'from 3-month bills to 30-year bonds. It is one of the most reliable leading '
+              'indicators of economic health.',
+              style: AppTypography.sm.copyWith(color: c.textSecondary),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('How to Read the 3M-10Y Spread',
-                    style: AppTypography.labelSm
-                        .copyWith(color: c.accent, fontWeight: FontWeight.w700)),
-                const SizedBox(height: AppSpacing.s2),
-                Text(
-                  'Positive spread → 10Y yields more than 3M → normal, growth-friendly\n'
-                  'Negative spread → 3M yields more than 10Y → inverted, recession watch\n'
-                  'Rule of thumb: inversion sustained >3 months = high-alert',
-                  style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.6),
-                ),
-              ],
+            const SizedBox(height: AppSpacing.s5),
+            _YieldCurveInfoRow(
+              icon: Icons.trending_up_rounded,
+              color: c.positive,
+              title: 'Normal (upward sloping)',
+              description: 'Long-term bonds yield more than short-term. '
+                  'Signals a healthy, growing economy with inflation expectations.',
             ),
-          ),
-        ],
+            const SizedBox(height: AppSpacing.s4),
+            _YieldCurveInfoRow(
+              icon: Icons.remove_rounded,
+              color: c.warning,
+              title: 'Flat',
+              description: 'Short and long yields are similar. '
+                  'Signals economic uncertainty — often a transition between normal and inverted.',
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            _YieldCurveInfoRow(
+              icon: Icons.trending_down_rounded,
+              color: c.danger,
+              title: 'Inverted (danger signal)',
+              description: 'Short-term yields exceed long-term yields. '
+                  'Has preceded every US recession in the last 50 years. Watch the 3M-10Y spread.',
+            ),
+            const SizedBox(height: AppSpacing.s5),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.s4),
+              decoration: BoxDecoration(
+                color: c.accent.withAlpha(15),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: c.accent.withAlpha(50)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('How to Read the 3M-10Y Spread',
+                      style: AppTypography.labelSm
+                          .copyWith(color: c.accent, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: AppSpacing.s2),
+                  Text(
+                    'Positive spread → 10Y yields more than 3M → normal, growth-friendly\n'
+                    'Negative spread → 3M yields more than 10Y → inverted, recession watch\n'
+                    'Rule of thumb: inversion sustained >3 months = high-alert',
+                    style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.6),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   );
@@ -930,26 +1106,183 @@ class _CalEvent {
   final String date;
   final String title;
   final String impact; // 'High' | 'Medium'
-  final String category; // 'Fed' | 'Inflation' | 'Jobs' | 'Earnings'
+  final String category; // 'Fed' | 'Inflation' | 'Jobs' | 'GDP' | 'Other'
 }
 
 const _kCalEvents = [
   _CalEvent('Jun 11', 'CPI Inflation Report', 'High', 'Inflation'),
+  _CalEvent('Jun 12', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
   _CalEvent('Jun 17-18', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
   _CalEvent('Jun 18', 'Fed Press Conference (Powell)', 'High', 'Fed'),
+  _CalEvent('Jun 26', 'GDP Q1 Final (3rd Estimate)', 'Medium', 'GDP'),
   _CalEvent('Jul 3', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
   _CalEvent('Jul 9', 'CPI Inflation Report', 'High', 'Inflation'),
+  _CalEvent('Jul 10', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
+  _CalEvent('Jul 25', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
   _CalEvent('Jul 29-30', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
+  _CalEvent('Jul 30', 'GDP Q2 Advance (1st Estimate)', 'High', 'GDP'),
   _CalEvent('Aug 1', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
+  _CalEvent('Aug 12', 'JOLTS Job Openings', 'Medium', 'Jobs'),
   _CalEvent('Aug 13', 'CPI Inflation Report', 'High', 'Inflation'),
+  _CalEvent('Aug 15', 'Retail Sales', 'Medium', 'Other'),
   _CalEvent('Aug 21-23', 'Jackson Hole Symposium', 'High', 'Fed'),
+  _CalEvent('Aug 29', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
   _CalEvent('Sep 5', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
   _CalEvent('Sep 10', 'CPI Inflation Report', 'High', 'Inflation'),
+  _CalEvent('Sep 11', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
   _CalEvent('Sep 16-17', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
+  _CalEvent('Sep 26', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
   _CalEvent('Oct 3', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
+  _CalEvent('Oct 9', 'JOLTS Job Openings', 'Medium', 'Jobs'),
   _CalEvent('Oct 14', 'CPI Inflation Report', 'High', 'Inflation'),
+  _CalEvent('Oct 16', 'Retail Sales', 'Medium', 'Other'),
   _CalEvent('Oct 28-29', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
-]; // Dates are indicative — verify against federalreserve.gov for exact schedule
+  _CalEvent('Oct 30', 'GDP Q3 Advance (1st Estimate)', 'High', 'GDP'),
+]; // Indicative dates — verify against federalreserve.gov for exact schedule
+
+void _showCalendarInfo(BuildContext context) {
+  final c = context.colors;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.75,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      builder: (_, scrollCtrl) => ListView(
+        controller: scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s8),
+        children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: c.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('Economic Calendar Guide',
+              style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s3),
+          Text(
+            'These are the highest market-moving macro events watched by professional traders worldwide.',
+            style: AppTypography.sm.copyWith(color: c.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          _CalInfoRow(
+            dot: c.danger,
+            title: 'High Impact',
+            description: 'Typically moves major indices 0.5–2%+ within minutes of release. Triggers options volatility. Positions should be sized accordingly.',
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          _CalInfoRow(
+            dot: c.warning,
+            title: 'Medium Impact',
+            description: 'Can move markets modestly (0.2–0.8%). Less acute than High events but still capable of shifting sentiment and sector rotation.',
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('EVENT TYPES',
+              style: AppTypography.labelXs.copyWith(color: c.textMuted, letterSpacing: 1.2)),
+          const SizedBox(height: AppSpacing.s3),
+          _CalInfoRow(
+            dot: c.accent,
+            title: 'FOMC / Fed (teal)',
+            description: 'Federal Open Market Committee decisions on interest rates. Press conferences by the Chair signal future policy direction. The most powerful macro lever.',
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          _CalInfoRow(
+            dot: c.warning,
+            title: 'Inflation: CPI / PPI / PCE (amber)',
+            description: 'CPI = Consumer Price Index. PPI = Producer Price Index (upstream price pressures). PCE = Personal Consumption Expenditures — the Fed\'s preferred inflation gauge.',
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          _CalInfoRow(
+            dot: c.positive,
+            title: 'Jobs: NFP / JOLTS (green)',
+            description: 'NFP = Non-Farm Payrolls, released first Friday of each month. The single most market-moving monthly data point. JOLTS tracks job openings — a leading indicator of labor demand.',
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          _CalInfoRow(
+            dot: const Color(0xFF5B8DEF),
+            title: 'GDP (blue)',
+            description: 'Gross Domestic Product — total economic output. Three estimates released per quarter (Advance, Preliminary, Final). Major upside/downside surprises reprice growth expectations.',
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          _CalInfoRow(
+            dot: const Color(0xFFA78BFA),
+            title: 'Other (purple)',
+            description: 'Retail Sales, ISM Manufacturing/Services, Consumer Sentiment, Housing Starts — important economic health indicators but typically lower market impact.',
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.s4),
+            decoration: BoxDecoration(
+              color: c.accent.withAlpha(15),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: c.accent.withAlpha(50)),
+            ),
+            child: Text(
+              'Jackson Hole (Aug): Annual Fed symposium in Wyoming. Historically used to signal major policy pivots — e.g., Bernanke\'s QE2 hint (2010), Taper signal (2013), Powell\'s inflation warning (2022).',
+              style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.6),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _CalInfoRow extends StatelessWidget {
+  const _CalInfoRow({
+    required this.dot,
+    required this.title,
+    required this.description,
+  });
+  final Color dot;
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 5),
+          child: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s3),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: AppTypography.labelSm.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(description,
+                  style: AppTypography.sm.copyWith(color: c.textSecondary)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _EconomicCalendar extends StatelessWidget {
   const _EconomicCalendar();
@@ -962,6 +1295,8 @@ class _EconomicCalendar extends StatelessWidget {
         return c.warning;
       case 'Jobs':
         return c.positive;
+      case 'GDP':
+        return const Color(0xFF5B8DEF);
       default:
         return const Color(0xFFA78BFA);
     }
@@ -979,12 +1314,34 @@ class _EconomicCalendar extends StatelessWidget {
             const SizedBox(width: AppSpacing.s3),
             Text('Economic Calendar',
                 style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+            const SizedBox(width: AppSpacing.s2),
+            GestureDetector(
+              onTap: () => _showCalendarInfo(context),
+              child: Icon(Icons.info_outline_rounded, size: 16, color: c.textMuted),
+            ),
             const Spacer(),
             Text('indicative dates',
                 style: AppTypography.xs.copyWith(color: c.textMuted)),
           ],
         ),
         const SizedBox(height: AppSpacing.s3),
+        // Legend row
+        Padding(
+          padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+          child: Row(
+            children: [
+              _LegendDot(color: c.accent, label: 'Fed'),
+              const SizedBox(width: AppSpacing.s4),
+              _LegendDot(color: c.warning, label: 'Inflation'),
+              const SizedBox(width: AppSpacing.s4),
+              _LegendDot(color: c.positive, label: 'Jobs'),
+              const SizedBox(width: AppSpacing.s4),
+              _LegendDot(color: const Color(0xFF5B8DEF), label: 'GDP'),
+              const SizedBox(width: AppSpacing.s4),
+              _LegendDot(color: const Color(0xFFA78BFA), label: 'Other'),
+            ],
+          ),
+        ),
         Container(
           decoration: BoxDecoration(
             color: c.surfaceCard,
@@ -992,73 +1349,131 @@ class _EconomicCalendar extends StatelessWidget {
             border: Border.all(color: c.border),
           ),
           child: Column(
-            children: _kCalEvents.map((event) {
-              final isHigh = event.impact == 'High';
-              final impactBg = isHigh ? c.dangerDim : c.warningDim;
-              final impactColor = isHigh ? c.danger : c.warning;
-              final dotColor = _categoryDot(event.category, c);
-
-              return Container(
+            children: [
+              // Header row
+              Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                    horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
                 decoration: BoxDecoration(
                   border: Border(
-                      bottom: BorderSide(
-                          color: c.border.withAlpha(80), width: 0.5)),
+                      bottom: BorderSide(color: c.border, width: 0.5)),
                 ),
                 child: Row(
                   children: [
-                    // Category dot
-                    Container(
-                      width: 8,
-                      height: 8,
-                      margin: const EdgeInsets.only(right: AppSpacing.s3),
-                      decoration: BoxDecoration(
-                        color: dotColor,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    // Date
+                    const SizedBox(width: 11),
                     SizedBox(
                       width: 72,
-                      child: Text(
-                        event.date,
-                        style: AppTypography.sm.copyWith(
-                          color: c.accent,
-                          fontFeatures: [const FontFeature.tabularFigures()],
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      child: Text('DATE',
+                          style: AppTypography.labelXs
+                              .copyWith(color: c.textMuted, letterSpacing: 1)),
                     ),
-                    // Title
                     Expanded(
-                      child: Text(
-                        event.title,
-                        style: AppTypography.sm.copyWith(color: c.textPrimary),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                      child: Text('EVENT',
+                          style: AppTypography.labelXs
+                              .copyWith(color: c.textMuted, letterSpacing: 1)),
                     ),
-                    const SizedBox(width: AppSpacing.s2),
-                    // Impact badge
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: impactBg,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        event.impact,
-                        style: AppTypography.xs.copyWith(
-                            color: impactColor, fontWeight: FontWeight.w700),
-                      ),
+                    SizedBox(
+                      width: 54,
+                      child: Text('IMPACT',
+                          style: AppTypography.labelXs.copyWith(
+                              color: c.textMuted, letterSpacing: 1),
+                          textAlign: TextAlign.right),
                     ),
                   ],
                 ),
-              );
-            }).toList(),
+              ),
+              ..._kCalEvents.map((event) {
+                final isHigh = event.impact == 'High';
+                final impactBg = isHigh ? c.dangerDim : c.warningDim;
+                final impactColor = isHigh ? c.danger : c.warning;
+                final dotColor = _categoryDot(event.category, c);
+
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                  decoration: BoxDecoration(
+                    border: Border(
+                        bottom: BorderSide(
+                            color: c.border.withAlpha(80), width: 0.5)),
+                  ),
+                  child: Row(
+                    children: [
+                      // Category dot
+                      Container(
+                        width: 8,
+                        height: 8,
+                        margin: const EdgeInsets.only(right: AppSpacing.s2 + 1),
+                        decoration: BoxDecoration(
+                          color: dotColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      // Date
+                      SizedBox(
+                        width: 72,
+                        child: Text(
+                          event.date,
+                          style: AppTypography.sm.copyWith(
+                            color: c.accent,
+                            fontFeatures: [const FontFeature.tabularFigures()],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      // Title
+                      Expanded(
+                        child: Text(
+                          event.title,
+                          style: AppTypography.sm.copyWith(color: c.textPrimary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s2),
+                      // Impact badge
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: impactBg,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          isHigh ? '🔴 High' : '🟡 Med',
+                          style: AppTypography.xs.copyWith(
+                              color: impactColor, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
           ),
         ),
+      ],
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label,
+            style: AppTypography.xs.copyWith(color: c.textMuted)),
       ],
     );
   }

@@ -54,6 +54,7 @@ class TradingSignal {
     required this.indicators,
     required this.generatedAt,
     this.analystNote,
+    this.ivPercentile,
   });
 
   final String symbol;
@@ -70,6 +71,7 @@ class TradingSignal {
   final Map<String, double?> indicators;
   final DateTime generatedAt;
   final String? analystNote;
+  final double? ivPercentile;
 
   factory TradingSignal.fromJson(Map<String, dynamic> j) => TradingSignal(
         symbol: j['symbol'] as String,
@@ -90,6 +92,7 @@ class TradingSignal {
             ? DateTime.parse(j['timestamp'] as String).toLocal()
             : DateTime.now(),
         analystNote: j['analystNote'] as String?,
+        ivPercentile: (j['ivPercentile'] as num?)?.toDouble(),
       );
 }
 
@@ -129,6 +132,7 @@ class BacktestResult {
     required this.sharpeRatio,
     required this.totalTrades,
     this.tradeLog = const [],
+    this.backtestNote,
   });
 
   final String strategy;
@@ -138,6 +142,7 @@ class BacktestResult {
   final double sharpeRatio;
   final int totalTrades;
   final List<TradeRecord> tradeLog;
+  final String? backtestNote;
 
   factory BacktestResult.fromJson(Map<String, dynamic> j) => BacktestResult(
         strategy: j['strategy'] as String,
@@ -149,6 +154,7 @@ class BacktestResult {
         tradeLog: (j['tradeLog'] as List? ?? [])
             .map((e) => TradeRecord.fromJson(e as Map<String, dynamic>))
             .toList(),
+        backtestNote: j['backtestNote'] as String?,
       );
 }
 
@@ -195,5 +201,36 @@ class StockSearchResult {
         name: j['name'] as String,
         exchange: j['exchange'] as String? ?? '',
         type: j['type'] as String? ?? 'EQUITY',
+      );
+}
+
+class CrisisEvent {
+  const CrisisEvent({
+    required this.id,
+    required this.name,
+    required this.period,
+    required this.vixPeak,
+    required this.status,
+    required this.outcome,
+    required this.description,
+  });
+
+  final String id;
+  final String name;
+  final String period;
+  final double vixPeak;
+  // 'historical' | 'recent' | 'ongoing'
+  final String status;
+  final String outcome;
+  final String description;
+
+  factory CrisisEvent.fromJson(Map<String, dynamic> j) => CrisisEvent(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        period: j['period'] as String,
+        vixPeak: (j['vixPeak'] as num).toDouble(),
+        status: j['status'] as String,
+        outcome: j['outcome'] as String,
+        description: j['description'] as String,
       );
 }

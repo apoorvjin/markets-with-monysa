@@ -23,6 +23,8 @@ abstract final class ApiEndpoints {
       '$baseUrl/api/trading/news/$symbol';
   static String tradingAnalystNote(String symbol) =>
       '$baseUrl/api/trading/analyst-note/$symbol';
+  static String tradingFundamentals(String symbol) =>
+      '$baseUrl/api/trading/fundamentals/$symbol';
 
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';
@@ -33,4 +35,15 @@ abstract final class ApiEndpoints {
 
   static String get bonds => '$baseUrl/api/bonds';
   static String get sectors => '$baseUrl/api/sectors';
+  static String get crises => '$baseUrl/api/crises';
+
+  static String exposureAnalysis({
+    required String country,
+    required String sector,
+    required double tariffRate,
+  }) =>
+      '$baseUrl/api/exposure/analysis'
+      '?country=${Uri.encodeComponent(country)}'
+      '&sector=${Uri.encodeComponent(sector)}'
+      '&tariffRate=$tariffRate';
 }

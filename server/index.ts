@@ -1,5 +1,6 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
+import rateLimit from "express-rate-limit";
 import { registerRoutes } from "./routes";
 
 const app = express();
@@ -12,6 +13,12 @@ declare module "http" {
 }
 
 function setupCors(app: express.Application) {
+  // FLY_APP_NAME is injected by Fly.io at runtime — reliable prod signal.
+  // In production the Flutter app (Dart HTTP, no Origin header) is the only
+  // legitimate browser-less client, so we must not grant CORS to arbitrary
+  // localhost origins that any browser script can forge.
+  const isProd = !!process.env.FLY_APP_NAME || process.env.NODE_ENV === "production";
+
   app.use((req, res, next) => {
     const allowedOrigins = new Set<string>(
       (process.env.ALLOWED_ORIGINS || "").split(",").filter(Boolean),
@@ -19,9 +26,11 @@ function setupCors(app: express.Application) {
 
     const origin = req.header("origin");
 
+    // Allow localhost origins only in local dev — never in production.
     const isLocalhost =
-      origin?.startsWith("http://localhost:") ||
-      origin?.startsWith("http://127.0.0.1:");
+      !isProd &&
+      (origin?.startsWith("http://localhost:") ||
+        origin?.startsWith("http://127.0.0.1:"));
 
     const isAllowed = origin && (allowedOrigins.has(origin) || isLocalhost);
 
@@ -99,6 +108,39 @@ function setupRequestLogging(app: express.Application) {
   });
 }
 
+function setupRateLimiting(app: express.Application) {
+  // General limiter — all /api/* routes
+  const generalLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many requests, please try again later." },
+  });
+
+  // Tighter limit for compute-heavy signal generation
+  const signalsLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Signal request rate limit exceeded. Please slow down." },
+  });
+
+  // Strictest limit for GPT-4o-mini AI briefing (expensive call)
+  const briefingLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "AI briefing rate limit exceeded (5 requests/min)." },
+  });
+
+  app.use("/api", generalLimiter);
+  app.use("/api/trading/signals", signalsLimiter);
+  app.use("/api/volatility/briefing", briefingLimiter);
+}
+
 function setupErrorHandler(app: express.Application) {
   app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     const error = err as {
@@ -124,6 +166,7 @@ function setupErrorHandler(app: express.Application) {
   setupCors(app);
   setupBodyParsing(app);
   setupRequestLogging(app);
+  setupRateLimiting(app);
 
   app.get("/", (_req: Request, res: Response) => {
     res.json({ status: "ok", name: "Markets API", version: "1.0.0" });

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
+import 'providers/strategy_provider.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,5 +16,9 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
     systemNavigationBarColor: Colors.black,
   ));
-  runApp(const ProviderScope(child: MobyApp()));
+  final prefs = await SharedPreferences.getInstance();
+  runApp(ProviderScope(
+    overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+    child: const MobyApp(),
+  ));
 }

@@ -1,5 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -22,11 +25,16 @@ import '../../providers/watchlist_provider.dart';
 
 final _signalProvider = FutureProvider.autoDispose
     .family<TradingSignal, ({String symbol, String tf, String strategy})>(
-  (ref, args) => TradingRepository.instance.fetchSignal(
-    args.symbol,
-    timeframe: args.tf,
-    strategy: args.strategy,
-  ),
+  (ref, args) {
+    final cancelToken = CancelToken();
+    ref.onDispose(cancelToken.cancel);
+    return TradingRepository.instance.fetchSignal(
+      args.symbol,
+      timeframe: args.tf,
+      strategy: args.strategy,
+      cancelToken: cancelToken,
+    );
+  },
 );
 
 final _backtestProvider = FutureProvider.autoDispose
@@ -47,6 +55,20 @@ final _noteProvider = FutureProvider.autoDispose
     direction: args.direction,
     confidence: args.confidence,
   ),
+);
+
+final _fundamentalsProvider = FutureProvider.autoDispose
+    .family<Map<String, dynamic>?, String>(
+  (ref, symbol) async {
+    try {
+      final data = await ApiClient.instance.get(
+        ApiEndpoints.tradingFundamentals(symbol),
+      );
+      return data as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  },
 );
 
 // ── Screen ────────────────────────────────────────────────────────────────────
@@ -192,6 +214,7 @@ class _ChartTabState extends State<_ChartTab> {
   late final WebViewController _controller;
   bool _loading = true;
   String? _error;
+  Timer? _timeoutTimer;
 
   static const _ranges = ['1M', '3M', '6M', '1Y', '5Y'];
   static const _rangeMap = {
@@ -211,8 +234,23 @@ class _ChartTabState extends State<_ChartTab> {
     _loadChart();
   }
 
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadChart() async {
+    _timeoutTimer?.cancel();
     if (mounted) setState(() { _loading = true; _error = null; });
+    _timeoutTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted && _loading) {
+        setState(() {
+          _loading = false;
+          _error = 'Chart timed out — tap to retry';
+        });
+      }
+    });
     try {
       final range = _rangeMap[_range] ?? '1mo';
       final data = await ApiClient.instance.get(
@@ -221,8 +259,10 @@ class _ChartTabState extends State<_ChartTab> {
       ) as Map<String, dynamic>;
       final candles = data['candles'] as List? ?? [];
       if (!mounted) return;
+      _timeoutTimer?.cancel();
       await _controller.loadHtmlString(_buildHtml(jsonEncode(candles)));
     } catch (e) {
+      _timeoutTimer?.cancel();
       if (mounted) setState(() => _error = 'Failed to load chart data');
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -384,7 +424,7 @@ String _signalError(Object e) {
   return 'Failed to load signal';
 }
 
-class _SignalTab extends ConsumerWidget {
+class _SignalTab extends ConsumerStatefulWidget {
   const _SignalTab({
     required this.symbol,
     required this.name,
@@ -396,37 +436,322 @@ class _SignalTab extends ConsumerWidget {
   final String timeframe;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SignalTab> createState() => _SignalTabState();
+}
+
+class _SignalTabState extends ConsumerState<_SignalTab> {
+  TradingStrategy? _localStrategy;
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
-    final strategy = ref.watch(strategyProvider);
-    final args = (symbol: symbol, tf: timeframe, strategy: strategy.serverParam);
+    final globalStrategy = ref.watch(strategyProvider);
+    final strategy = _localStrategy ?? globalStrategy;
+    final args = (symbol: widget.symbol, tf: widget.timeframe, strategy: strategy.serverParam);
     final async = ref.watch(_signalProvider(args));
 
-    return async.when(
-      loading: () => Center(
-          child: CircularProgressIndicator(color: c.accent)),
-      error: (e, _) => ErrorView(
-        message: _signalError(e),
-        onRetry: () => ref.invalidate(_signalProvider(args)),
-      ),
-      data: (signal) => _SignalContent(signal: signal, strategy: strategy),
+    return Column(
+      children: [
+        _StrategyPillRow(
+          selected: strategy,
+          onSelect: (s) => setState(() => _localStrategy = s),
+        ),
+        Expanded(
+          child: async.when(
+            loading: () => Center(
+                child: CircularProgressIndicator(color: c.accent)),
+            error: (e, _) => ErrorView(
+              message: _signalError(e),
+              onRetry: () => ref.invalidate(_signalProvider(args)),
+            ),
+            data: (signal) => _SignalContent(signal: signal, strategy: strategy),
+          ),
+        ),
+      ],
     );
   }
 }
 
-class _SignalContent extends ConsumerWidget {
+class _StrategyPillRow extends StatelessWidget {
+  const _StrategyPillRow({required this.selected, required this.onSelect});
+  final TradingStrategy selected;
+  final ValueChanged<TradingStrategy> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s5, vertical: AppSpacing.s3),
+              child: Row(
+                children: TradingStrategy.values.map((s) {
+                  final isActive = s == selected;
+                  return GestureDetector(
+                    onTap: () => onSelect(s),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: AppSpacing.s2),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: isActive ? c.accent : c.surfaceCard,
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                        border: Border.all(
+                          color: isActive ? c.accent : c.border,
+                        ),
+                      ),
+                      child: Text(
+                        s.label,
+                        style: AppTypography.labelSm.copyWith(
+                          color: isActive ? c.background : c.textSecondary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: AppSpacing.s4),
+            child: GestureDetector(
+              onTap: () => _showStrategyInfoModal(context),
+              child: Icon(Icons.info_outline_rounded, size: 18, color: c.textMuted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showStrategyInfoModal(BuildContext context) {
+  final c = context.colors;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.75,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      builder: (_, scrollController) => Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: c.border,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.s5),
+                Text('Trading Strategies',
+                    style: AppTypography.headingMd
+                        .copyWith(color: c.textPrimary)),
+                const SizedBox(height: AppSpacing.s4),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              controller: scrollController,
+              padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.s5, 0, AppSpacing.s5, AppSpacing.s8),
+              children: [
+                _AssetStrategyInfoRow(
+                  label: 'S1', title: 'Technical Analysis',
+                  description: 'Pure price-action signals using momentum and volatility indicators.',
+                  detail: 'RSI-14 · MACD · EMA crossovers · Bollinger Bands · ATR · Rate of Change',
+                  accentColor: c.accent,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S2', title: 'Multi-Factor',
+                  description: 'Builds on S1 with volatility-adaptive entry and exit thresholds.',
+                  detail: 'All S1 indicators + dynamic thresholds calibrated to current market vol',
+                  accentColor: c.warning,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S3', title: 'Hybrid (Tech + Sentiment)',
+                  description: 'Blends technical signals with real-time news sentiment scoring.',
+                  detail: 'S1 signals (70%) + NLP sentiment from latest headlines (30%)',
+                  accentColor: c.danger,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S4', title: 'Regime-Adaptive',
+                  description: 'Detects market regime first, then activates the right engine.',
+                  detail: 'ADX > 25 → Trend Engine · ADX < 18 → Range Engine (RSI, Bollinger, ATR)',
+                  accentColor: c.positive,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S5', title: 'Professional Systematic',
+                  description: 'Four-regime classification with dynamic indicator weights and consensus gate.',
+                  detail: 'Quiet Trend · Quiet Range · Volatile Trend · Chaotic → No Trade · OBV confirmation',
+                  accentColor: c.warning,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S6', title: 'Adaptive Hybrid',
+                  description: 'Regime-aware fusion of technical signals and news sentiment.',
+                  detail: 'High-vol: tech 90% / news 10% · Strong-trend: 85/15 · Low-vol: 60/40',
+                  accentColor: c.accent,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S7', title: 'APEX — Adaptive Probabilistic EXecution',
+                  description: 'Five-regime classifier with divergence veto and 0–100 quality gate (must hit 60).',
+                  detail: 'Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade)',
+                  accentColor: c.danger,
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                _AssetStrategyInfoRow(
+                  label: 'S8', title: 'Ensemble — S4+S5+S7 Consensus',
+                  description: 'Runs three strategies and weights their votes by per-regime accuracy.',
+                  detail: 'Full size on 3/3 agreement · 60% size on 2/3 · No trade on split',
+                  accentColor: c.positive,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _AssetStrategyInfoRow extends StatelessWidget {
+  const _AssetStrategyInfoRow({
+    required this.label,
+    required this.title,
+    required this.description,
+    required this.detail,
+    required this.accentColor,
+  });
+  final String label;
+  final String title;
+  final String description;
+  final String detail;
+  final Color accentColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: accentColor.withAlpha(30),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(color: accentColor.withAlpha(80)),
+          ),
+          child: Center(
+            child: Text(label,
+                style: AppTypography.labelSm.copyWith(
+                    color: accentColor, fontWeight: FontWeight.w700)),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s4),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: AppTypography.labelMd.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(description,
+                  style: AppTypography.sm.copyWith(color: c.textSecondary)),
+              const SizedBox(height: 4),
+              Text(detail,
+                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SignalContent extends ConsumerStatefulWidget {
   const _SignalContent({required this.signal, required this.strategy});
   final TradingSignal signal;
   final TradingStrategy strategy;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_SignalContent> createState() => _SignalContentState();
+}
+
+class _SignalContentState extends ConsumerState<_SignalContent> {
+  bool _noteRequested = false;
+
+  TradingSignal get signal => widget.signal;
+  TradingStrategy get strategy => widget.strategy;
+
+  void _copySignal(BuildContext context) {
+    final text = '${signal.direction} ${signal.symbol} ${strategy.label} | '
+        'Entry: ${_fmt(signal.entry)}  SL: ${_fmt(signal.stopLoss)}  '
+        'TP: ${_fmt(signal.takeProfit)}  R:R: ${signal.riskReward.toStringAsFixed(2)} | '
+        '${signal.confidence.toInt()}% confidence';
+    Clipboard.setData(ClipboardData(text: text));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Signal copied to clipboard'),
+        duration: Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
     final color = c.signalColor(signal.direction);
 
+    final fundamentalsAsync = ref.watch(_fundamentalsProvider(signal.symbol));
+
     return ListView(
-      padding: const EdgeInsets.all(AppSpacing.s5),
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.s5,
+        AppSpacing.s5,
+        AppSpacing.s5,
+        AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+      ),
       children: [
+        fundamentalsAsync.when(
+          data: (f) => f != null
+              ? Column(children: [_FundamentalBar(data: f), const SizedBox(height: AppSpacing.s3)])
+              : const SizedBox.shrink(),
+          loading: () => const SizedBox.shrink(),
+          error: (_, __) => const SizedBox.shrink(),
+        ),
         GlassCard(
           child: Column(
             children: [
@@ -450,6 +775,12 @@ class _SignalContent extends ConsumerWidget {
                         style: AppTypography.sm.copyWith(
                             color: c.accent,
                             fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(width: AppSpacing.s2),
+                  GestureDetector(
+                    onTap: () => _copySignal(context),
+                    child: Icon(Icons.copy_outlined,
+                        size: 16, color: c.textFaint),
                   ),
                 ],
               ),
@@ -484,6 +815,10 @@ class _SignalContent extends ConsumerWidget {
                   ),
                 ],
               ),
+              if (signal.ivPercentile != null) ...[
+                const SizedBox(height: AppSpacing.s2),
+                _VolatilityLine(ivPct: signal.ivPercentile!),
+              ],
               const SizedBox(height: AppSpacing.s4),
               Row(
                 children: [
@@ -531,28 +866,84 @@ class _SignalContent extends ConsumerWidget {
             ),
           );
         }),
-        Builder(builder: (context) {
-          final noteArgs = (
-            symbol: signal.symbol,
-            strategy: strategy.serverParam,
-            direction: signal.direction,
-            confidence: signal.confidence,
-          );
-          final noteAsync = ref.watch(_noteProvider(noteArgs));
-          return noteAsync.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.only(top: AppSpacing.s2),
-              child: _NoteShimmer(),
+        if (!_noteRequested)
+          Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.s2),
+            child: GestureDetector(
+              onTap: () => setState(() => _noteRequested = true),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                decoration: BoxDecoration(
+                  color: c.accentDim,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: c.accent.withAlpha(60)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.auto_awesome_rounded,
+                        size: 15, color: c.accent),
+                    const SizedBox(width: AppSpacing.s2),
+                    Text('Generate Analyst Note',
+                        style: AppTypography.labelMd
+                            .copyWith(color: c.accent)),
+                  ],
+                ),
+              ),
             ),
-            error: (_, __) => const SizedBox.shrink(),
-            data: (note) => note != null && note.isNotEmpty
-                ? Padding(
-                    padding: const EdgeInsets.only(top: AppSpacing.s2),
-                    child: _AnalystNoteCard(note: note),
-                  )
-                : const SizedBox.shrink(),
-          );
-        }),
+          )
+        else
+          Builder(builder: (context) {
+            final noteArgs = (
+              symbol: signal.symbol,
+              strategy: strategy.serverParam,
+              direction: signal.direction,
+              confidence: signal.confidence,
+            );
+            final noteAsync = ref.watch(_noteProvider(noteArgs));
+            return noteAsync.when(
+              loading: () => const Padding(
+                padding: EdgeInsets.only(top: AppSpacing.s2),
+                child: _NoteShimmer(),
+              ),
+              error: (_, __) => Padding(
+                padding: const EdgeInsets.only(top: AppSpacing.s2),
+                child: GestureDetector(
+                  onTap: () {
+                    ref.invalidate(_noteProvider(noteArgs));
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                    decoration: BoxDecoration(
+                      color: c.dangerDim,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
+                      border: Border.all(color: c.danger.withAlpha(60)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.refresh_rounded,
+                            size: 15, color: c.danger),
+                        const SizedBox(width: AppSpacing.s2),
+                        Text('Failed to load — tap to retry',
+                            style: AppTypography.labelMd
+                                .copyWith(color: c.danger)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              data: (note) => note != null && note.isNotEmpty
+                  ? Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.s2),
+                      child: _AnalystNoteCard(note: note),
+                    )
+                  : const SizedBox.shrink(),
+            );
+          }),
         const SizedBox(height: AppSpacing.s5),
         _MultiTfMatrix(symbol: signal.symbol, strategy: strategy.serverParam),
         const SizedBox(height: AppSpacing.s4),
@@ -992,7 +1383,12 @@ class _IndicatorsTab extends ConsumerWidget {
       data: (signal) {
         final inds = signal.indicators;
         return ListView(
-          padding: const EdgeInsets.all(AppSpacing.s5),
+          padding: EdgeInsets.fromLTRB(
+            AppSpacing.s5,
+            AppSpacing.s5,
+            AppSpacing.s5,
+            AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+          ),
           children: [
             _IndicatorGroup('Momentum', [
               _IndRow('RSI-14', inds['rsi'], _rsiInterp),
@@ -1166,19 +1562,177 @@ class _BacktestTab extends ConsumerWidget {
         onRetry: () => ref.invalidate(_backtestProvider(symbol)),
       ),
       data: (results) => ListView(
-        padding: const EdgeInsets.all(AppSpacing.s5),
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+        ),
         children: [
-          Text('Walk-Forward Backtest',
-              style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+          Row(
+            children: [
+              Text('Walk-Forward Backtest',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              const SizedBox(width: AppSpacing.s2),
+              GestureDetector(
+                onTap: () => _showBacktestMethodInfo(context),
+                child: Icon(Icons.info_outline_rounded,
+                    size: 16, color: c.textMuted),
+              ),
+            ],
+          ),
           const SizedBox(height: AppSpacing.s2),
-          Text(
-            '70% train / 30% test split — 5-bar hold period',
-            style: AppTypography.md.copyWith(color: c.textMuted),
+          GestureDetector(
+            onTap: () => _showBacktestMethodInfo(context),
+            child: Text(
+              '70% train / 30% test split · 5-bar hold · tap for details',
+              style: AppTypography.sm.copyWith(color: c.textMuted),
+            ),
           ),
           const SizedBox(height: AppSpacing.s5),
           ...results.map((r) => _BacktestCard(result: r)),
         ],
       ),
+    );
+  }
+}
+
+void _showBacktestMethodInfo(BuildContext context) {
+  final c = context.colors;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.7,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
+      builder: (_, scrollCtrl) => ListView(
+        controller: scrollCtrl,
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s8),
+        children: [
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                color: c.border, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('Backtest Methodology',
+              style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s4),
+          _BacktestInfoRow(
+            icon: Icons.call_split_rounded,
+            color: c.accent,
+            title: '70% Train / 30% Test Split',
+            description: 'Historical data is divided into two parts. The strategy is calibrated on the first 70% (training set), then evaluated on the unseen 30% (test set). This simulates how the strategy would have performed on data it never "saw" during development — a more honest performance estimate.',
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          _BacktestInfoRow(
+            icon: Icons.timer_outlined,
+            color: c.warning,
+            title: '5-Bar Hold Period',
+            description: 'Each trade is held for exactly 5 bars (candles) after entry before exiting at market. On the 1D timeframe, this equals 5 trading days (~1 week). This fixed-duration approach removes discretionary exit bias and makes returns comparable across strategies.',
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('STAT DEFINITIONS',
+              style: AppTypography.labelXs.copyWith(
+                  color: c.textMuted, letterSpacing: 1.2)),
+          const SizedBox(height: AppSpacing.s3),
+          _BacktestInfoRow(
+            icon: Icons.trending_up_rounded,
+            color: c.positive,
+            title: 'Total Return (%)',
+            description: 'The sum of all trade returns over the test period. A simple measure of overall profitability — how much you gained or lost in percentage terms if you had followed every signal.',
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          _BacktestInfoRow(
+            icon: Icons.check_circle_outline_rounded,
+            color: c.accent,
+            title: 'Win Rate (%)',
+            description: 'Percentage of trades that were profitable. A 60% win rate means 6 out of every 10 trades made money. Note: win rate alone doesn\'t tell you profitability — a strategy with 40% wins can still be profitable if average winners are much larger than losers.',
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          _BacktestInfoRow(
+            icon: Icons.arrow_downward_rounded,
+            color: c.danger,
+            title: 'Max Drawdown (Max DD)',
+            description: 'The largest peak-to-trough decline in the equity curve, expressed as a percentage. If your cumulative return reached +20% and then fell to +5%, the drawdown is 15%. Lower is better. Professional funds typically target Max DD below 20%.',
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          _BacktestInfoRow(
+            icon: Icons.bar_chart_rounded,
+            color: c.accent,
+            title: 'Sharpe Ratio',
+            description: 'A risk-adjusted return metric: return per unit of volatility. Sharpe > 1.0 is considered good; > 2.0 is excellent; < 0 means the strategy underperformed cash. Formula: (Return − Risk-free rate) ÷ Standard deviation of returns.',
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.s4),
+            decoration: BoxDecoration(
+              color: c.warning.withAlpha(15),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: c.warning.withAlpha(50)),
+            ),
+            child: Text(
+              'Past backtest results do not guarantee future performance. Backtests are subject to look-ahead bias, overfitting, and transaction cost assumptions. Use as one input among many.',
+              style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.6),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _BacktestInfoRow extends StatelessWidget {
+  const _BacktestInfoRow({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.description,
+  });
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32, height: 32,
+          decoration: BoxDecoration(
+            color: color.withAlpha(30),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(width: AppSpacing.s4),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: AppTypography.labelSm.copyWith(
+                      color: color, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 2),
+              Text(description,
+                  style: AppTypography.sm.copyWith(
+                      color: c.textSecondary, height: 1.5)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1230,13 +1784,44 @@ class _BacktestCardState extends State<_BacktestCard> {
                           style: AppTypography.labelMd.copyWith(color: c.accent)),
                     ),
                     const Spacer(),
-                    Text(
-                      '${r.totalReturn >= 0 ? '+' : ''}${r.totalReturn.toStringAsFixed(1)}%',
-                      style: AppTypography.xl.copyWith(
-                          color: returnColor, fontWeight: FontWeight.w700),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${r.totalReturn >= 0 ? '+' : ''}${r.totalReturn.toStringAsFixed(1)}%',
+                          style: AppTypography.xl.copyWith(
+                              color: returnColor, fontWeight: FontWeight.w700),
+                        ),
+                        Text('Total Return',
+                            style: AppTypography.xs.copyWith(color: c.textMuted)),
+                      ],
                     ),
                   ],
                 ),
+                if (r.backtestNote != null) ...[
+                  const SizedBox(height: AppSpacing.s3),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.s3, vertical: AppSpacing.s2),
+                    decoration: BoxDecoration(
+                      color: c.warningDim,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline_rounded,
+                            size: 13, color: c.warning),
+                        const SizedBox(width: AppSpacing.s2),
+                        Expanded(
+                          child: Text(r.backtestNote!,
+                              style: AppTypography.xs
+                                  .copyWith(color: c.warning, height: 1.5)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const SizedBox(height: AppSpacing.s4),
                 // Stats row
                 Row(
@@ -1247,11 +1832,13 @@ class _BacktestCardState extends State<_BacktestCard> {
                     ),
                     Expanded(
                       child: _BacktestStat('Max DD',
-                          '-${r.maxDrawdown.toStringAsFixed(1)}%', c.danger, c),
+                          '-${r.maxDrawdown.toStringAsFixed(1)}%', c.danger, c,
+                          tooltip: 'Max Drawdown: largest peak-to-trough loss'),
                     ),
                     Expanded(
                       child: _BacktestStat('Sharpe',
-                          r.sharpeRatio.toStringAsFixed(2), c.accent, c),
+                          r.sharpeRatio.toStringAsFixed(2), c.accent, c,
+                          tooltip: 'Sharpe Ratio: return per unit of risk (>1 = good)'),
                     ),
                     Expanded(
                       child: _BacktestStat('Trades',
@@ -1363,24 +1950,46 @@ class _BacktestCardState extends State<_BacktestCard> {
 }
 
 class _BacktestStat extends StatelessWidget {
-  const _BacktestStat(this.label, this.value, this.color, this.palette);
+  const _BacktestStat(this.label, this.value, this.color, this.palette,
+      {this.tooltip});
   final String label;
   final String value;
   final Color color;
   final AppPalette palette;
+  final String? tooltip;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final content = Column(
       children: [
-        Text(label,
-            style: AppTypography.xs.copyWith(color: palette.textMuted)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                style: AppTypography.xs.copyWith(color: palette.textMuted)),
+            if (tooltip != null) ...[
+              const SizedBox(width: 2),
+              Icon(Icons.help_outline_rounded,
+                  size: 9, color: palette.textFaint),
+            ],
+          ],
+        ),
         const SizedBox(height: 2),
         Text(value,
             style: AppTypography.labelMd
                 .copyWith(color: color, fontWeight: FontWeight.w700)),
       ],
     );
+
+    if (tooltip != null) {
+      return Tooltip(
+        message: tooltip!,
+        triggerMode: TooltipTriggerMode.tap,
+        child: content,
+      );
+    }
+    return content;
   }
 }
 
@@ -1530,7 +2139,12 @@ class _NewsTab extends ConsumerWidget {
       error: (_, __) =>
           const ErrorView(message: 'News unavailable'),
       data: (articles) => ListView.builder(
-        padding: const EdgeInsets.all(AppSpacing.s5),
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+        ),
         itemCount: articles.length,
         itemBuilder: (ctx, i) => _NewsCard(article: articles[i]),
       ),
@@ -1601,6 +2215,340 @@ class _NewsCard extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+// ── Fundamental Bar ───────────────────────────────────────────────────────────
+
+class _FundamentalBar extends StatelessWidget {
+  const _FundamentalBar({required this.data});
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final sector = data['sector'] as String?;
+    final industry = data['industry'] as String?;
+    final high = data['week52High'] as num?;
+    final low = data['week52Low'] as num?;
+    final currency = data['currency'] as String?;
+
+    // Nothing useful to show for non-equity asset types with no sector/range
+    if (sector == null && (high == null || low == null)) {
+      return const SizedBox.shrink();
+    }
+
+    final currencySymbol = _currencySymbol(currency);
+    final rangePart = (high != null && low != null)
+        ? '$currencySymbol${_fmtNum(low.toDouble())}–$currencySymbol${_fmtNum(high.toDouble())}'
+        : null;
+
+    final parts = <String>[
+      if (sector != null) sector,
+      if (industry != null && industry != sector) _shortIndustry(industry),
+      if (rangePart != null) rangePart,
+    ];
+
+    if (parts.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Row(
+        children: [
+          if (sector != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: _sectorColor(c, sector).withAlpha(30),
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
+              child: Text(
+                sector,
+                style: AppTypography.xs.copyWith(
+                    color: _sectorColor(c, sector), fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ] else if (data['quoteType'] != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: c.border,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
+              child: Text(
+                _quoteTypeLabel(data['quoteType'] as String),
+                style: AppTypography.xs.copyWith(
+                    color: c.textMuted, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              [
+                if (industry != null && industry != sector) _shortIndustry(industry),
+                if (rangePart != null) rangePart,
+              ].join(' · '),
+              style: AppTypography.xs.copyWith(color: c.textMuted),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: () => _showFundamentalInfo(context),
+            child: Icon(Icons.info_outline_rounded, size: 16, color: c.textFaint),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showFundamentalInfo(BuildContext context) {
+    final c = context.colors;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                    color: c.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('About This Bar',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              const SizedBox(height: 16),
+              _InfoRow(
+                icon: Icons.category_outlined,
+                color: c.accent,
+                title: 'Sector & Industry',
+                body: 'The sector (e.g. Energy, Technology) and specific industry the company operates in, sourced from Yahoo Finance. Useful for understanding macro sensitivity — Energy stocks move with oil prices, Tech stocks with rate expectations.',
+              ),
+              const SizedBox(height: 12),
+              _InfoRow(
+                icon: Icons.straighten_rounded,
+                color: c.warning,
+                title: '52-Week Range',
+                body: 'The lowest and highest price the asset has traded at over the past year. If the current price is near the low end, the asset may be undervalued or in a downtrend. Near the high end suggests momentum or potential overextension.',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _sectorColor(AppPalette c, String sector) {
+    switch (sector) {
+      case 'Technology': return c.accent;
+      case 'Energy': return c.warning;
+      case 'Healthcare': return const Color(0xFF6CB4E4);
+      case 'Financial Services': return c.positive;
+      case 'Consumer Cyclical': return const Color(0xFFBF7FFF);
+      case 'Industrials': return c.textMuted;
+      default: return c.textMuted;
+    }
+  }
+
+  String _quoteTypeLabel(String quoteType) {
+    switch (quoteType) {
+      case 'CRYPTOCURRENCY': return 'Crypto';
+      case 'FUTURE': return 'Futures';
+      case 'CURRENCY': return 'Forex';
+      case 'INDEX': return 'Index';
+      case 'ETF': return 'ETF';
+      default: return quoteType;
+    }
+  }
+
+  String _shortIndustry(String industry) {
+    // Trim verbose suffixes to keep it compact
+    return industry
+        .replaceAll('—NEC', '')
+        .replaceAll('Refining & Marketing', 'Refining')
+        .trim();
+  }
+
+  String _currencySymbol(String? currency) {
+    switch (currency) {
+      case 'INR': return '₹';
+      case 'EUR': return '€';
+      case 'GBP': return '£';
+      case 'JPY': return '¥';
+      case 'CNY': return '¥';
+      case 'USD': return '';
+      default: return '';
+    }
+  }
+
+  String _fmtNum(double v) {
+    if (v > 1000) return v.toStringAsFixed(0);
+    if (v < 1) return v.toStringAsFixed(4);
+    return v.toStringAsFixed(2);
+  }
+}
+
+// ── Volatility Line ───────────────────────────────────────────────────────────
+
+class _VolatilityLine extends StatelessWidget {
+  const _VolatilityLine({required this.ivPct});
+  final double ivPct;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final pct = (ivPct * 100).round();
+    final Color color;
+    final String suffix;
+    if (ivPct > 0.75) {
+      color = c.warning;
+      suffix = ' — SL widened';
+    } else if (ivPct < 0.25) {
+      color = c.textMuted;
+      suffix = ' — tight SL';
+    } else {
+      color = c.textFaint;
+      suffix = '';
+    }
+
+    return Row(
+      children: [
+        Icon(Icons.show_chart_rounded, size: 11, color: color),
+        const SizedBox(width: 4),
+        Text(
+          'Volatility: ${pct}th pct$suffix',
+          style: AppTypography.xs.copyWith(color: color),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: () => _showVolatilityInfo(context),
+          child: Icon(Icons.info_outline_rounded, size: 14, color: c.textFaint),
+        ),
+      ],
+    );
+  }
+
+  void _showVolatilityInfo(BuildContext context) {
+    final c = context.colors;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36, height: 4,
+                  decoration: BoxDecoration(
+                    color: c.border,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('Volatility Percentile',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              const SizedBox(height: 8),
+              Text(
+                'Compares the current ATR (Average True Range — the typical daily price swing) to the last 20 candles. A higher percentile means the market is moving more than usual.',
+                style: AppTypography.sm.copyWith(color: c.textMuted, height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              _InfoRow(
+                icon: Icons.show_chart_rounded,
+                color: c.warning,
+                title: 'Above 75th pct — High volatility',
+                body: 'Unusually large price swings. Stop-loss is automatically widened to 2× ATR so normal chop does not stop you out prematurely.',
+              ),
+              const SizedBox(height: 12),
+              _InfoRow(
+                icon: Icons.show_chart_rounded,
+                color: c.textMuted,
+                title: '25th–75th pct — Normal',
+                body: 'Typical market conditions. Standard stop-loss of 1.5× ATR applies.',
+              ),
+              const SizedBox(height: 12),
+              _InfoRow(
+                icon: Icons.show_chart_rounded,
+                color: c.textFaint,
+                title: 'Below 25th pct — Low volatility',
+                body: 'Very quiet market. Stop-loss is tightened to 1.1× ATR for a better risk/reward. Watch for a volatility expansion that could break the range.',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow({
+    required this.icon,
+    required this.color,
+    required this.title,
+    required this.body,
+  });
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          margin: const EdgeInsets.only(top: 2),
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+            color: color.withAlpha(30),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+          ),
+          child: Icon(icon, size: 14, color: color),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+              const SizedBox(height: 3),
+              Text(body,
+                  style: AppTypography.xs.copyWith(
+                      color: c.textMuted, height: 1.5)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

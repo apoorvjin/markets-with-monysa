@@ -15,11 +15,17 @@ class TradingRepository {
     return quotes.map((e) => QuoteItem.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  Future<TradingSignal> fetchSignal(String symbol, {String timeframe = '1d', String strategy = '1'}) async {
+  Future<TradingSignal> fetchSignal(
+    String symbol, {
+    String timeframe = '1d',
+    String strategy = '1',
+    CancelToken? cancelToken,
+  }) async {
     try {
       final data = await ApiClient.instance.get(
         ApiEndpoints.tradingSignal(symbol),
         params: {'timeframe': timeframe, 'strategy': strategy},
+        cancelToken: cancelToken,
       );
       return TradingSignal.fromJson(data as Map<String, dynamic>);
     } on DioException catch (e) {
@@ -42,13 +48,15 @@ class TradingRepository {
 
   Future<List<BacktestResult>> fetchBacktest(String symbol) async {
     final data = await ApiClient.instance.get(ApiEndpoints.tradingBacktest(symbol)) as Map<String, dynamic>;
-    // Server returns { symbol, timeframe, strategies: { "1": {...}, "2": {...}, "3": {...} }, timestamp }
+    // Server returns { symbol, timeframe, strategies: { "1": {...}, ... }, backtestNotes: { "3": "...", "6": "..." }, timestamp }
     final strategies = data['strategies'] as Map<String, dynamic>;
-    return ['1', '2', '3', '4', '5', '6', '7', '8']
+    final notes = (data['backtestNotes'] as Map<String, dynamic>?) ?? {};
+    return ['1', '2', '3', '4', '5', '6', '7', '8', '9']
         .where((k) => strategies.containsKey(k))
         .map((k) => BacktestResult.fromJson({
               ...(strategies[k] as Map<String, dynamic>),
               'strategy': 'S$k',
+              if (notes.containsKey(k)) 'backtestNote': notes[k],
             }))
         .toList();
   }

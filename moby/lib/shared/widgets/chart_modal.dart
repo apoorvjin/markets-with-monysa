@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -42,6 +43,7 @@ class _ChartModalState extends State<ChartModal> {
   late final WebViewController _controller;
   bool _loading = true;
   String? _error;
+  Timer? _timeoutTimer;
 
   static const _ranges = ['1M', '3M', '6M', '1Y', '5Y'];
   static const _rangeMap = {
@@ -62,8 +64,23 @@ class _ChartModalState extends State<ChartModal> {
     _loadChart();
   }
 
+  @override
+  void dispose() {
+    _timeoutTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadChart() async {
+    _timeoutTimer?.cancel();
     if (mounted) setState(() { _loading = true; _error = null; });
+    _timeoutTimer = Timer(const Duration(seconds: 10), () {
+      if (mounted && _loading) {
+        setState(() {
+          _loading = false;
+          _error = 'Chart timed out — tap to retry';
+        });
+      }
+    });
     try {
       final range = _rangeMap[_range] ?? '1mo';
       final data = await ApiClient.instance.get(
@@ -72,8 +89,10 @@ class _ChartModalState extends State<ChartModal> {
       ) as Map<String, dynamic>;
       final candles = data['candles'] as List? ?? [];
       if (!mounted) return;
+      _timeoutTimer?.cancel();
       await _controller.loadHtmlString(_buildHtml(jsonEncode(candles)));
     } catch (e) {
+      _timeoutTimer?.cancel();
       if (mounted) setState(() => _error = 'Failed to load chart data');
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -174,9 +193,43 @@ window.addEventListener('resize', () => chart.resize(window.innerWidth, window.i
                     child: CircularProgressIndicator(color: c.accent))
                 : _error != null
                     ? Center(
-                        child: Text(_error!,
-                            style: AppTypography.md
-                                .copyWith(color: c.textMuted)))
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(_error!,
+                                style: AppTypography.md
+                                    .copyWith(color: c.textMuted),
+                                textAlign: TextAlign.center),
+                            const SizedBox(height: AppSpacing.s4),
+                            GestureDetector(
+                              onTap: _loadChart,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: AppSpacing.s5,
+                                    vertical: AppSpacing.s3),
+                                decoration: BoxDecoration(
+                                  color: c.accentDim,
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadius.full),
+                                  border: Border.all(
+                                      color: c.accent.withAlpha(60)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.refresh_rounded,
+                                        size: 15, color: c.accent),
+                                    const SizedBox(width: AppSpacing.s2),
+                                    Text('Reload',
+                                        style: AppTypography.labelSm
+                                            .copyWith(color: c.accent)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
                     : WebViewWidget(controller: _controller),
           ),
         ],

@@ -4,7 +4,7 @@ set -euo pipefail
 # ── Config ────────────────────────────────────────────────────────────────────
 DEFAULT_IOS_DEVICE="iPhone 17 Pro"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_DIR="$SCRIPT_DIR"
 BACKEND_PORT=5001
 PROD_BACKEND="https://monysa-api.fly.dev"
 LOCAL_BACKEND="http://localhost:$BACKEND_PORT"
@@ -66,7 +66,7 @@ fi
 FLUTTER_VERSION=$(flutter --version 2>/dev/null | head -1)
 success "Flutter: $FLUTTER_VERSION"
 
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/moby"
 
 # ── Backend selection ─────────────────────────────────────────────────────────
 echo ""

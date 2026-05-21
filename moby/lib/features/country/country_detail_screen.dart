@@ -7,6 +7,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/sources/tariffs_data.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/error_view.dart';
+import 'sector_impact_sheet.dart';
 
 final _tariffsProvider = FutureProvider<List<CountryTariff>>(
     (_) => TariffsData.instance.load());
@@ -106,7 +107,11 @@ class CountryDetailScreen extends ConsumerWidget {
                         style: AppTypography.headingSm
                             .copyWith(color: c.textPrimary)),
                     const SizedBox(height: AppSpacing.s3),
-                    ...country.sectors.map((s) => _SectorRow(sector: s)),
+                    ...country.sectors.map((s) => _SectorRow(
+                          sector: s,
+                          countryCode: country.countryCode,
+                          countryName: country.countryName,
+                        )),
 
                     // Financial exposure
                     if (country.debtToUSA.isNotEmpty) ...[
@@ -134,7 +139,7 @@ class CountryDetailScreen extends ConsumerWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(height: AppSpacing.s5),
+                    SizedBox(height: AppSpacing.s5 + MediaQuery.of(context).padding.bottom + 64),
                   ]),
                 ),
               ),
@@ -147,8 +152,15 @@ class CountryDetailScreen extends ConsumerWidget {
 }
 
 class _SectorRow extends StatelessWidget {
-  const _SectorRow({required this.sector});
+  const _SectorRow({
+    required this.sector,
+    required this.countryCode,
+    required this.countryName,
+  });
+
   final SectorTariff sector;
+  final String countryCode;
+  final String countryName;
 
   @override
   Widget build(BuildContext context) {
@@ -185,6 +197,34 @@ class _SectorRow extends StatelessWidget {
               '${sector.tariffRate.toStringAsFixed(0)}%',
               style: AppTypography.sm
                   .copyWith(color: color, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.s2),
+          GestureDetector(
+            onTap: () => showSectorImpactSheet(
+              context,
+              countryCode: countryCode,
+              countryName: countryName,
+              sectorName: sector.sectorName,
+              tariffRate: sector.tariffRate,
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: c.accentDim18,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.auto_awesome_rounded,
+                      size: 11, color: c.accent),
+                  const SizedBox(width: 3),
+                  Text('AI',
+                      style: AppTypography.xs.copyWith(
+                          color: c.accent, fontWeight: FontWeight.w700)),
+                ],
+              ),
             ),
           ),
         ],
