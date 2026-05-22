@@ -5,6 +5,7 @@ import { registerMarketsRoutes } from "./routes/markets";
 import { registerVolatilityRoutes } from "./routes/volatility";
 import { registerEconomyRoutes } from "./routes/economy";
 import { registerExposureRoutes } from "./routes/exposure";
+import { registerHeatmapRoutes } from "./routes/heatmap";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", (_req, res) => {
@@ -15,6 +16,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerVolatilityRoutes(app);
   registerEconomyRoutes(app);
   registerExposureRoutes(app);
+  registerHeatmapRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

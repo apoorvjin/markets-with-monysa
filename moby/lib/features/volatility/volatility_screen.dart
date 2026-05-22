@@ -5,13 +5,16 @@ import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/models/trading_signal.dart';
+import '../../data/models/heatmap_data.dart';
 import '../../data/repositories/volatility_repository.dart';
 import '../../data/repositories/markets_repository.dart';
+import '../../data/repositories/heatmap_repository.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/sparkline_chart.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/theme_toggle.dart';
+import '../../shared/widgets/performance_heatmap.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +45,29 @@ final _crisesProvider = FutureProvider.autoDispose<
   (_) => VolatilityRepository.instance.fetchCrises(),
 );
 
+final _heatmapProvider = FutureProvider.autoDispose<HeatmapData>(
+    (_) => HeatmapRepository.instance.fetchHeatmap());
+
+final _heatmapAssetsProvider = FutureProvider.autoDispose<List<HeatmapTile>>(
+    (_) => HeatmapRepository.instance.fetchAssets());
+
+final _sectorsHeatmapProvider =
+    FutureProvider.autoDispose<List<HeatmapTile>>((ref) async {
+  final raw = await MarketsRepository.instance.fetchSectors();
+  return raw
+      .map((s) => HeatmapTile(
+            name: s['name'] as String? ?? '',
+            emoji: s['emoji'] as String? ?? '',
+            changePercent: (s['changePercent'] as num?)?.toDouble(),
+            perf1W: (s['perf1W'] as num?)?.toDouble(),
+            perf1M: (s['perf1M'] as num?)?.toDouble(),
+            perf3M: (s['perf3M'] as num?)?.toDouble(),
+            perf6M: (s['perf6M'] as num?)?.toDouble(),
+            perf1Y: (s['perf1Y'] as num?)?.toDouble(),
+          ))
+      .toList();
+});
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class VolatilityScreen extends ConsumerWidget {
@@ -55,7 +81,7 @@ class VolatilityScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: c.background,
       appBar: AppBar(
-        title: Text('Volatility',
+        title: Text('Macro',
             style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
         backgroundColor: c.headerBg,
         actions: const [ThemeToggleButton()],
@@ -108,6 +134,8 @@ class VolatilityScreen extends ConsumerWidget {
                   const SizedBox(height: AppSpacing.s3),
                   ...assets.map((a) => _CrisisAssetCard(data: a)),
                   const SizedBox(height: AppSpacing.s5),
+                  const _MarketHeatmapSection(),
+                  const SizedBox(height: AppSpacing.s5),
                   const _BondYieldsSection(),
                   const SizedBox(height: AppSpacing.s5),
                   const _GeopoliticalChain(),
@@ -123,6 +151,147 @@ class VolatilityScreen extends ConsumerWidget {
           );
         },
       ),
+    );
+  }
+}
+
+// ── Market Performance Heatmap ────────────────────────────────────────────────
+
+enum _HeatmapCategory { sectors, regions, assetClasses, assets }
+
+class _MarketHeatmapSection extends ConsumerStatefulWidget {
+  const _MarketHeatmapSection();
+
+  @override
+  ConsumerState<_MarketHeatmapSection> createState() =>
+      _MarketHeatmapSectionState();
+}
+
+class _MarketHeatmapSectionState extends ConsumerState<_MarketHeatmapSection> {
+  _HeatmapCategory _category = _HeatmapCategory.sectors;
+  String _assetSub = 'Commodities'; // sub-filter for Assets view
+
+  Widget _categoryChip(String label, bool isActive, AppPalette c,
+      VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: isActive ? c.accent.withAlpha(25) : Colors.transparent,
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(
+            color: isActive ? c.accent : c.border,
+            width: 1,
+          ),
+        ),
+        child: Text(
+          label,
+          style: AppTypography.labelSm.copyWith(
+            color: isActive ? c.accent : c.textSecondary,
+            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+
+    List<HeatmapTile>? tiles;
+    bool isLoading = false;
+    bool hasError = false;
+
+    switch (_category) {
+      case _HeatmapCategory.sectors:
+        ref.watch(_sectorsHeatmapProvider).when(
+          data: (d) => tiles = d,
+          loading: () => isLoading = true,
+          error: (_, __) => hasError = true,
+        );
+      case _HeatmapCategory.regions:
+        ref.watch(_heatmapProvider).when(
+          data: (d) => tiles = d.regions,
+          loading: () => isLoading = true,
+          error: (_, __) => hasError = true,
+        );
+      case _HeatmapCategory.assetClasses:
+        ref.watch(_heatmapProvider).when(
+          data: (d) => tiles = d.assetClasses,
+          loading: () => isLoading = true,
+          error: (_, __) => hasError = true,
+        );
+      case _HeatmapCategory.assets:
+        ref.watch(_heatmapAssetsProvider).when(
+          data: (d) => tiles =
+              d.where((t) => t.category == _assetSub).toList(),
+          loading: () => isLoading = true,
+          error: (_, __) => hasError = true,
+        );
+    }
+
+    const mainCategories = [
+      (_HeatmapCategory.sectors, 'Sectors'),
+      (_HeatmapCategory.regions, 'Regions'),
+      (_HeatmapCategory.assetClasses, 'Asset Classes'),
+      (_HeatmapCategory.assets, 'Assets'),
+    ];
+
+    const assetSubs = ['Commodities', 'Indices', 'Crypto'];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Market Performance',
+          style: AppTypography.headingSm.copyWith(color: c.textPrimary),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: mainCategories.map((cat) {
+              final (category, label) = cat;
+              return _categoryChip(label, _category == category, c,
+                  () => setState(() => _category = category));
+            }).toList(),
+          ),
+        ),
+        if (_category == _HeatmapCategory.assets) ...[
+          const SizedBox(height: AppSpacing.s2),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: assetSubs.map((sub) {
+                return _categoryChip(sub, _assetSub == sub, c,
+                    () => setState(() => _assetSub = sub));
+              }).toList(),
+            ),
+          ),
+        ],
+        const SizedBox(height: AppSpacing.s3),
+        if (isLoading)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: CircularProgressIndicator(color: c.accent, strokeWidth: 2),
+            ),
+          )
+        else if (hasError || tiles == null || tiles!.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              'Unable to load performance data',
+              style: AppTypography.sm.copyWith(color: c.textMuted),
+            ),
+          )
+        else
+          PerformanceHeatmap(tiles: tiles!),
+      ],
     );
   }
 }

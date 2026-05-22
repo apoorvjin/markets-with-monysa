@@ -1,9 +1,15 @@
+const YAHOO_TIMEOUT_MS = 10_000;
+
 export async function fetchYahooPrice(symbol: string): Promise<{ price?: number; change?: number; changePercent?: number; prevClose?: number } | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), YAHOO_TIMEOUT_MS);
     const resp = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: ac.signal,
     });
+    clearTimeout(timer);
     if (!resp.ok) return null;
     const data = await resp.json() as any;
     const meta = data?.chart?.result?.[0]?.meta;
@@ -21,9 +27,13 @@ export async function fetchYahooPrice(symbol: string): Promise<{ price?: number;
 export async function fetchRangeData(symbol: string, range: string): Promise<{ changePercent?: number; change?: number; sparkline?: number[]; lastPrice?: number } | null> {
   try {
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), YAHOO_TIMEOUT_MS);
     const resp = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: ac.signal,
     });
+    clearTimeout(timer);
     if (!resp.ok) return null;
     const data = await resp.json() as any;
     const result = data?.chart?.result?.[0];

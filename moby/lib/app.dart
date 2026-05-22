@@ -31,7 +31,7 @@ final _tabs = [
   (path: '/markets', icon: Icons.bar_chart_rounded, label: 'Markets'),
   (path: '/trading', icon: Icons.candlestick_chart_rounded, label: 'Trading'),
   (path: '/exposure', icon: Icons.public_rounded, label: 'Exposure'),
-  (path: '/volatility', icon: Icons.bolt_rounded, label: 'Volatility'),
+  (path: '/volatility', icon: Icons.bolt_rounded, label: 'Macro'),
   (path: '/debt', icon: Icons.account_balance_rounded, label: 'Debt'),
 ];
 

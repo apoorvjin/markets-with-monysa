@@ -36,6 +36,8 @@ abstract final class ApiEndpoints {
   static String get bonds => '$baseUrl/api/bonds';
   static String get sectors => '$baseUrl/api/sectors';
   static String get crises => '$baseUrl/api/crises';
+  static String get heatmap => '$baseUrl/api/heatmap';
+  static String get heatmapAssets => '$baseUrl/api/heatmap/assets';
 
   static String exposureAnalysis({
     required String country,
