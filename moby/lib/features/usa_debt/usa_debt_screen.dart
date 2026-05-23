@@ -5,7 +5,6 @@ import '../../core/theme/app_typography.dart';
 import '../../data/repositories/debt_repository.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
-import '../../shared/widgets/theme_toggle.dart';
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
@@ -374,11 +373,6 @@ class _UsaDebtScreenState extends ConsumerState<UsaDebtScreen> {
           );
         },
       ),
-          Positioned(
-            top: topPad + 10,
-            right: 14,
-            child: const ThemeToggleButton(),
-          ),
         ],
       ),
     );

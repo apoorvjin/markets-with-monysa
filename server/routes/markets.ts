@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { fetchYahooPrice, fetchRangeData, fetchBatch } from "./shared";
+import { yahooProvider } from "../providers";
 
 const COUNTRY_EXCHANGE_MAP: Record<string, { exchanges: string[]; region: string; suffix: string }> = {
   CN: { exchanges: ["SSE", "SZSE"], region: "China", suffix: ".SS" },
@@ -530,20 +531,130 @@ const FOREX_PAIRS = [
 const futuresCache: Map<string, { data: any[]; timestamp: number }> = new Map();
 const FUTURES_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
-// ─── COT Metals: CFTC Commitments of Traders ─────────────────────────────────
-// Source: CFTC Disaggregated Futures-Only COT Report (published every Friday)
-// Dataset: publicreporting.cftc.gov/resource/kh3c-gbw2.json
-// "Managed Money" category = hedge funds / CTAs
-const COT_METALS = [
-  { name: "Gold",      emoji: "🥇", code: "088691", symbol: "GC=F",  description: "Primary safe-haven. Most liquid metal futures market globally." },
-  { name: "Silver",    emoji: "🥈", code: "084691", symbol: "SI=F",  description: "Hybrid industrial/safe-haven. More volatile than gold." },
-  { name: "Copper",    emoji: "🟠", code: "085692", symbol: "HG=F",  description: "Industrial barometer. Hedge fund positioning reflects global growth outlook." },
-  { name: "Platinum",  emoji: "⚪", code: "076651", symbol: "PL=F",  description: "Auto-catalyst demand + safe haven. Less liquid than gold/silver." },
-  { name: "Palladium", emoji: "🔵", code: "075651", symbol: "PA=F",  description: "Primarily auto-industry driven. Prone to supply squeezes." },
+// ─── COT: CFTC Commitments of Traders ────────────────────────────────────────
+// Disaggregated report (kh3c-gbw2): Managed Money = hedge funds / CTAs
+// Fields: m_money_positions_long_all, m_money_positions_short_all
+const COT_DISAGGREGATED = [
+  // Metals
+  { name: "Gold",           emoji: "🥇", code: "088691", symbol: "GC=F",  category: "metals"      },
+  { name: "Silver",         emoji: "🥈", code: "084691", symbol: "SI=F",  category: "metals"      },
+  { name: "Copper",         emoji: "🟠", code: "085692", symbol: "HG=F",  category: "metals"      },
+  { name: "Platinum",       emoji: "⚪", code: "076651", symbol: "PL=F",  category: "metals"      },
+  { name: "Palladium",      emoji: "🔵", code: "075651", symbol: "PA=F",  category: "metals"      },
+  // Energy
+  { name: "WTI Crude Oil",  emoji: "🛢️", code: "067651", symbol: "CL=F",  category: "energy"      },
+  { name: "Brent Crude",    emoji: "⚫", code: "06765T", symbol: "BZ=F",  category: "energy"      },
+  { name: "Natural Gas",    emoji: "🔥", code: "023651", symbol: "NG=F",  category: "energy"      },
+  { name: "RBOB Gasoline",  emoji: "⛽", code: "111659", symbol: "RB=F",  category: "energy"      },
+  { name: "Heating Oil",    emoji: "🌡️", code: "022651", symbol: "HO=F",  category: "energy"      },
+  // Agriculture
+  { name: "Corn",           emoji: "🌽", code: "002602", symbol: "ZC=F",  category: "agriculture" },
+  { name: "Soybeans",       emoji: "🫘", code: "005602", symbol: "ZS=F",  category: "agriculture" },
+  { name: "Wheat",          emoji: "🌾", code: "001602", symbol: "ZW=F",  category: "agriculture" },
+  { name: "Coffee",         emoji: "☕", code: "083731", symbol: "KC=F",  category: "agriculture" },
+  { name: "Sugar #11",      emoji: "🍬", code: "080732", symbol: "SB=F",  category: "agriculture" },
+  { name: "Cotton",         emoji: "🤍", code: "033661", symbol: "CT=F",  category: "agriculture" },
+  { name: "Live Cattle",    emoji: "🐄", code: "057642", symbol: "LE=F",  category: "agriculture" },
+];
+
+// Legacy COT (6dca-aqww): Non-Commercial (speculator) positions
+// Fields: noncomm_positions_long_all, noncomm_positions_short_all
+const COT_LEGACY = [
+  // Equity Indices
+  { name: "S&P 500",           emoji: "📈", code: "13874+", symbol: "ES=F",     category: "indices",    vsUsd: false },
+  { name: "Nasdaq-100",        emoji: "💻", code: "209742", symbol: "NQ=F",     category: "indices",    vsUsd: false },
+  { name: "Russell 2000",      emoji: "📊", code: "239742", symbol: "RTY=F",    category: "indices",    vsUsd: false },
+  // Interest Rates
+  { name: "10-Year T-Note",    emoji: "🏦", code: "043602", symbol: "ZN=F",     category: "rates",      vsUsd: false },
+  { name: "2-Year T-Note",     emoji: "🏦", code: "042601", symbol: "ZT=F",     category: "rates",      vsUsd: false },
+  { name: "30-Year T-Bond",    emoji: "🏛️", code: "020601", symbol: "ZB=F",     category: "rates",      vsUsd: false },
+  // Currencies
+  { name: "Euro",              emoji: "🇪🇺", code: "099741", symbol: "EURUSD=X", category: "currencies", vsUsd: true  },
+  { name: "British Pound",     emoji: "🇬🇧", code: "096742", symbol: "GBPUSD=X", category: "currencies", vsUsd: true  },
+  { name: "Japanese Yen",      emoji: "🇯🇵", code: "097741", symbol: "USDJPY=X", category: "currencies", vsUsd: true  },
+  { name: "Australian Dollar", emoji: "🇦🇺", code: "232741", symbol: "AUDUSD=X", category: "currencies", vsUsd: true  },
+  { name: "Canadian Dollar",   emoji: "🇨🇦", code: "090741", symbol: "CADUSD=X", category: "currencies", vsUsd: true  },
+  { name: "Swiss Franc",       emoji: "🇨🇭", code: "092741", symbol: "CHFUSD=X", category: "currencies", vsUsd: true  },
+  { name: "Mexican Peso",      emoji: "🇲🇽", code: "095741", symbol: "MXN=X",    category: "currencies", vsUsd: true  },
 ];
 
 const COT_CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours
 let cotMetalsCache: { data: unknown; timestamp: number } | null = null;
+
+type CotAssetDef = { name: string; emoji: string; code: string; symbol: string; category: string; vsUsd?: boolean };
+
+async function fetchCotAssets(
+  assets: CotAssetDef[],
+  baseUrl: string,
+  longField: string,
+  shortField: string
+) {
+  return Promise.all(assets.map(async (asset) => {
+    try {
+      const url = new URL(baseUrl);
+      url.searchParams.set("cftc_contract_market_code", asset.code);
+      url.searchParams.set("$order", "report_date_as_yyyy_mm_dd DESC");
+      url.searchParams.set("$limit", "2");
+
+      const resp = await fetch(url.toString(), {
+        headers: { Accept: "application/json", "User-Agent": "Monysa/1.0" },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!resp.ok) return null;
+      const rows = await resp.json() as Record<string, string>[];
+      if (!rows || rows.length === 0) return null;
+
+      const latest = rows[0];
+      const prev   = rows[1] ?? null;
+
+      const longCurrent  = parseInt(latest[longField]  ?? "0", 10);
+      const shortCurrent = parseInt(latest[shortField] ?? "0", 10);
+      const netCurrent   = longCurrent - shortCurrent;
+      const total        = longCurrent + shortCurrent;
+      const longPct      = total > 0 ? (longCurrent / total) * 100 : 50;
+
+      let weekNetChange: number | null = null;
+      let weekNetChangePct: number | null = null;
+      if (prev) {
+        const longPrev  = parseInt(prev[longField]  ?? "0", 10);
+        const shortPrev = parseInt(prev[shortField] ?? "0", 10);
+        const netPrev   = longPrev - shortPrev;
+        weekNetChange    = netCurrent - netPrev;
+        weekNetChangePct = netPrev !== 0 ? ((netCurrent - netPrev) / Math.abs(netPrev)) * 100 : null;
+      }
+
+      const sentiment =
+        longPct >= 70 ? "Strongly Bullish" :
+        longPct >= 58 ? "Bullish"          :
+        longPct >= 42 ? "Neutral"          :
+        longPct >= 30 ? "Bearish"          : "Strongly Bearish";
+
+      const usdBias = asset.vsUsd
+        ? `Net ${netCurrent >= 0 ? "LONG" : "SHORT"} ${asset.name} vs USD`
+        : undefined;
+
+      return {
+        name:             asset.name,
+        emoji:            asset.emoji,
+        symbol:           asset.symbol,
+        category:         asset.category,
+        longContracts:    longCurrent,
+        shortContracts:   shortCurrent,
+        netPosition:      netCurrent,
+        longPct:          Math.round(longPct * 10) / 10,
+        sentiment,
+        weekNetChange,
+        weekNetChangePct: weekNetChangePct != null ? Math.round(weekNetChangePct * 10) / 10 : null,
+        reportDate:       latest.report_date_as_yyyy_mm_dd ?? null,
+        marketName:       latest.market_and_exchange_names ?? asset.name,
+        vsUsd:            asset.vsUsd ?? false,
+        usdBias,
+      };
+    } catch {
+      return null;
+    }
+  }));
+}
 
 // ─── Chart cache ──────────────────────────────────────────────────────────────
 const chartCache = new Map<string, { data: unknown; timestamp: number }>();
@@ -669,40 +780,10 @@ export function registerMarketsRoutes(app: Express): void {
     }
 
     try {
-      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(raw)}?range=${safeRange}&interval=${interval}`;
-      const resp = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!resp.ok) return res.status(502).json({ error: "Yahoo Finance unavailable" });
-
-      const data   = await resp.json() as any;
-      const result = data?.chart?.result?.[0];
-      if (!result) return res.status(404).json({ error: "No data for symbol" });
-
-      const timestamps = (result.timestamp ?? []) as number[];
-      const quote      = result.indicators?.quote?.[0] ?? {};
-      const opens      = (quote.open  ?? []) as (number | null)[];
-      const highs      = (quote.high  ?? []) as (number | null)[];
-      const lows       = (quote.low   ?? []) as (number | null)[];
-      const closes     = (quote.close ?? []) as (number | null)[];
-      const volumes    = (quote.volume ?? []) as (number | null)[];
-
-      const candles = timestamps
-        .map((ts, i) => ({
-          time:   new Date(ts * 1000).toISOString().split("T")[0],
-          open:   opens[i],
-          high:   highs[i],
-          low:    lows[i],
-          close:  closes[i],
-          volume: volumes[i] ?? null,
-        }))
-        .filter(c => c.open != null && c.high != null && c.low != null && c.close != null);
-
+      const candles = await yahooProvider.fetchChartCandles(raw, safeRange, interval);
       const responseData = {
         candles,
-        currency:    result.meta?.currency ?? "USD",
-        symbol:      result.meta?.symbol   ?? raw,
+        symbol:      raw,
         lastUpdated: new Date().toISOString(),
       };
       chartCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
@@ -718,78 +799,79 @@ export function registerMarketsRoutes(app: Express): void {
       return res.json(cotMetalsCache.data);
     }
     try {
-      const results = await Promise.all(
-        COT_METALS.map(async (metal) => {
-          const url = new URL("https://publicreporting.cftc.gov/resource/kh3c-gbw2.json");
-          url.searchParams.set("cftc_contract_market_code", metal.code);
-          url.searchParams.set("$order", "report_date_as_yyyy_mm_dd DESC");
-          url.searchParams.set("$limit", "2");
+      const [disaggResults, legacyResults] = await Promise.all([
+        fetchCotAssets(
+          COT_DISAGGREGATED,
+          "https://publicreporting.cftc.gov/resource/kh3c-gbw2.json",
+          "m_money_positions_long_all",
+          "m_money_positions_short_all"
+        ),
+        fetchCotAssets(
+          COT_LEGACY,
+          "https://publicreporting.cftc.gov/resource/6dca-aqww.json",
+          "noncomm_positions_long_all",
+          "noncomm_positions_short_all"
+        ),
+      ]);
 
-          const resp = await fetch(url.toString(), {
-            headers: { Accept: "application/json", "User-Agent": "Monysa/1.0" },
-            signal: AbortSignal.timeout(12000),
-          });
-          if (!resp.ok) return null;
-          const rows = await resp.json() as Record<string, string>[];
-          if (!rows || rows.length === 0) return null;
+      const all = [...disaggResults, ...legacyResults].filter(Boolean) as NonNullable<Awaited<ReturnType<typeof fetchCotAssets>>[number]>[];
+      const group = (cat: string) => all.filter(r => r.category === cat);
 
-          const latest = rows[0];
-          const prev   = rows[1] ?? null;
-
-          const longCurrent  = parseInt(latest.m_money_positions_long_all  ?? "0", 10);
-          const shortCurrent = parseInt(latest.m_money_positions_short_all ?? "0", 10);
-          const netCurrent   = longCurrent - shortCurrent;
-          const total        = longCurrent + shortCurrent;
-          const longPct      = total > 0 ? (longCurrent / total) * 100 : 50;
-
-          let weekNetChange: number | null = null;
-          let weekNetChangePct: number | null = null;
-          if (prev) {
-            const longPrev  = parseInt(prev.m_money_positions_long_all  ?? "0", 10);
-            const shortPrev = parseInt(prev.m_money_positions_short_all ?? "0", 10);
-            const netPrev   = longPrev - shortPrev;
-            weekNetChange    = netCurrent - netPrev;
-            weekNetChangePct = netPrev !== 0 ? ((netCurrent - netPrev) / Math.abs(netPrev)) * 100 : null;
-          }
-
-          const sentiment =
-            longPct >= 70 ? "Strongly Bullish" :
-            longPct >= 58 ? "Bullish"          :
-            longPct >= 42 ? "Neutral"          :
-            longPct >= 30 ? "Bearish"          : "Strongly Bearish";
-
-          return {
-            name:            metal.name,
-            emoji:           metal.emoji,
-            symbol:          metal.symbol,
-            description:     metal.description,
-            longContracts:   longCurrent,
-            shortContracts:  shortCurrent,
-            netPosition:     netCurrent,
-            longPct:         Math.round(longPct * 10) / 10,
-            sentiment,
-            weekNetChange,
-            weekNetChangePct: weekNetChangePct != null ? Math.round(weekNetChangePct * 10) / 10 : null,
-            reportDate:      latest.report_date_as_yyyy_mm_dd ?? null,
-            marketName:      latest.market_and_exchange_names ?? metal.name,
-          };
-        })
-      );
-
-      const metals = results.filter(Boolean);
-      const reportDate = (metals[0] as { reportDate?: string } | null)?.reportDate ?? null;
+      const reportDate = all.find(r => r.reportDate)?.reportDate ?? null;
       const responseData = {
-        metals,
+        metals:      group("metals"),
+        indicesRates: [...group("indices"), ...group("rates")],
+        currencies:  group("currencies"),
+        energy:      group("energy"),
+        agriculture: group("agriculture"),
         reportDate,
         lastUpdated: new Date().toISOString(),
-        source: "CFTC Disaggregated Commitments of Traders Report",
+        source: "CFTC Commitments of Traders Report",
         sourceUrl: "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm",
       };
       cotMetalsCache = { data: responseData, timestamp: Date.now() };
       res.json(responseData);
     } catch (e) {
-      console.error("COT metals error:", e);
+      console.error("COT data error:", e);
       res.status(500).json({ error: "Failed to fetch CFTC COT data" });
     }
+  });
+
+  // ── Central Bank Policy Rates ──────────────────────────────────────────────
+  // Rates are maintained server-side so they can be updated without an app
+  // release. The lastUpdated timestamp lets clients detect when rates changed.
+  const CB_RATES: Record<string, { label: string; rate: number }> = {
+    USD: { label: "Fed",   rate: 4.33 },
+    EUR: { label: "ECB",   rate: 2.40 },
+    GBP: { label: "BoE",   rate: 4.25 },
+    JPY: { label: "BoJ",   rate: 0.50 },
+    CHF: { label: "SNB",   rate: 0.00 },
+    AUD: { label: "RBA",   rate: 4.10 },
+    NZD: { label: "RBNZ",  rate: 3.50 },
+    CAD: { label: "BoC",   rate: 2.75 },
+    SEK: { label: "Riksbank", rate: 2.25 },
+    NOK: { label: "Norges", rate: 4.50 },
+    DKK: { label: "DN",    rate: 2.35 },
+    CNY: { label: "PBoC",  rate: 3.10 },
+    HKD: { label: "HKMA",  rate: 4.75 },
+    SGD: { label: "MAS",   rate: 3.68 },
+    KRW: { label: "BoK",   rate: 2.75 },
+    MXN: { label: "Banxico", rate: 8.50 },
+    BRL: { label: "BCB",   rate: 13.25 },
+    INR: { label: "RBI",   rate: 6.00 },
+    ZAR: { label: "SARB",  rate: 7.50 },
+    TRY: { label: "CBRT",  rate: 42.50 },
+  };
+
+  // Rates change infrequently — 6 hour client cache is safe.
+  const CB_LAST_UPDATED = "2026-05-23T00:00:00.000Z";
+
+  app.get("/api/central-bank-rates", (_req, res) => {
+    res.set("Cache-Control", "public, max-age=21600"); // 6h
+    res.json({
+      rates: CB_RATES,
+      lastUpdated: CB_LAST_UPDATED,
+      source: "Central bank official policy rates",
+    });
   });
 }

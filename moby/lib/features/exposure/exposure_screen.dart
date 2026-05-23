@@ -7,7 +7,6 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/sources/tariffs_data.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
-import '../../shared/widgets/theme_toggle.dart';
 
 // ── Provider ──────────────────────────────────────────────────────────────────
 
@@ -76,7 +75,6 @@ class _ExposureScreenState extends ConsumerState<ExposureScreen> {
         title: Text('Tariff Exposure',
             style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
         backgroundColor: c.headerBg,
-        actions: const [ThemeToggleButton()],
       ),
       body: async.when(
         loading: () => Center(

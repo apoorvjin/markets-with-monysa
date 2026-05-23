@@ -6,10 +6,15 @@ import { registerVolatilityRoutes } from "./routes/volatility";
 import { registerEconomyRoutes } from "./routes/economy";
 import { registerExposureRoutes } from "./routes/exposure";
 import { registerHeatmapRoutes } from "./routes/heatmap";
+import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", (_req, res) => {
     res.json(getHealthStatus());
+  });
+
+  app.get("/api/providers", (_req, res) => {
+    res.json({ available: getAvailableProviders(), default: "yahoo" });
   });
 
   registerMarketsRoutes(app);

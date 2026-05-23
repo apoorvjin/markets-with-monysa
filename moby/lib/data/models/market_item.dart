@@ -1,3 +1,13 @@
+class CbRateInfo {
+  const CbRateInfo({required this.label, required this.rate});
+  final String label;
+  final double rate;
+  factory CbRateInfo.fromJson(Map<String, dynamic> j) => CbRateInfo(
+        label: j['label'] as String,
+        rate: (j['rate'] as num).toDouble(),
+      );
+}
+
 class MarketItem {
   const MarketItem({
     required this.symbol,
@@ -56,6 +66,8 @@ class CotMetal {
     this.weekNetChange,
     this.weekNetChangePct,
     this.reportDate,
+    this.vsUsd = false,
+    this.usdBias,
   });
 
   final String name;
@@ -69,6 +81,8 @@ class CotMetal {
   final double? weekNetChange;
   final double? weekNetChangePct;
   final String? reportDate;
+  final bool vsUsd;
+  final String? usdBias;
 
   factory CotMetal.fromJson(Map<String, dynamic> j) => CotMetal(
         name: j['name'] as String,
@@ -81,6 +95,38 @@ class CotMetal {
         sentiment: j['sentiment'] as String,
         weekNetChange: (j['weekNetChange'] as num?)?.toDouble(),
         weekNetChangePct: (j['weekNetChangePct'] as num?)?.toDouble(),
+        reportDate: j['reportDate'] as String?,
+        vsUsd: j['vsUsd'] as bool? ?? false,
+        usdBias: j['usdBias'] as String?,
+      );
+}
+
+class CotData {
+  const CotData({
+    required this.metals,
+    required this.indicesRates,
+    required this.currencies,
+    required this.energy,
+    required this.agriculture,
+    this.reportDate,
+  });
+
+  final List<CotMetal> metals;
+  final List<CotMetal> indicesRates;
+  final List<CotMetal> currencies;
+  final List<CotMetal> energy;
+  final List<CotMetal> agriculture;
+  final String? reportDate;
+
+  static List<CotMetal> _parseList(dynamic raw) =>
+      (raw as List? ?? []).map((e) => CotMetal.fromJson(e as Map<String, dynamic>)).toList();
+
+  factory CotData.fromJson(Map<String, dynamic> j) => CotData(
+        metals: _parseList(j['metals']),
+        indicesRates: _parseList(j['indicesRates']),
+        currencies: _parseList(j['currencies']),
+        energy: _parseList(j['energy']),
+        agriculture: _parseList(j['agriculture']),
         reportDate: j['reportDate'] as String?,
       );
 }

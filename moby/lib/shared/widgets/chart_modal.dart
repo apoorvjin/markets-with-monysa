@@ -44,6 +44,7 @@ class _ChartModalState extends State<ChartModal> {
   bool _loading = true;
   String? _error;
   Timer? _timeoutTimer;
+  bool? _isDark;
 
   static const _ranges = ['1M', '3M', '6M', '1Y', '5Y'];
   static const _rangeMap = {
@@ -57,11 +58,21 @@ class _ChartModalState extends State<ChartModal> {
   @override
   void initState() {
     super.initState();
-    // Chart WebView always uses dark background regardless of app theme.
     _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0xFF0A0A0A));
-    _loadChart();
+      ..setJavaScriptMode(JavaScriptMode.unrestricted);
+    // _loadChart() is deferred to didChangeDependencies so theme is available
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    if (_isDark != isDark) {
+      _isDark = isDark;
+      _controller.setBackgroundColor(
+          isDark ? const Color(0xFF0A0A0A) : Colors.white);
+      _loadChart();
+    }
   }
 
   @override
@@ -90,7 +101,7 @@ class _ChartModalState extends State<ChartModal> {
       final candles = data['candles'] as List? ?? [];
       if (!mounted) return;
       _timeoutTimer?.cancel();
-      await _controller.loadHtmlString(_buildHtml(jsonEncode(candles)));
+      await _controller.loadHtmlString(_buildHtml(jsonEncode(candles), _isDark ?? false));
     } catch (e) {
       _timeoutTimer?.cancel();
       if (mounted) setState(() => _error = 'Failed to load chart data');
@@ -99,8 +110,16 @@ class _ChartModalState extends State<ChartModal> {
     }
   }
 
-  // HTML chart is always dark — the candlestick chart looks better dark.
-  String _buildHtml(String candleJson) {
+  String _buildHtml(String candleJson, bool isDark) {
+    final bg        = isDark ? '#0a0a0a' : '#ffffff';
+    final textColor = isDark ? '#adb5bd'  : '#374151';
+    final gridColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+    final borderColor = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
+    final upColor   = isDark ? '#00D4AA' : '#00C49A';
+    final downColor = isDark ? '#FF4D6A' : '#E8384F';
+    final upVol     = isDark ? 'rgba(0,212,170,0.3)' : 'rgba(0,196,154,0.3)';
+    final downVol   = isDark ? 'rgba(255,77,106,0.3)' : 'rgba(232,56,79,0.3)';
+
     return '''
 <!DOCTYPE html>
 <html>
@@ -108,7 +127,7 @@ class _ChartModalState extends State<ChartModal> {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#0a0a0a; color:#fff; font-family:sans-serif; }
+  body { background:$bg; color:$textColor; font-family:sans-serif; }
   #chart { width:100%; height:100vh; }
 </style>
 </head>
@@ -117,23 +136,23 @@ class _ChartModalState extends State<ChartModal> {
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <script>
 const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-  layout: { background: { color: '#0a0a0a' }, textColor: '#adb5bd' },
-  grid: { vertLines: { color: 'rgba(255,255,255,0.06)' }, horzLines: { color: 'rgba(255,255,255,0.06)' } },
+  layout: { background: { color: '$bg' }, textColor: '$textColor' },
+  grid: { vertLines: { color: '$gridColor' }, horzLines: { color: '$gridColor' } },
   crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-  rightPriceScale: { borderColor: 'rgba(255,255,255,0.12)' },
-  timeScale: { borderColor: 'rgba(255,255,255,0.12)', timeVisible: true },
+  rightPriceScale: { borderColor: '$borderColor' },
+  timeScale: { borderColor: '$borderColor', timeVisible: true },
   handleScroll: true,
   handleScale: true,
 });
 
 const candleSeries = chart.addCandlestickSeries({
-  upColor: '#00D4AA', downColor: '#FF4D6A',
-  borderUpColor: '#00D4AA', borderDownColor: '#FF4D6A',
-  wickUpColor: '#00D4AA', wickDownColor: '#FF4D6A',
+  upColor: '$upColor', downColor: '$downColor',
+  borderUpColor: '$upColor', borderDownColor: '$downColor',
+  wickUpColor: '$upColor', wickDownColor: '$downColor',
 });
 
 const volumeSeries = chart.addHistogramSeries({
-  color: 'rgba(0,212,170,0.2)',
+  color: '$upVol',
   priceFormat: { type: 'volume' },
   priceScaleId: '',
 });
@@ -142,7 +161,7 @@ chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
 
 const raw = $candleJson;
 candleSeries.setData(raw.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-volumeSeries.setData(raw.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? 'rgba(0,212,170,0.3)' : 'rgba(255,77,106,0.3)' })));
+volumeSeries.setData(raw.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? '$upVol' : '$downVol' })));
 chart.timeScale().fitContent();
 
 window.addEventListener('resize', () => chart.resize(window.innerWidth, window.innerHeight));

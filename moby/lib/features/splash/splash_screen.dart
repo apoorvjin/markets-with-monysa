@@ -63,6 +63,11 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(const Duration(milliseconds: 1500));
     if (mounted) {
       final prefs = await SharedPreferences.getInstance();
+      final hasSeenOnboarding = prefs.getBool('hasSeenOnboarding') ?? false;
+      if (!hasSeenOnboarding) {
+        if (mounted) context.go('/onboarding');
+        return;
+      }
       final dest = prefs.getString('lastTab') ?? '/markets';
       if (mounted) context.go(dest);
     }

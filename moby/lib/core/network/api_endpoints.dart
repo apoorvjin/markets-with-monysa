@@ -8,10 +8,12 @@ abstract final class ApiEndpoints {
   static String get commoditiesFutures => '$baseUrl/api/futures/commodities';
   static String get forexFutures => '$baseUrl/api/futures/forex';
   static String get cotMetals => '$baseUrl/api/futures/cot-metals';
+  static String get centralBankRates => '$baseUrl/api/central-bank-rates';
 
   static String stocksByCountry(String code) => '$baseUrl/api/stocks/$code';
   static String chart(String symbol) => '$baseUrl/api/chart/$symbol';
 
+  static String get tradingStrategies => '$baseUrl/api/trading/strategies';
   static String get tradingQuotes => '$baseUrl/api/trading/quotes';
   static String tradingSignal(String symbol) =>
       '$baseUrl/api/trading/signals/$symbol';

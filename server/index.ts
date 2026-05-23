@@ -1,6 +1,7 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { registerRoutes } from "./routes";
 
 const app = express();
@@ -141,6 +142,65 @@ function setupRateLimiting(app: express.Application) {
   app.use("/api/volatility/briefing", briefingLimiter);
 }
 
+// Routes protected by HMAC signing — the expensive / AI-backed endpoints.
+const SIGNED_ROUTES = [
+  "/api/trading/signals",
+  "/api/trading/backtest",
+  "/api/volatility/briefing",
+];
+
+function setupRequestSigning(app: express.Application) {
+  const secret = process.env.APP_SIGNING_SECRET;
+
+  if (!secret) {
+    log("⚠️  APP_SIGNING_SECRET not set — request signing disabled (dev mode only)");
+    return;
+  }
+
+  const signingMiddleware = (req: Request, res: Response, next: NextFunction) => {
+    const header = req.headers["x-signature"] as string | undefined;
+    if (!header) {
+      return res.status(401).json({ error: "Missing X-Signature header." });
+    }
+
+    const dotIdx = header.indexOf(".");
+    if (dotIdx === -1) {
+      return res.status(401).json({ error: "Malformed X-Signature header." });
+    }
+
+    const ts = header.slice(0, dotIdx);
+    const provided = header.slice(dotIdx + 1);
+    const tsNum = parseInt(ts, 10);
+
+    // Replay protection: reject timestamps older than 5 minutes.
+    if (isNaN(tsNum) || Math.abs(Date.now() - tsNum) > 5 * 60_000) {
+      return res.status(401).json({ error: "Request timestamp expired." });
+    }
+
+    const expected = createHmac("sha256", secret).update(ts).digest("hex");
+
+    try {
+      const expectedBuf = Buffer.from(expected, "hex");
+      const providedBuf = Buffer.from(provided, "hex");
+      if (
+        expectedBuf.length !== providedBuf.length ||
+        !timingSafeEqual(expectedBuf, providedBuf)
+      ) {
+        return res.status(401).json({ error: "Invalid request signature." });
+      }
+    } catch {
+      return res.status(401).json({ error: "Invalid request signature." });
+    }
+
+    next();
+  };
+
+  for (const path of SIGNED_ROUTES) {
+    app.use(path, signingMiddleware);
+  }
+  log(`✓ Request signing active on: ${SIGNED_ROUTES.join(", ")}`);
+}
+
 function setupErrorHandler(app: express.Application) {
   app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
     const error = err as {
@@ -167,6 +227,7 @@ function setupErrorHandler(app: express.Application) {
   setupBodyParsing(app);
   setupRequestLogging(app);
   setupRateLimiting(app);
+  setupRequestSigning(app);
 
   app.get("/", (_req: Request, res: Response) => {
     res.json({ status: "ok", name: "Markets API", version: "1.0.0" });

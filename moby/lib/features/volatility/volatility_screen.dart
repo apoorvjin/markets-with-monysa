@@ -9,11 +9,11 @@ import '../../data/models/heatmap_data.dart';
 import '../../data/repositories/volatility_repository.dart';
 import '../../data/repositories/markets_repository.dart';
 import '../../data/repositories/heatmap_repository.dart';
+import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/sparkline_chart.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
-import '../../shared/widgets/theme_toggle.dart';
 import '../../shared/widgets/performance_heatmap.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
@@ -39,6 +39,7 @@ final _briefingProvider = FutureProvider.autoDispose<String>((ref) async {
 
 final _bondsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
     (_) => MarketsRepository.instance.fetchBonds());
+
 
 final _crisesProvider = FutureProvider.autoDispose<
     ({List<CrisisEvent> crises, String dataAsOf})>(
@@ -77,6 +78,8 @@ class VolatilityScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     final async = ref.watch(_volAssetsProvider);
+    // Pre-warm so crisis fetch runs in parallel with market data, not after.
+    ref.watch(_crisesProvider);
 
     return Scaffold(
       backgroundColor: c.background,
@@ -84,7 +87,6 @@ class VolatilityScreen extends ConsumerWidget {
         title: Text('Macro',
             style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
         backgroundColor: c.headerBg,
-        actions: const [ThemeToggleButton()],
       ),
       body: async.when(
         loading: () => Center(
@@ -98,13 +100,19 @@ class VolatilityScreen extends ConsumerWidget {
           final vix = (vixMap?['price'] as num?)?.toDouble() ?? 20.0;
           final assets = (data['items'] as List? ?? [])
               .cast<Map<String, dynamic>>();
+          final lastUpdated = data['lastUpdated'] as String?;
 
           return RefreshIndicator(
             color: c.accent,
             backgroundColor: c.surface,
             onRefresh: () async {
+              HeatmapRepository.instance.invalidateCache();
+              MarketsRepository.instance.invalidateSectorsCache();
               ref.invalidate(_volAssetsProvider);
               ref.invalidate(_briefingProvider);
+              ref.invalidate(_heatmapProvider);
+              ref.invalidate(_heatmapAssetsProvider);
+              ref.invalidate(_sectorsHeatmapProvider);
             },
             child: MaxWidthLayout(
               child: ListView(
@@ -129,22 +137,32 @@ class VolatilityScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.s5),
-                  Text('Crisis-Response Assets',
-                      style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-                  const SizedBox(height: AppSpacing.s3),
-                  ...assets.map((a) => _CrisisAssetCard(data: a)),
-                  const SizedBox(height: AppSpacing.s5),
                   const _MarketHeatmapSection(),
                   const SizedBox(height: AppSpacing.s5),
                   const _BondYieldsSection(),
                   const SizedBox(height: AppSpacing.s5),
-                  const _GeopoliticalChain(),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _HistoricalPlaybook(),
-                  const SizedBox(height: AppSpacing.s5),
                   const _AiBriefingCard(),
                   const SizedBox(height: AppSpacing.s5),
                   const _EconomicCalendar(),
+                  const SizedBox(height: AppSpacing.s5),
+                  Row(
+                    children: [
+                      Icon(Icons.shield_outlined, color: c.warning, size: 20),
+                      const SizedBox(width: AppSpacing.s3),
+                      Text('Crisis-Response Assets',
+                          style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                    ],
+                  ),
+                  if (lastUpdated != null) ...[
+                    const SizedBox(height: AppSpacing.s2),
+                    FreshnessBar(lastUpdated: lastUpdated),
+                  ],
+                  const SizedBox(height: AppSpacing.s3),
+                  ...assets.map((a) => _CrisisAssetCard(data: a)),
+                  const SizedBox(height: AppSpacing.s5),
+                  const _HistoricalPlaybook(),
+                  const SizedBox(height: AppSpacing.s5),
+                  const _GeopoliticalChain(),
                 ],
               ),
             ),
@@ -341,16 +359,34 @@ class _StressMeter extends StatelessWidget {
                 color: color, fontWeight: FontWeight.w800),
           ),
           const SizedBox(height: AppSpacing.s2),
-          // Stress bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: min(vix / 50, 1.0),
-              backgroundColor: c.border,
-              valueColor: AlwaysStoppedAnimation(color),
-              minHeight: 6,
-            ),
-          ),
+          // Gradient stress bar
+          LayoutBuilder(builder: (_, constraints) {
+            final fill = min(vix / 50, 1.0);
+            return Stack(
+              children: [
+                Container(
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: c.border,
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(5),
+                  child: Container(
+                    height: 10,
+                    width: constraints.maxWidth * fill,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [c.positive, c.warning, const Color(0xFFFF8C42), c.danger],
+                        stops: const [0.0, 0.4, 0.7, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }),
           const SizedBox(height: AppSpacing.s2),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -400,13 +436,34 @@ class _VixGauge extends StatelessWidget {
                   style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
             ],
           ),
-          const SizedBox(height: AppSpacing.s4),
-          Text(
-            vix.toStringAsFixed(2),
-            style: AppTypography.xl3.copyWith(
-                fontWeight: FontWeight.w800,
-                color: c.textPrimary,
-                fontFeatures: [const FontFeature.tabularFigures()]),
+          const SizedBox(height: AppSpacing.s3),
+          // Semicircular arc gauge
+          Center(
+            child: SizedBox(
+              height: 80,
+              child: CustomPaint(
+                painter: _ArcGaugePainter(
+                  value: min(vix / 50, 1.0),
+                  trackColor: c.border,
+                  lowColor: c.positive,
+                  midColor: c.warning,
+                  highColor: const Color(0xFFFF8C42),
+                  extremeColor: c.danger,
+                ),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 32),
+                    child: Text(
+                      vix.toStringAsFixed(2),
+                      style: AppTypography.xl2.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: c.textPrimary,
+                          fontFeatures: [const FontFeature.tabularFigures()]),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ),
           const Spacer(),
           Column(
@@ -422,6 +479,61 @@ class _VixGauge extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ArcGaugePainter extends CustomPainter {
+  const _ArcGaugePainter({
+    required this.value,
+    required this.trackColor,
+    required this.lowColor,
+    required this.midColor,
+    required this.highColor,
+    required this.extremeColor,
+  });
+
+  final double value;
+  final Color trackColor;
+  final Color lowColor;
+  final Color midColor;
+  final Color highColor;
+  final Color extremeColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height - 4;
+    final radius = min(cx, cy) - 8;
+    final strokeW = 10.0;
+
+    final rect = Rect.fromCircle(center: Offset(cx, cy), radius: radius);
+
+    // Track (background)
+    final trackPaint = Paint()
+      ..color = trackColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeW
+      ..strokeCap = StrokeCap.round;
+    canvas.drawArc(rect, pi, pi, false, trackPaint);
+
+    // Gradient fill arc
+    if (value > 0) {
+      final gradient = SweepGradient(
+        startAngle: pi,
+        endAngle: 2 * pi,
+        colors: [lowColor, midColor, highColor, extremeColor],
+        stops: const [0.0, 0.4, 0.7, 1.0],
+      );
+      final fillPaint = Paint()
+        ..shader = gradient.createShader(rect)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeW
+        ..strokeCap = StrokeCap.round;
+      canvas.drawArc(rect, pi, pi * value, false, fillPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ArcGaugePainter old) => old.value != value;
 }
 
 class _Band extends StatelessWidget {
@@ -463,13 +575,19 @@ class _CrisisAssetCard extends StatelessWidget {
     final perf1m = (data['changePercent1M'] as num?)?.toDouble();
     final perf3m = (data['changePercent3M'] as num?)?.toDouble();
 
+    final leftColor = (perf1m ?? 0) >= 0 ? c.positive : c.danger;
     return Container(
       margin: const EdgeInsets.only(bottom: AppSpacing.s3),
       padding: const EdgeInsets.all(AppSpacing.s4),
       decoration: BoxDecoration(
         color: c.surfaceCard,
         borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: c.border),
+        border: Border(
+          left: BorderSide(color: leftColor, width: 3),
+          top: BorderSide(color: c.border, width: 0.5),
+          right: BorderSide(color: c.border, width: 0.5),
+          bottom: BorderSide(color: c.border, width: 0.5),
+        ),
       ),
       child: Row(
         children: [
@@ -645,35 +763,31 @@ class _HistoricalPlaybook extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
-    final async = ref.watch(_crisesProvider);
+    final result = ref.watch(_crisesProvider).valueOrNull;
+    final crises = result?.crises ?? kCrisisEvents;
+    final dataAsOf = result?.dataAsOf ?? kCrisisDataAsOf;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Crisis Playbook',
-            style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-        const SizedBox(height: AppSpacing.s3),
-        async.when(
-          loading: () => Center(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: AppSpacing.s5),
-              child: CircularProgressIndicator(color: c.accent),
-            ),
-          ),
-          error: (_, __) => _CrisisErrorRow(onRetry: () => ref.invalidate(_crisesProvider)),
-          data: (result) => Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              ...result.crises.map((e) => _CrisisCard(event: e)),
-              const SizedBox(height: AppSpacing.s2),
-              Text(
-                'Data as of ${result.dataAsOf}',
-                style: AppTypography.xs.copyWith(color: c.textSecondary),
-              ),
+              Icon(Icons.history_edu_rounded, color: c.danger, size: 20),
+              const SizedBox(width: AppSpacing.s3),
+              Text('Crisis Playbook',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: AppSpacing.s3),
+          ...crises.map((e) => _CrisisCard(event: e)),
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            'Data as of $dataAsOf',
+            style: AppTypography.xs.copyWith(color: c.textSecondary),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -700,12 +814,11 @@ class _CrisisCard extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: AppSpacing.s3),
       padding: const EdgeInsets.all(AppSpacing.s4),
       decoration: BoxDecoration(
-        color: c.surfaceCard,
         borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(
           color: event.status == 'ongoing'
               ? c.danger.withAlpha(80)
-              : c.border,
+              : c.border.withAlpha(80),
         ),
       ),
       child: Column(
@@ -771,26 +884,6 @@ class _CrisisCard extends StatelessWidget {
   }
 }
 
-class _CrisisErrorRow extends StatelessWidget {
-  const _CrisisErrorRow({required this.onRetry});
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      children: [
-        Text('Failed to load crisis data',
-            style: AppTypography.sm.copyWith(color: c.textSecondary)),
-        const SizedBox(width: AppSpacing.s3),
-        TextButton(
-          onPressed: onRetry,
-          child: Text('Retry', style: AppTypography.sm.copyWith(color: c.accent)),
-        ),
-      ],
-    );
-  }
-}
 
 // ── AI Briefing ───────────────────────────────────────────────────────────────
 
@@ -901,19 +994,46 @@ class _AiBriefingCardState extends ConsumerState<_AiBriefingCard> {
 
 // ── Macro Regime Panel ────────────────────────────────────────────────────────
 
-class _MacroRegimePanel extends ConsumerWidget {
+class _MacroRegimePanel extends ConsumerStatefulWidget {
   const _MacroRegimePanel({required this.vixPrice});
   final double? vixPrice;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_MacroRegimePanel> createState() => _MacroRegimePanelState();
+}
+
+class _MacroRegimePanelState extends ConsumerState<_MacroRegimePanel>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+  late final Animation<double> _pulseAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1200),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _pulse, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
     final bondsAsync = ref.watch(_bondsProvider);
 
     return bondsAsync.maybeWhen(
       data: (bonds) {
         final curveStatus = bonds['curveStatus'] as String? ?? 'normal';
-        final vix = vixPrice ?? 0;
+        final vix = widget.vixPrice ?? 0;
 
         final String regime;
         final Color regimeColor;
@@ -946,13 +1066,46 @@ class _MacroRegimePanel extends ConsumerWidget {
               horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
           padding: const EdgeInsets.all(AppSpacing.s4),
           decoration: BoxDecoration(
-            color: regimeColor.withAlpha(20),
+            gradient: LinearGradient(
+              colors: [regimeColor.withAlpha(30), regimeColor.withAlpha(8)],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
             borderRadius: BorderRadius.circular(AppRadius.md),
             border: Border.all(color: regimeColor.withAlpha(80)),
           ),
           child: Row(
             children: [
-              Icon(Icons.analytics_outlined, color: regimeColor, size: 20),
+              // Pulsing dot
+              AnimatedBuilder(
+                animation: _pulseAnim,
+                builder: (_, __) => SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: regimeColor.withAlpha(
+                              (40 * _pulseAnim.value).round()),
+                        ),
+                      ),
+                      Container(
+                        width: 8,
+                        height: 8,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: regimeColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
               const SizedBox(width: AppSpacing.s3),
               Expanded(
                 child: Column(
@@ -1208,22 +1361,30 @@ class _BondYieldsSection extends ConsumerWidget {
                           ),
                           Expanded(
                             child: LayoutBuilder(builder: (_, constraints) {
+                              final fillW = constraints.maxWidth *
+                                  (rate / 7.0).clamp(0.0, 1.0);
                               return Stack(
                                 children: [
                                   Container(
-                                    height: 6,
+                                    height: 10,
                                     decoration: BoxDecoration(
                                       color: c.border,
-                                      borderRadius: BorderRadius.circular(3),
+                                      borderRadius: BorderRadius.circular(5),
                                     ),
                                   ),
-                                  Container(
-                                    height: 6,
-                                    width: constraints.maxWidth *
-                                        (rate / 7.0).clamp(0.0, 1.0),
-                                    decoration: BoxDecoration(
-                                      color: c.accent,
-                                      borderRadius: BorderRadius.circular(3),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(5),
+                                    child: Container(
+                                      height: 10,
+                                      width: fillW,
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            c.accent.withAlpha(180),
+                                            c.accent,
+                                          ],
+                                        ),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -1236,7 +1397,7 @@ class _BondYieldsSection extends ConsumerWidget {
                             child: Text(
                               '${rate.toStringAsFixed(2)}%',
                               textAlign: TextAlign.right,
-                              style: AppTypography.sm.copyWith(
+                              style: AppTypography.labelSm.copyWith(
                                   color: c.textPrimary,
                                   fontWeight: FontWeight.w600),
                             ),

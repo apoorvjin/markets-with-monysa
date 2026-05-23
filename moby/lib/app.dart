@@ -28,11 +28,12 @@ class MobyApp extends ConsumerWidget {
 }
 
 final _tabs = [
-  (path: '/markets', icon: Icons.bar_chart_rounded, label: 'Markets'),
-  (path: '/trading', icon: Icons.candlestick_chart_rounded, label: 'Trading'),
-  (path: '/exposure', icon: Icons.public_rounded, label: 'Exposure'),
-  (path: '/volatility', icon: Icons.bolt_rounded, label: 'Macro'),
-  (path: '/debt', icon: Icons.account_balance_rounded, label: 'Debt'),
+  (path: '/markets',   icon: Icons.bar_chart_rounded,        label: 'Markets'),
+  (path: '/trading',   icon: Icons.candlestick_chart_rounded, label: 'Trading'),
+  (path: '/exposure',  icon: Icons.public_rounded,            label: 'Exposure'),
+  (path: '/volatility',icon: Icons.bolt_rounded,              label: 'Macro'),
+  (path: '/debt',      icon: Icons.account_balance_rounded,   label: 'Debt'),
+  (path: '/profile',   icon: Icons.person_rounded,            label: 'Profile'),
 ];
 
 // Tracks last active main tab so detail screens keep it highlighted.
@@ -139,79 +140,81 @@ class _BottomBar extends ConsumerWidget {
             child: SizedBox(
               height: _navBarPillHeight,
               child: Row(
-                children: _tabs.asMap().entries.map((entry) {
-                  final i = entry.key;
-                  final tab = entry.value;
-                  final isActive = i == currentIndex;
-                  final showBadge = tab.path == '/trading' && alertCount > 0;
+                children: [
+                  ..._tabs.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final tab = entry.value;
+                    final isActive = i == currentIndex;
+                    final showBadge = tab.path == '/trading' && alertCount > 0;
 
-                  return Expanded(
-                    child: Semantics(
-                      label: tab.label,
-                      button: true,
-                      selected: isActive,
-                      child: GestureDetector(
-                        onTap: () => onTap(i),
-                        behavior: HitTestBehavior.opaque,
-                        child: SizedBox(
-                          height: _navBarPillHeight,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Stack(
-                                clipBehavior: Clip.none,
-                                children: [
-                                  AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 200),
-                                    child: Icon(
-                                      tab.icon,
-                                      key: ValueKey(isActive),
-                                      size: 24,
-                                      color: isActive ? c.accent : inactiveColor,
+                    return Expanded(
+                      child: Semantics(
+                        label: tab.label,
+                        button: true,
+                        selected: isActive,
+                        child: GestureDetector(
+                          onTap: () => onTap(i),
+                          behavior: HitTestBehavior.opaque,
+                          child: SizedBox(
+                            height: _navBarPillHeight,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    AnimatedSwitcher(
+                                      duration: const Duration(milliseconds: 200),
+                                      child: Icon(
+                                        tab.icon,
+                                        key: ValueKey(isActive),
+                                        size: 24,
+                                        color: isActive ? c.accent : inactiveColor,
+                                      ),
                                     ),
-                                  ),
-                                  if (showBadge)
-                                    Positioned(
-                                      right: -6,
-                                      top: -4,
-                                      child: Container(
-                                        padding: const EdgeInsets.all(3),
-                                        decoration: BoxDecoration(
-                                          color: c.danger,
-                                          shape: BoxShape.circle,
-                                        ),
-                                        child: Text(
-                                          '$alertCount',
-                                          style: const TextStyle(
-                                            fontSize: 9,
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w700,
+                                    if (showBadge)
+                                      Positioned(
+                                        right: -6,
+                                        top: -4,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(3),
+                                          decoration: BoxDecoration(
+                                            color: c.danger,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Text(
+                                            '$alertCount',
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w700,
+                                            ),
                                           ),
                                         ),
                                       ),
-                                    ),
-                                ],
-                              ),
-                              const SizedBox(height: 3),
-                              AnimatedDefaultTextStyle(
-                                duration: const Duration(milliseconds: 200),
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: isActive ? c.accent : inactiveColor,
-                                  fontWeight: isActive
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
+                                  ],
                                 ),
-                                child: Text(tab.label),
-                              ),
-                            ],
+                                const SizedBox(height: 3),
+                                AnimatedDefaultTextStyle(
+                                  duration: const Duration(milliseconds: 200),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: isActive ? c.accent : inactiveColor,
+                                    fontWeight: isActive
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                  ),
+                                  child: Text(tab.label),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                }).toList(),
+                    );
+                  }),
+                ],
               ),
             ),
           ),

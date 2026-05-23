@@ -12,6 +12,14 @@
 
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
+import { yahooProvider } from "./providers";
+
+// Single source of truth for symbol validation across all routes.
+// Character set covers Yahoo Finance (= ^ . - _), TradingView/Polygon (:),
+// and Quandl/FRED (/). Widen this regex when adding a new chart provider
+// whose symbols use characters outside [A-Z0-9=^._:\/-].
+const symbolSchema = z.string().regex(/^[A-Z0-9=^._:\/-]{1,20}$/i, "Invalid symbol format.");
 
 // ─── External API Response Types ─────────────────────────────────────────────
 
@@ -53,6 +61,28 @@ interface YFNewsItem {
 
 interface YFSearchResponse {
   news?: YFNewsItem[];
+}
+
+interface AVTickerSentiment {
+  ticker: string;
+  relevance_score: string;
+  ticker_sentiment_score: string;
+  ticker_sentiment_label: string;
+}
+
+interface AVArticle {
+  title: string;
+  url: string;
+  time_published: string;
+  source: string;
+  overall_sentiment_score: number;
+  overall_sentiment_label: string;
+  ticker_sentiment: AVTickerSentiment[];
+}
+
+interface AVNewsResponse {
+  feed?: AVArticle[];
+  items?: string;
 }
 
 interface FinnhubTrade {
@@ -158,6 +188,7 @@ interface PriceEntry {
   preMarketChangePercent: number | null;
 }
 
+// Bounded to TRADING_ASSETS.length (39 symbols) — no eviction needed.
 export const latestPrices = new Map<string, PriceEntry>();
 
 let _lastPollAt: number | null = null;
@@ -171,6 +202,7 @@ export function getHealthStatus() {
     finnhubConnected: _finnhubConnected,
     openaiConfigured: Boolean(process.env.AI_INTEGRATIONS_OPENAI_API_KEY),
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    alphaVantageConfigured: Boolean(process.env.ALPHA_VANTAGE_API_KEY),
   };
 }
 
@@ -189,22 +221,16 @@ async function yfFetch<T>(url: string): Promise<T> {
 
 async function fetchCurrentPrice(symbol: string): Promise<PriceEntry | null> {
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
-    const data = await yfFetch<YFChartResponse>(url);
-    const meta = data?.chart?.result?.[0]?.meta;
-    if (!meta) return null;
-    const price = meta.regularMarketPrice;
-    const prevClose = meta.chartPreviousClose ?? meta.previousClose ?? price;
-    const change = price - prevClose;
-    const changePercent = prevClose !== 0 ? (change / prevClose) * 100 : 0;
-
-    // Pre-market data (present before market open; Yahoo returns percent as a small
-    // decimal like 0.52 meaning 0.52 %, so no multiplication needed)
-    const preMarketPrice = meta.preMarketPrice ?? null;
-    const rawPmp = meta.preMarketChangePercent;
-    const preMarketChangePercent = rawPmp != null ? rawPmp : null;
-
-    return { price, change, changePercent, updatedAt: Date.now(), preMarketPrice, preMarketChangePercent };
+    const d = await yahooProvider.fetchCurrentPrice(symbol);
+    if (!d || d.price == null) return null;
+    return {
+      price: d.price,
+      change: d.change ?? 0,
+      changePercent: d.changePercent ?? 0,
+      updatedAt: Date.now(),
+      preMarketPrice: d.preMarketPrice ?? null,
+      preMarketChangePercent: d.preMarketChangePercent ?? null,
+    };
   } catch {
     return null;
   }
@@ -234,6 +260,7 @@ setInterval(() => pollAllPrices().catch(() => {}), 10_000);
 // ─── Optional Finnhub WebSocket for Crypto ───────────────────────────────────
 
 const FINNHUB_KEY = process.env.FINNHUB_API_KEY;
+const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? null;
 
 // Free tier supports ~5 concurrent subscriptions; limit to highest-liquidity crypto.
 const FINNHUB_SYMBOLS = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD"];
@@ -441,7 +468,20 @@ function calcAdx(ohlcvs: OHLCV[], period = 14): number | null {
   return adxArr.length > 0 ? Math.round(adxArr[adxArr.length - 1] * 100) / 100 : null;
 }
 
-const _obvCache = new Map<number, number[]>();
+// Evicts the oldest entry (insertion order) when the cap is reached.
+class BoundedMap<K, V> extends Map<K, V> {
+  constructor(private readonly max: number) { super(); }
+  override set(k: K, v: V): this {
+    if (this.size >= this.max) {
+      const oldest = this.keys().next().value;
+      if (oldest !== undefined) this.delete(oldest);
+    }
+    return super.set(k, v);
+  }
+}
+
+// Keyed by the last candle's Unix timestamp — unbounded without a cap.
+const _obvCache = new BoundedMap<number, number[]>(200);
 
 function _buildObvArr(candles: OHLCV[]): number[] {
   const lastTs = candles[candles.length - 1].time;
@@ -547,31 +587,9 @@ async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
   if (cached && Date.now() - cached.ts < HISTORY_TTL) return cached.data;
 
   const params = TF_PARAMS[tf];
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${params.interval}&range=${params.range}`;
 
   try {
-    const data = await yfFetch<YFChartResponse>(url);
-    const result = data?.chart?.result?.[0];
-    if (!result) return [];
-
-    const timestamps: number[] = result.timestamp ?? [];
-    const quotes: YFChartQuote = result.indicators?.quote?.[0] ?? { open: [], high: [], low: [], close: [], volume: [] };
-    const opens = quotes.open;
-    const highs = quotes.high;
-    const lows = quotes.low;
-    const closes = quotes.close;
-    const volumes = quotes.volume;
-
-    let candles: OHLCV[] = timestamps
-      .map((t, i) => ({
-        time: t,
-        open: opens[i] ?? 0,
-        high: highs[i] ?? 0,
-        low: lows[i] ?? 0,
-        close: closes[i] ?? 0,
-        volume: volumes[i] ?? 0,
-      }))
-      .filter(c => c.open && c.high && c.low && c.close);
+    let candles: OHLCV[] = (await yahooProvider.fetchHistoryCandles(symbol, params.interval, params.range)) as OHLCV[];
 
     // Aggregate 1h bars into 4h bars
     if (tf === "4h") {
@@ -580,7 +598,7 @@ async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
         const group = candles.slice(i, i + 4);
         if (group.length === 0) continue;
         aggregated.push({
-          time: group[0].time,
+          time: group[0].time as number,
           open: group[0].open,
           high: Math.max(...group.map(c => c.high)),
           low: Math.min(...group.map(c => c.low)),
@@ -2183,7 +2201,11 @@ interface NewsResult {
 }
 
 const newsCache = new Map<string, { data: NewsResult; ts: number }>();
-const NEWS_TTL = 15 * 60_000;
+const NEWS_TTL = 4 * 60 * 60_000;
+
+let _avCallsToday = 0;
+let _avCallsResetAt = Date.now() + 24 * 60 * 60_000;
+const AV_DAILY_LIMIT = 23;
 
 const BULLISH_WORDS = [
   "surge", "surges", "surging", "rally", "rallies", "rallying", "rise", "rises", "rising", "rose",
@@ -2214,34 +2236,121 @@ function scoreSentiment(text: string): number {
   return Math.round((net / total) * 100);
 }
 
+function resolveAVQuery(symbol: string): { tickers: string } | { topics: string } | null {
+  const asset = ASSET_MAP.get(symbol);
+
+  // Crypto: strip -USD suffix, prefix with CRYPTO:
+  if (asset?.category === "Crypto" && symbol.endsWith("-USD")) {
+    return { tickers: `CRYPTO:${symbol.replace("-USD", "")}` };
+  }
+
+  // US equity index ETF proxies
+  const US_INDEX_MAP: Record<string, string> = {
+    "^GSPC": "SPY", "^DJI": "DIA", "^IXIC": "QQQ", "^RUT": "IWM",
+  };
+  if (US_INDEX_MAP[symbol]) return { tickers: US_INDEX_MAP[symbol] };
+  if (symbol === "^VIX") return { topics: "financial_markets" };
+  if (symbol === "DX-Y.NYB") return { topics: "economy_macro" };
+
+  // International indices
+  const INTL_INDICES = ["^FTSE", "^GDAXI", "^FCHI", "^N225", "^HSI", "^AXJO", "^NSEI", "^BVSP", "^MXX"];
+  if (INTL_INDICES.includes(symbol)) return { topics: "financial_markets" };
+
+  // Forex: all *=X symbols
+  if (symbol.endsWith("=X")) return { topics: "forex" };
+
+  // Commodities: energy vs. other
+  if (asset?.category === "Commodities") {
+    if (["CL=F", "BZ=F", "NG=F"].includes(symbol)) return { topics: "energy_transportation" };
+    return { topics: "economy_macro" };
+  }
+
+  return null;
+}
+
+function parseAVDate(s: string): string {
+  const m = s.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})$/);
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z` : new Date().toISOString();
+}
+
+function pickSentiment(item: AVArticle, query: { tickers?: string; topics?: string }): number {
+  if ("tickers" in query && query.tickers) {
+    const match = item.ticker_sentiment?.find(
+      (t) => t.ticker === query.tickers && parseFloat(t.relevance_score) >= 0.3
+    );
+    if (match) return Math.round(parseFloat(match.ticker_sentiment_score) * 100);
+  }
+  return Math.round(item.overall_sentiment_score * 100);
+}
+
 async function fetchNewsForSymbol(symbol: string): Promise<NewsResult> {
   const cached = newsCache.get(symbol);
   if (cached && Date.now() - cached.ts < NEWS_TTL) return cached.data;
 
-  const asset = ASSET_MAP.get(symbol);
-  const query = asset ? asset.name : symbol;
-
   let articles: NewsArticle[] = [];
 
-  try {
-    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=8&enableNavLinks=false`;
-    const data = await yfFetch<YFSearchResponse>(url);
-    const news: YFNewsItem[] = data?.news ?? [];
+  // Reset daily counter if a new day has started
+  if (Date.now() > _avCallsResetAt) {
+    _avCallsToday = 0;
+    _avCallsResetAt = Date.now() + 24 * 60 * 60_000;
+  }
 
-    articles = news.slice(0, 8).map((item: YFNewsItem) => {
-      const title = item.title ?? "";
-      const sentiment = scoreSentiment(title + " " + (item.summary ?? ""));
-      return {
-        title,
-        publisher: item.publisher ?? "Yahoo Finance",
-        publishedAt: item.providerPublishTime
-          ? new Date(item.providerPublishTime * 1000).toISOString()
-          : new Date().toISOString(),
-        url: item.link ?? `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/news/`,
-        sentiment,
-      };
-    });
-  } catch {}
+  const avQuery = resolveAVQuery(symbol);
+  const canUseAV = AV_KEY !== null && _avCallsToday < AV_DAILY_LIMIT && avQuery !== null;
+
+  if (canUseAV && avQuery !== null) {
+    try {
+      const qParam = "tickers" in avQuery
+        ? `tickers=${encodeURIComponent(avQuery.tickers)}`
+        : `topics=${encodeURIComponent(avQuery.topics)}`;
+      const url = `https://www.alphavantage.co/query?function=NEWS_SENTIMENT&apikey=${AV_KEY}&limit=10&sort=LATEST&${qParam}`;
+      const resp = await fetch(url);
+      const data = (await resp.json()) as AVNewsResponse;
+      _avCallsToday++;
+
+      if (data.feed && data.feed.length > 0) {
+        articles = data.feed.slice(0, 8).map((item) => ({
+          title: item.title,
+          publisher: item.source,
+          publishedAt: parseAVDate(item.time_published),
+          url: item.url,
+          sentiment: pickSentiment(item, avQuery),
+        }));
+        console.log(`[news] ${symbol}: AV (${articles.length} articles, ${_avCallsToday}/${AV_DAILY_LIMIT} calls used)`);
+      } else {
+        console.log(`[news] ${symbol}: AV returned no feed — Yahoo fallback`);
+      }
+    } catch (e) {
+      console.log(`[news] ${symbol}: AV error — Yahoo fallback (${(e as Error).message})`);
+    }
+  } else if (!canUseAV && AV_KEY !== null) {
+    console.log(`[news] ${symbol}: AV daily limit reached — Yahoo fallback`);
+  }
+
+  // Yahoo Finance fallback (also used if AV returned no articles)
+  if (articles.length === 0) {
+    try {
+      const asset = ASSET_MAP.get(symbol);
+      const query = asset ? asset.name : symbol;
+      const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=0&newsCount=8&enableNavLinks=false`;
+      const data = await yfFetch<YFSearchResponse>(url);
+      const news: YFNewsItem[] = data?.news ?? [];
+
+      articles = news.slice(0, 8).map((item: YFNewsItem) => {
+        const title = item.title ?? "";
+        const sentiment = scoreSentiment(title + " " + (item.summary ?? ""));
+        return {
+          title,
+          publisher: item.publisher ?? "Yahoo Finance",
+          publishedAt: item.providerPublishTime
+            ? new Date(item.providerPublishTime * 1000).toISOString()
+            : new Date().toISOString(),
+          url: item.link ?? `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/news/`,
+          sentiment,
+        };
+      });
+    } catch {}
+  }
 
   const aggregateSentiment =
     articles.length > 0
@@ -2271,6 +2380,18 @@ const NOTE_TTL = 15 * 60 * 1000;
 
 const CLAUDE_TIMEOUT_MS = 10_000;
 
+// Sweep expired entries from all TTL-based caches every 10 minutes so stale
+// entries don't accumulate in memory indefinitely even after their TTL passes.
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of signalCache)   if (now - v.ts > SIGNAL_TTL)   signalCache.delete(k);
+  for (const [k, v] of historyCache)  if (now - v.ts > HISTORY_TTL)  historyCache.delete(k);
+  for (const [k, v] of backtestCache) if (now - v.ts > BACKTEST_TTL) backtestCache.delete(k);
+  for (const [k, v] of newsCache)     if (now - v.ts > NEWS_TTL)     newsCache.delete(k);
+  for (const [k, v] of _noteCache)    if (now - v.ts > NOTE_TTL)     _noteCache.delete(k);
+  for (const [k, v] of _fundCache)    if (now - v.ts > FUND_TTL)     _fundCache.delete(k);
+}, 10 * 60_000);
+
 async function _callClaude(symbol: string, strategy: string, direction: string, confidence: number): Promise<string> {
   if (!_anthropic) return "";
   const timeout = new Promise<never>((_, reject) =>
@@ -2292,10 +2413,95 @@ async function _callClaude(symbol: string, strategy: string, direction: string, 
   return block.type === "text" ? block.text.trim() : "";
 }
 
+// ─── Strategy Definitions ─────────────────────────────────────────────────────
+// Single source of truth for strategy titles/descriptions surfaced in the app.
+// Flutter fetches this at startup and falls back to hardcoded strings on error.
+
+const STRATEGY_DEFS = [
+  {
+    id: "1",
+    label: "S1",
+    title: "Technical Analysis",
+    description: "Pure price-action signals using momentum and volatility indicators.",
+    detail: "RSI-14 · MACD · EMA crossovers · Bollinger Bands · ATR · Rate of Change",
+    accentHex: "#00D4AA",
+  },
+  {
+    id: "2",
+    label: "S2",
+    title: "Multi-Factor",
+    description: "Builds on S1 with volatility-adaptive entry and exit thresholds.",
+    detail: "All S1 indicators + dynamic thresholds calibrated to current market vol",
+    accentHex: "#FFB84D",
+  },
+  {
+    id: "3",
+    label: "S3",
+    title: "Hybrid (Tech + Sentiment)",
+    description: "Blends technical signals with real-time news sentiment scoring.",
+    detail: "S1 signals (65%) + NLP sentiment from latest headlines (35%)",
+    accentHex: "#FF4D6A",
+  },
+  {
+    id: "4",
+    label: "S4",
+    title: "Regime-Adaptive",
+    description: "Detects market regime first, then activates the right engine — Trend or Mean Reversion.",
+    detail: "ADX > 25 → Trend Engine (EMA200 1.2×, MACD, Volume) · ADX < 18 → Range Engine (RSI, Bollinger, ATR) · High-conviction threshold (0.55)",
+    accentHex: "#00C49A",
+  },
+  {
+    id: "5",
+    label: "S5",
+    title: "Professional Systematic",
+    description: "Four-regime classification with dynamic indicator weights, consensus gate, and calibrated confidence — built for high-probability setups.",
+    detail: "Quiet Trend (0.45) · Quiet Range (0.60) · Volatile Trend (0.65) · Chaotic → No Trade · ≥60% consensus required · OBV + volume confirmation · score-to-win-rate calibration",
+    accentHex: "#FFB84D",
+  },
+  {
+    id: "6",
+    label: "S6",
+    title: "Adaptive Hybrid",
+    description: "Regime-aware fusion of S2 technical signals and enhanced news sentiment — weights shift automatically based on volatility and trend strength.",
+    detail: "High-vol: tech 90% / news 10% · Strong-trend: 85/15 · Low-vol: 60/40 · Default: 70/30 · Freshness decay · Source credibility · Negation detection · BUY >0.45 / SELL <−0.35",
+    accentHex: "#00D4AA",
+  },
+  {
+    id: "7",
+    label: "S7",
+    title: "APEX — Adaptive Probabilistic EXecution",
+    description: "Five-regime classifier with regime-specific direction engines, divergence veto, higher-timeframe permission layer, and a 0–100 quality gate that must hit 60 before any trade fires.",
+    detail: "Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade) · VWAP · OBV · Divergence veto · HTF alignment · Cross-asset confirmation · Regime-aware SL/TP (1:1.8 → 2:4.5)",
+    accentHex: "#FF4D6A",
+  },
+  {
+    id: "8",
+    label: "S8",
+    title: "Ensemble — S4 + S5 + S7 Weighted Consensus",
+    description: "Runs three strategies simultaneously and weights their votes by per-regime historical accuracy. Requires 2 of 3 to agree before firing — when engines split, the answer is HOLD.",
+    detail: "Strong Trend: S7 50% · S4 35% · S5 15% · Ranging: S5 45% · S7 35% · S4 20% · Volatile Break: S7 55% · S4 35% · S5 10% · Full position on 3/3 · 60% size on 2/3 · No trade on 1/3 or split",
+    accentHex: "#00C49A",
+  },
+  {
+    id: "9",
+    label: "S9",
+    title: "Silver Liquidity Sweep",
+    description: "Session-gated stop-hunt entries at Fibonacci confluence — optimised for Silver (SI=F) intraday. Fires only when all four conditions align simultaneously.",
+    detail: "London KZ (02:00–05:00 ET) · NY KZ (07:00–10:00 ET) · Liquidity sweep (wick beyond recent H/L, close back inside) · 9 EMA power candle (body >60% of range) · Fib 0.618/0.786 long · Fib 0.236/0.382 short",
+    accentHex: "#C0C0C0",
+  },
+] as const;
+
 // ─── Express Router ───────────────────────────────────────────────────────────
 
 export function createTradingRouter(): Router {
   const router = Router();
+
+  // GET /api/trading/strategies
+  router.get("/strategies", (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.json({ strategies: STRATEGY_DEFS, timestamp: new Date().toISOString() });
+  });
 
   // GET /api/trading/quotes
   router.get("/quotes", (_req: Request, res: Response) => {
@@ -2321,10 +2527,6 @@ export function createTradingRouter(): Router {
   const VALID_TF: Timeframe[] = ["1m", "5m", "1h", "4h", "1d"];
   const VALID_STRAT: StrategyId[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
-  // Allowlist: letters, digits, and the punctuation Yahoo Finance symbols use (=, ^, ., -, _)
-  const SYMBOL_RE = /^[A-Z0-9=^._-]{1,20}$/i;
-  const validateSymbol = (s: string) => SYMBOL_RE.test(s);
-
   /** Resolve timeframe from `interval` (spec) or `timeframe` (alias), defaulting to "1d". */
   function resolveTimeframe(query: Request["query"]): Timeframe | null {
     const raw = (query.interval ?? query.timeframe) as string | undefined;
@@ -2343,7 +2545,7 @@ export function createTradingRouter(): Router {
     const tf = resolveTimeframe(req.query);
     const strategy = (req.query.strategy as StrategyId) ?? "1";
 
-    if (!validateSymbol(symbol)) {
+    if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     if (!tf) {
@@ -2391,7 +2593,7 @@ export function createTradingRouter(): Router {
   // GET /api/trading/analyst-note/:symbol
   router.get("/analyst-note/:symbol", async (req: Request, res: Response) => {
     const symbol = paramStr(req.params.symbol);
-    if (!validateSymbol(symbol)) {
+    if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     const strategy = (req.query.strategy as string) ?? "1";
@@ -2434,7 +2636,7 @@ export function createTradingRouter(): Router {
     const symbol = paramStr(req.params.symbol);
     const tf = resolveTimeframe(req.query);
 
-    if (!validateSymbol(symbol)) {
+    if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     if (!tf) {
@@ -2453,7 +2655,7 @@ export function createTradingRouter(): Router {
     const symbol = paramStr(req.params.symbol);
     const tf = resolveTimeframe(req.query);
 
-    if (!validateSymbol(symbol)) {
+    if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     if (!tf) {
@@ -2470,7 +2672,7 @@ export function createTradingRouter(): Router {
   // GET /api/trading/news/:symbol
   router.get("/news/:symbol", async (req: Request, res: Response) => {
     const symbol = paramStr(req.params.symbol);
-    if (!validateSymbol(symbol)) {
+    if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     const result = await fetchNewsForSymbol(symbol);
@@ -2480,7 +2682,7 @@ export function createTradingRouter(): Router {
   // GET /api/trading/fundamentals/:symbol
   router.get("/fundamentals/:symbol", async (req: Request, res: Response) => {
     const symbol = paramStr(req.params.symbol);
-    if (!validateSymbol(symbol)) {
+    if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     const cached = _fundCache.get(symbol);
