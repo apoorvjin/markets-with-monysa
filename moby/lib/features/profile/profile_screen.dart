@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import '../../core/restart_widget.dart';
 import '../../providers/chart_provider_provider.dart';
 import '../../providers/theme_provider.dart';
 
@@ -303,6 +304,43 @@ class _ThemeChip extends ConsumerWidget {
 
 // ── Chart Data Provider Section ───────────────────────────────────────────────
 
+Future<void> _confirmChartProviderSwitch(
+  BuildContext context,
+  WidgetRef ref,
+  ChartDataProvider next,
+) async {
+  final c = context.colors;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: c.surface,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md)),
+      title: Text('Switch Chart Provider',
+          style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+      content: Text(
+        'Switching to ${next.label} will restart the app. Continue?',
+        style: AppTypography.md.copyWith(color: c.textSecondary),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text('No',
+              style: AppTypography.labelMd.copyWith(color: c.textMuted)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text('Yes',
+              style: AppTypography.labelMd.copyWith(color: c.accent)),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  await ref.read(chartProviderProvider.notifier).set(next);
+  if (context.mounted) RestartWidget.restartApp(context);
+}
+
 class _ChartProviderSection extends ConsumerWidget {
   const _ChartProviderSection();
 
@@ -315,7 +353,7 @@ class _ChartProviderSection extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'CHART DATA PROVIDER',
+          'CHART PROVIDER',
           style: AppTypography.labelSm.copyWith(
             color: c.textMuted,
             letterSpacing: 1.2,
@@ -349,13 +387,17 @@ class _ChartProviderSection extends ConsumerWidget {
                 )
                 .toList(),
             onChanged: (p) {
-              if (p != null) ref.read(chartProviderProvider.notifier).set(p);
+              if (p != null && p != current) {
+                _confirmChartProviderSwitch(context, ref, p);
+              }
             },
           ),
         ),
         const SizedBox(height: AppSpacing.s3),
         Text(
-          'Yahoo Finance is free and requires no API key.',
+          current == ChartDataProvider.tradingView
+              ? 'TradingView: full-featured live charts with 100+ indicators.'
+              : 'Yahoo Finance: fast candles with volume and VWAP overlay.',
           style: AppTypography.sm.copyWith(color: c.textMuted),
         ),
       ],

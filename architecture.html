@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Moby — Architecture Map</title>
+<style>
+:root {
+  --bg: #000;
+  --surface: #0a0a0a;
+  --surface2: #111;
+  --surface3: #1a1a1a;
+  --accent: #00D4AA;
+  --accent-dim: rgba(0,212,170,0.12);
+  --danger: #FF4D6A;
+  --warning: #FFB84D;
+  --text: #fff;
+  --muted: rgba(255,255,255,0.45);
+  --border: rgba(255,255,255,0.06);
+  --provider: #38BDF8;
+  --provider-bg: rgba(56,189,248,0.12);
+  --repo: #34D399;
+  --repo-bg: rgba(52,211,153,0.12);
+  --endpoint: #FBBF24;
+  --endpoint-bg: rgba(251,191,36,0.12);
+  --nav: #F472B6;
+  --nav-bg: rgba(244,114,182,0.12);
+  --screen: #A78BFA;
+  --screen-bg: rgba(167,139,250,0.12);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;overflow:hidden;}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Inter',sans-serif;display:flex;flex-direction:column;}
+
+/* ── Header ─────────────────────────────────────────── */
+header{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:10px 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+}
+.hd-left{display:flex;align-items:center;gap:10px;}
+.hd-left h1{font-size:14px;font-weight:700;letter-spacing:-.3px;}
+.pill{font-size:9px;font-weight:700;letter-spacing:.8px;padding:2px 8px;border-radius:100px;
+  background:var(--accent-dim);color:var(--accent);border:1px solid rgba(0,212,170,.25);text-transform:uppercase;}
+.legend{display:flex;gap:14px;}
+.li{display:flex;align-items:center;gap:5px;font-size:10px;color:var(--muted);}
+.dot{width:7px;height:7px;border-radius:50%;}
+
+/* ── Layout ──────────────────────────────────────────── */
+.body{display:flex;flex:1;overflow:hidden;}
+
+/* ── Sidebar ─────────────────────────────────────────── */
+aside{
+  width:240px;background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;
+}
+.sb-scroll{flex:1;overflow-y:auto;padding:8px 0 16px;}
+.sb-scroll::-webkit-scrollbar{width:3px;}
+.sb-scroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+.sb-group{padding:14px 12px 4px;}
+.sb-group-label{font-size:9px;font-weight:700;color:var(--muted);letter-spacing:1px;text-transform:uppercase;}
+.sb-item{
+  display:flex;flex-direction:column;gap:2px;padding:7px 10px;
+  cursor:pointer;border-radius:8px;margin:1px 8px;transition:background .12s;
+}
+.sb-item:hover{background:var(--surface3);}
+.sb-item.active{background:var(--accent-dim);border:1px solid rgba(0,212,170,.18);}
+.sb-route{font-size:11px;font-weight:600;font-family:'SF Mono','Fira Code',monospace;color:var(--accent);}
+.sb-name{font-size:10px;color:var(--muted);}
+
+/* ── Main ────────────────────────────────────────────── */
+main{flex:1;overflow:hidden;display:flex;flex-direction:column;}
+.content{flex:1;overflow-y:auto;padding:24px 28px;}
+.content::-webkit-scrollbar{width:5px;}
+.content::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:3px;}
+
+/* ── Overview ────────────────────────────────────────── */
+.ov-intro{margin-bottom:22px;}
+.ov-intro h2{font-size:20px;font-weight:700;letter-spacing:-.5px;margin-bottom:6px;}
+.ov-intro p{font-size:12px;color:var(--muted);line-height:1.6;max-width:560px;}
+.ov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;}
+.ov-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:10px;
+  padding:14px;cursor:pointer;transition:border-color .15s,background .15s;
+}
+.ov-card:hover{border-color:rgba(0,212,170,.3);background:var(--surface2);}
+.ov-card-route{font-size:11px;font-weight:600;font-family:'SF Mono',monospace;color:var(--accent);margin-bottom:5px;}
+.ov-card-name{font-size:13px;font-weight:600;margin-bottom:4px;}
+.ov-card-desc{font-size:10px;color:var(--muted);line-height:1.4;}
+.ov-card-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;}
+.oc-tag{font-size:9px;font-weight:600;padding:2px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:.4px;}
+.oc-tag.p{background:var(--provider-bg);color:var(--provider);}
+.oc-tag.r{background:var(--repo-bg);color:var(--repo);}
+.oc-tag.e{background:var(--endpoint-bg);color:var(--endpoint);}
+.oc-tag.n{background:var(--nav-bg);color:var(--nav);}
+
+/* ── Section label ───────────────────────────────────── */
+.sec-label{font-size:9px;font-weight:700;color:var(--muted);letter-spacing:.9px;text-transform:uppercase;margin-bottom:10px;}
+
+/* ── Trace header ────────────────────────────────────── */
+.tr-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:14px;}
+.tr-screen h2{font-size:20px;font-weight:700;letter-spacing:-.4px;}
+.tr-file{font-size:10px;color:var(--muted);font-family:'SF Mono',monospace;margin-top:3px;}
+.route-badge{
+  font-size:11px;font-family:'SF Mono',monospace;padding:5px 12px;border-radius:7px;
+  background:var(--accent-dim);color:var(--accent);border:1px solid rgba(0,212,170,.28);
+  white-space:nowrap;flex-shrink:0;margin-left:12px;margin-top:3px;
+}
+.tr-desc{
+  font-size:12px;line-height:1.65;color:var(--muted);margin-bottom:18px;
+  padding:10px 14px;background:var(--surface);border-radius:8px;
+  border-left:3px solid var(--accent);
+}
+
+/* ── Tabs row ────────────────────────────────────────── */
+.tabs-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;}
+.tab-chip{
+  padding:4px 11px;background:var(--surface);border:1px solid var(--border);
+  border-radius:100px;font-size:10px;color:var(--muted);
+}
+
+/* ── Entitlement badges ──────────────────────────────── */
+.ent-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;}
+.ent-row-label{font-size:10px;font-weight:600;color:var(--muted);letter-spacing:.3px;text-transform:uppercase;}
+.ent-feat{font-size:10px;display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;background:var(--surface3);border:1px solid var(--border);}
+.ent-badge{font-size:8px;font-weight:700;padding:2px 5px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px;}
+.ent-badge.pro{background:rgba(251,191,36,.18);color:var(--warning);border:1px solid rgba(251,191,36,.28);}
+.ent-badge.insight{background:rgba(167,139,250,.18);color:var(--screen);border:1px solid rgba(167,139,250,.28);}
+
+/* ── Trace grid ──────────────────────────────────────── */
+.tr-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+@media(max-width:1000px){.tr-grid{grid-template-columns:1fr 1fr;}}
+.tr-col{}
+.tr-col-hd{
+  font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
+  padding:5px 10px;border-radius:6px;text-align:center;margin-bottom:8px;
+}
+.tr-col-hd.p{background:var(--provider-bg);color:var(--provider);border:1px solid rgba(56,189,248,.2);}
+.tr-col-hd.r{background:var(--repo-bg);color:var(--repo);border:1px solid rgba(52,211,153,.2);}
+.tr-col-hd.e{background:var(--endpoint-bg);color:var(--endpoint);border:1px solid rgba(251,191,36,.2);}
+.tr-col-hd.n{background:var(--nav-bg);color:var(--nav);border:1px solid rgba(244,114,182,.2);}
+.tr-node{padding:9px 11px;border-radius:8px;margin-bottom:6px;font-size:11px;line-height:1.4;}
+.tr-node.p{background:var(--provider-bg);border:1px solid rgba(56,189,248,.18);color:var(--provider);}
+.tr-node.r{background:var(--repo-bg);border:1px solid rgba(52,211,153,.18);color:var(--repo);}
+.tr-node.e{background:var(--endpoint-bg);border:1px solid rgba(251,191,36,.18);color:var(--endpoint);}
+.tr-node.n{background:var(--nav-bg);border:1px solid rgba(244,114,182,.18);color:var(--nav);cursor:pointer;transition:background .12s;}
+.tr-node.n:hover{background:rgba(244,114,182,.22);}
+.tr-node.local{background:var(--screen-bg);border:1px solid rgba(167,139,250,.18);color:var(--screen);}
+.nd-name{font-weight:600;font-family:'SF Mono','Fira Code',monospace;font-size:10px;word-break:break-all;}
+.nd-sub{font-size:9px;opacity:.65;margin-top:2px;}
+.nd-method{font-size:8px;font-weight:700;opacity:.6;margin-right:4px;text-transform:uppercase;}
+.tr-empty{font-size:10px;color:var(--muted);font-style:italic;text-align:center;padding:12px 8px;}
+
+/* ── Models section ──────────────────────────────────── */
+.models-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.model-chip{
+  padding:5px 10px;background:var(--surface);border:1px solid var(--border);
+  border-radius:6px;font-size:10px;font-family:'SF Mono',monospace;color:var(--accent);
+}
+
+/* ── Server overview table ───────────────────────────── */
+.ep-table{width:100%;border-collapse:collapse;font-size:11px;}
+.ep-table th{text-align:left;font-size:9px;font-weight:700;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;padding:6px 10px;border-bottom:1px solid var(--border);}
+.ep-table td{padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:top;}
+.ep-table tr:hover td{background:var(--surface2);}
+.ep-table .method{font-size:9px;font-weight:700;padding:2px 6px;border-radius:4px;font-family:'SF Mono',monospace;}
+.method.get{background:rgba(52,211,153,.15);color:var(--repo);}
+.method.post{background:rgba(251,191,36,.15);color:var(--endpoint);}
+.ep-path{font-family:'SF Mono',monospace;color:var(--accent);font-size:10px;}
+.ep-desc{color:var(--muted);}
+.ep-section{font-size:9px;font-weight:700;color:var(--muted);letter-spacing:.7px;text-transform:uppercase;padding:10px 10px 4px;background:var(--surface3);}
+
+/* ── Providers overview ──────────────────────────────── */
+.prov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;}
+.prov-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;}
+.prov-name{font-size:11px;font-weight:600;font-family:'SF Mono',monospace;color:var(--provider);margin-bottom:4px;}
+.prov-type{font-size:9px;color:var(--muted);margin-bottom:6px;}
+.prov-desc{font-size:10px;color:var(--muted);line-height:1.4;}
+.prov-persist{font-size:9px;margin-top:6px;padding:2px 6px;border-radius:4px;display:inline-block;background:rgba(0,212,170,.1);color:var(--accent);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hd-left">
+    <h1>Moby Architecture</h1>
+    <span class="pill">Flutter + Express</span>
+  </div>
+  <div class="legend">
+    <div class="li"><div class="dot" style="background:var(--provider)"></div>State</div>
+    <div class="li"><div class="dot" style="background:var(--repo)"></div>Repository</div>
+    <div class="li"><div class="dot" style="background:var(--endpoint)"></div>Endpoint</div>
+    <div class="li"><div class="dot" style="background:var(--nav)"></div>Navigation</div>
+    <div class="li"><div class="dot" style="background:var(--screen)"></div>Local Data</div>
+  </div>
+</header>
+
+<div class="body">
+  <aside>
+    <div class="sb-scroll" id="sb"></div>
+  </aside>
+  <main>
+    <div class="content" id="content"></div>
+  </main>
+</div>
+
+<script>
+const ROUTES = [
+  {
+    id:'overview', path:'Overview', label:'All Routes', section:'meta',
+  },
+  {
+    id:'server', path:'Server Endpoints', label:'All 36 endpoints', section:'meta',
+  },
+  {
+    id:'providers', path:'Providers', label:'Global state', section:'meta',
+  },
+
+  // ── Init ──────────────────────────────────────────────────
+  {
+    id:'splash', path:'/splash', label:'SplashScreen', section:'init',
+    file:'moby/lib/features/splash/splash_screen.dart',
+    desc:'Entry point. Animated logo for 3.5s, then routes to onboarding (first launch) or the last active tab restored from SharedPreferences.',
+    tabs:[],
+    state:[],
+    repos:[],
+    endpoints:[],
+    nav:[{label:'/onboarding',id:'onboarding',overlay:false},{label:'lastTab (SharedPrefs)',id:null,overlay:false}],
+    models:[],
+  },
+  {
+    id:'onboarding', path:'/onboarding', label:'OnboardingScreen', section:'init',
+    file:'moby/lib/features/onboarding/onboarding_screen.dart',
+    desc:'3-slide PageView — Global Markets, AI Trading Signals, Macro Intelligence. Skip or Get Started sets hasSeenOnboarding=true.',
+    tabs:['Global Markets','AI Trading Signals','Macro Intelligence'],
+    state:[],
+    repos:[],
+    endpoints:[],
+    nav:[{label:'/markets',id:'markets',overlay:false}],
+    models:[],
+  },
+
+  // ── Main tabs ─────────────────────────────────────────────
+  {
+    id:'markets', path:'/markets', label:'MarketsScreen', section:'tabs',
+    file:'moby/lib/features/markets/markets_screen.dart',
+    desc:'46 global indices, 23 commodities, 44 forex pairs (grouped by region). CFTC metals positioning section. Inline search. Tap any row to open ChartModal.',
+    tabs:['Indices','Commodities','Forex','CFTC COT'],
+    state:[
+      {name:'FutureProvider<indices>',sub:'auto-dispose'},
+      {name:'FutureProvider<commodities>',sub:'auto-dispose'},
+      {name:'FutureProvider<forex>',sub:'auto-dispose'},
+      {name:'FutureProvider<cotData>',sub:'auto-dispose'},
+      {name:'FutureProvider<cbRates>',sub:'auto-dispose'},
+    ],
+    repos:[
+      {name:'MarketsRepository',methods:['fetchIndices()','fetchCommodities()','fetchForex()','fetchCotData()','fetchCentralBankRates()']},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/futures/indices',desc:'46 major global indices'},
+      {method:'GET',path:'/api/futures/commodities',desc:'14 commodity futures in USD'},
+      {method:'GET',path:'/api/futures/forex',desc:'44 FX pairs, grouped by region'},
+      {method:'GET',path:'/api/futures/cot-metals',desc:'CFTC COT net-position data'},
+      {method:'GET',path:'/api/central-bank-rates',desc:'ECB / Fed / BoE / BoJ rates (6h cache)'},
+    ],
+    nav:[
+      {label:'ChartModal',id:null,overlay:true},
+      {label:'/asset/:symbol',id:'assetDetail',overlay:false},
+    ],
+    models:['MarketItem'],
+  },
+  {
+    id:'trading', path:'/trading', label:'TradingScreen', section:'tabs',
+    file:'moby/lib/features/trading/trading_screen.dart',
+    desc:'Live quotes for 39 assets with 15s auto-refresh. BUY/HOLD/SELL signals across S1–S9 strategies. Price alerts with 10s polling. Stock symbol search. Scaffold must have resizeToAvoidBottomInset:false.',
+    tabs:['Dashboard','AI Signals','Alerts'],
+    state:[
+      {name:'strategyProvider',sub:'NotifierProvider — persisted'},
+      {name:'watchlistProvider',sub:'NotifierProvider — persisted'},
+      {name:'alertProvider',sub:'NotifierProvider — persisted + polling'},
+      {name:'FutureProvider.autoDispose<quotes>',sub:'30s timer refresh'},
+      {name:'FutureProvider.autoDispose.family<signal>',sub:'keepAlive on scroll'},
+    ],
+    repos:[
+      {name:'TradingRepository',methods:['fetchQuotes()','fetchSignal(symbol,tf,strategy)','searchStocks(query)']},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/trading/quotes',desc:'39 assets live prices (server refreshes every 10s)'},
+      {method:'GET',path:'/api/trading/signals/:symbol',desc:'BUY/HOLD/SELL + confidence + entry/SL/TP — params: timeframe, strategy 1–9'},
+      {method:'GET',path:'/api/search',desc:'Yahoo Finance symbol/name search (debounced 400ms)'},
+      {method:'GET',path:'/api/trading/strategies',desc:'9 strategy definitions (titles, descriptions, icons)'},
+    ],
+    entitlements:{'S4–S9 signals':'pro','Unlimited alerts (>3)':'pro','Best Setups filter':'pro'},
+    nav:[
+      {label:'/asset/:symbol',id:'assetDetail',overlay:false},
+      {label:'/trading/10x-backtest',id:'tenxBacktest',overlay:false},
+      {label:'UpgradeSheet (S4+)',id:null,overlay:true},
+      {label:'UpgradeSheet (alerts > 3)',id:null,overlay:true},
+      {label:'UpgradeSheet (best setups)',id:null,overlay:true},
+    ],
+    models:['QuoteItem','TradingSignal','StockSearchResult','PriceAlert'],
+  },
+  {
+    id:'exposure', path:'/exposure', label:'ExposureScreen', section:'tabs',
+    file:'moby/lib/features/exposure/exposure_screen.dart',
+    desc:'US tariff impact ranked across 113 countries. Sort by GDP, tariff rate, or country name. Hardcoded April 2025 tariff data — no network call for the list.',
+    tabs:[],
+    state:[
+      {name:'FutureProvider<tariffs>',sub:'TariffsData — local/hardcoded'},
+    ],
+    local:['TariffsData — 113 countries, April 2025 tariff rates + sector data'],
+    repos:[],
+    endpoints:[],
+    nav:[
+      {label:'/country/:code',id:'countryDetail',overlay:false},
+    ],
+    models:['CountryTariff','SectorData'],
+  },
+  {
+    id:'volatility', path:'/volatility', label:'VolatilityScreen', section:'tabs',
+    file:'moby/lib/features/volatility/volatility_screen.dart',
+    desc:'Market Stress Meter, VIX gauge, crisis assets, yield curve (inverted/flat/normal), geopolitical heatmap, historical crisis playbook, AI briefing (Insight plan), static economic calendar (FOMC/CPI/NFP/Jackson Hole).',
+    tabs:[],
+    state:[
+      {name:'FutureProvider<volAssets>',sub:'auto-dispose'},
+      {name:'FutureProvider<briefing>',sub:'auto-dispose (Insight plan)'},
+      {name:'FutureProvider<crises>',sub:'auto-dispose'},
+      {name:'FutureProvider<bonds>',sub:'auto-dispose'},
+      {name:'FutureProvider<heatmap>',sub:'auto-dispose'},
+      {name:'FutureProvider.family<heatmapAssets>',sub:'auto-dispose per category'},
+      {name:'FutureProvider<sectorsHeatmap>',sub:'auto-dispose'},
+    ],
+    repos:[
+      {name:'VolatilityRepository',methods:['fetchAssets()','fetchBriefing(params)','fetchCrises()']},
+      {name:'MarketsRepository',methods:['fetchBonds()','fetchSectors()']},
+      {name:'HeatmapRepository',methods:['fetchHeatmap()','fetchAssets(category)']},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/volatility/assets',desc:'VIX, gold, oil, DXY, BTC, TLT + 1M change%'},
+      {method:'POST',path:'/api/volatility/briefing',desc:'AI crisis summary (Haiku, 30m cache) — Insight plan'},
+      {method:'GET',path:'/api/crises',desc:'Geopolitical risk events + severity levels'},
+      {method:'GET',path:'/api/bonds',desc:'US Treasury yield curve 3m/5Y/10Y/30Y + spread3m10y + curveStatus (10m cache)'},
+      {method:'GET',path:'/api/heatmap',desc:'Regional + asset class heatmap (15m cache, 72+ requests)'},
+      {method:'GET',path:'/api/heatmap/assets',desc:'Per-category heatmap tiles — ?category=US+Equities etc'},
+      {method:'GET',path:'/api/sectors',desc:'S&P 500 sector ETF performance 1W/1M (15m cache)'},
+    ],
+    entitlements:{'AI crisis briefing':'insight'},
+    nav:[],
+    models:['CrisisEvent','HeatmapData','HeatmapTile'],
+  },
+  {
+    id:'debt', path:'/debt', label:'UsaDebtScreen', section:'tabs',
+    file:'moby/lib/features/usa_debt/usa_debt_screen.dart',
+    desc:'US national debt statistics. No AppBar — custom hero layout with ThemeToggleButton as Positioned overlay. DebtRepository.instance wired via FutureProvider.',
+    tabs:['Overview','For You','Holders','Spending'],
+    state:[
+      {name:'FutureProvider.autoDispose<debt>',sub:'DebtRepository'},
+    ],
+    repos:[
+      {name:'DebtRepository',methods:['fetchDebt()']},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/usa-debt',desc:'US national debt + deficit + interest payments (12h cache)'},
+    ],
+    nav:[],
+    models:[],
+  },
+  {
+    id:'profile', path:'/profile', label:'ProfileScreen', section:'tabs',
+    file:'moby/lib/features/profile/profile_screen.dart',
+    desc:'Theme toggle (Dark/Light/System), chart data source selection (Yahoo Finance / TradingView). Sign in coming soon. Profile changes trigger full app restart via RestartWidget.',
+    tabs:[],
+    state:[
+      {name:'themeModeProvider',sub:'NotifierProvider — persisted'},
+      {name:'chartProviderProvider',sub:'NotifierProvider — persisted'},
+    ],
+    repos:[],
+    endpoints:[],
+    nav:[],
+    models:[],
+  },
+
+  // ── Detail screens ────────────────────────────────────────
+  {
+    id:'countryDetail', path:'/country/:code', label:'CountryDetailScreen', section:'detail',
+    file:'moby/lib/features/country/country_detail_screen.dart',
+    desc:'Tariff detail for one country: flag, US tariff rate %, sector breakdown with impact descriptions. AI sector analysis (comparable companies + earnings impact) gated to Insight plan.',
+    tabs:[],
+    state:[
+      {name:'FutureProvider<tariffs>',sub:'TariffsData — local'},
+    ],
+    local:['TariffsData (countryCode match)'],
+    repos:[],
+    endpoints:[
+      {method:'GET',path:'/api/exposure/analysis',desc:'AI tariff analysis — comparable companies, earnings impact (Insight plan, 24h cache)'},
+      {method:'GET',path:'/api/country-data/:code',desc:'World Bank GDP + trade data, REST Countries demographics (24h cache)'},
+    ],
+    entitlements:{'AI sector impact analysis':'insight'},
+    nav:[
+      {label:'/country/:code/stocks',id:'countryStocks',overlay:false},
+      {label:'SectorImpactSheet',id:null,overlay:true},
+    ],
+    models:['CountryTariff','SectorData'],
+  },
+  {
+    id:'countryStocks', path:'/country/:code/stocks', label:'CountryStocksScreen', section:'detail',
+    file:'moby/lib/features/country/country_stocks_screen.dart',
+    desc:'Top stocks for a given country. India shows NSE / BSE sub-tabs. Tap any row navigates to full AssetDetailScreen (not ChartModal).',
+    tabs:['(India only: NSE)','(India only: BSE)'],
+    state:[
+      {name:'FutureProvider.autoDispose.family<stocks, code>',sub:'auto-dispose per country'},
+    ],
+    repos:[
+      {name:'MarketsRepository',methods:['fetchCountryStocks(countryCode)']},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/stocks/:code',desc:'Top stocks per country — 50 countries mapped with exchange suffixes (.T, .L, .HK…)'},
+    ],
+    nav:[
+      {label:'/asset/:symbol',id:'assetDetail',overlay:false},
+    ],
+    models:['MarketItem'],
+  },
+  {
+    id:'assetDetail', path:'/asset/:symbol', label:'AssetDetailScreen', section:'detail',
+    file:'moby/lib/features/asset/asset_detail_screen.dart',
+    desc:'Full 5-tab asset detail. Embedded chart (inline WebViewController, fullscreen via ChartModal). AI signal with strategy selector, technical indicators, walk-forward backtest S1–S9, sentiment-scored news. AppBar has TradingView external link icon.',
+    tabs:['Chart','Signal','Indicators','Backtest','News'],
+    state:[
+      {name:'strategyProvider',sub:'NotifierProvider — persisted'},
+      {name:'watchlistProvider',sub:'NotifierProvider — persisted'},
+      {name:'chartProviderProvider',sub:'NotifierProvider — persisted'},
+      {name:'FutureProvider.autoDispose.family<signal>',sub:'cancellable CancelToken'},
+      {name:'FutureProvider.autoDispose.family<backtest>',sub:'auto-dispose'},
+      {name:'FutureProvider.autoDispose.family<news>',sub:'auto-dispose'},
+      {name:'FutureProvider.autoDispose.family<analystNote>',sub:'plan-gated (Pro)'},
+      {name:'FutureProvider.autoDispose.family<fundamentals>',sub:'auto-dispose'},
+    ],
+    repos:[
+      {name:'TradingRepository',methods:[
+        'fetchSignal(symbol, timeframe, strategy)',
+        'fetchHistory(symbol, timeframe)',
+        'fetchBacktest(symbol)',
+        'fetchNews(symbol)',
+        'fetchAnalystNote(symbol, strategy, direction, confidence)',
+        'fetchFundamentals(symbol)',
+      ]},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/trading/signals/:symbol',desc:'BUY/HOLD/SELL + confidence + entry/SL/TP + reasoning (5m cache)'},
+      {method:'GET',path:'/api/trading/history/:symbol',desc:'OHLCV candles for chart — ?timeframe=1m|1h|4h|1d'},
+      {method:'GET',path:'/api/trading/backtest/:symbol',desc:'Walk-forward results for S1–S9 (winRate, sharpe, maxDrawdown, trades)'},
+      {method:'GET',path:'/api/trading/news/:symbol',desc:'Headlines + bullish/bearish/neutral sentiment scoring'},
+      {method:'GET',path:'/api/trading/analyst-note/:symbol',desc:'AI analyst note — Haiku model (Pro plan, plan-gated 429/403)'},
+      {method:'GET',path:'/api/trading/fundamentals/:symbol',desc:'P/E ratio, dividend yield, market cap, EPS etc.'},
+      {method:'GET',path:'/api/chart/:symbol',desc:'OHLCV candles (ChartModal, embedded in HTML via Dart — never fetch() inside WebView)'},
+    ],
+    entitlements:{'S4–S9 signals':'pro','Analyst notes':'pro'},
+    nav:[
+      {label:'ChartModal (fullscreen)',id:null,overlay:true},
+      {label:'TradingView (external)',id:null,overlay:true},
+    ],
+    models:['TradingSignal','Candle','BacktestResult','NewsArticle'],
+  },
+  {
+    id:'tenxBacktest', path:'/trading/10x-backtest', label:'TenXBacktestScreen', section:'detail',
+    file:'moby/lib/features/trading/tenx_backtest_screen.dart',
+    desc:'10X scanner backtest viewer. v1 / v2 scanner selector, assets vs equities toggle, signal filter chips (BUY/SELL/HOLD), sortable results table with win rate, total return, Sharpe, max drawdown. Best Setups filter requires Pro.',
+    tabs:[],
+    state:[
+      {name:'FutureProvider.autoDispose<scannerBacktest>',sub:'auto-dispose per version+type'},
+    ],
+    repos:[
+      {name:'TradingRepository',methods:['fetchScannerBacktest(version, type)','fetchBestSetups(version, type, minWinRate)']},
+    ],
+    endpoints:[
+      {method:'GET',path:'/api/trading/scanner/backtest/:type',desc:'Historical signal backtest (v1/v2 via ?version=) — 24h cache'},
+      {method:'GET',path:'/api/trading/scanner/best-setups',desc:'Best setups filter — ?version=&type=&minWinRate= (Pro plan)'},
+      {method:'GET',path:'/api/trading/scanner/10x/assets',desc:'10X scanner v1 — 49 base assets (Commodities/Indices/Crypto/Forex)'},
+      {method:'GET',path:'/api/trading/scanner/10x/stocks',desc:'10X scanner v1 — auto-discovered equities via Yahoo screener'},
+      {method:'GET',path:'/api/trading/scanner/10x-v2/assets',desc:'10X scanner v2 — Pine Script aligned assets (35% range, 200-bar, trend-filtered)'},
+      {method:'GET',path:'/api/trading/scanner/10x-v2/stocks',desc:'10X scanner v2 — Pine Script aligned equities'},
+    ],
+    entitlements:{'Best setups filter':'pro'},
+    nav:[],
+    models:[],
+  },
+];
+
+const ALL_ENDPOINTS = [
+  {section:'Health'},
+  {method:'GET',path:'/api/health',desc:'Server health + uptime'},
+  {method:'GET',path:'/api/providers',desc:'Available data providers'},
+
+  {section:'Markets'},
+  {method:'GET',path:'/api/futures/indices',desc:'46 major global indices (10m cache)'},
+  {method:'GET',path:'/api/futures/commodities',desc:'14 commodity futures in USD (10m cache)'},
+  {method:'GET',path:'/api/futures/forex',desc:'44 FX pairs grouped by region (10m cache)'},
+  {method:'GET',path:'/api/futures/cot-metals',desc:'CFTC COT net hedge fund positions'},
+  {method:'GET',path:'/api/central-bank-rates',desc:'ECB / Fed / BoE / BoJ rates (6h cache)'},
+  {method:'GET',path:'/api/stocks/:countryCode',desc:'Top stocks per country with exchange-suffix mapping (4h cache)'},
+  {method:'GET',path:'/api/chart/:symbol',desc:'OHLCV candlestick data — ?range=1mo|3mo|6mo|1y|5y'},
+
+  {section:'Trading (prefix: /api/trading)'},
+  {method:'GET',path:'/api/trading/strategies',desc:'9 strategy definitions (titles, icons, descriptions)'},
+  {method:'GET',path:'/api/trading/quotes',desc:'Live prices for 39 assets (server refreshes every 10s, client refreshes every 15s)'},
+  {method:'GET',path:'/api/trading/signals/:symbol',desc:'BUY/HOLD/SELL — ?timeframe=1m|1h|4h|1d &strategy=1–9 (5m cache)'},
+  {method:'GET',path:'/api/trading/analyst-note/:symbol',desc:'AI reasoning (Haiku) — Pro plan; 429 on limit, 403 on insufficient plan'},
+  {method:'GET',path:'/api/trading/history/:symbol',desc:'OHLCV candles — ?timeframe=1m|1h|4h|1d'},
+  {method:'GET',path:'/api/trading/backtest/:symbol',desc:'Walk-forward S1–S9 (winRate, sharpe, maxDrawdown, trades — nested under strategies key)'},
+  {method:'GET',path:'/api/trading/news/:symbol',desc:'Headlines with bullish/bearish/neutral sentiment'},
+  {method:'GET',path:'/api/trading/fundamentals/:symbol',desc:'Company fundamentals (P/E, dividend, market cap)'},
+
+  {section:'Scanner (prefix: /api/trading/scanner)'},
+  {method:'GET',path:'/api/trading/scanner/10x/assets',desc:'10X scanner v1 — 49 base assets (Commodities/Indices/Crypto/Forex)'},
+  {method:'GET',path:'/api/trading/scanner/10x/stocks',desc:'10X scanner v1 — auto-discovered equities via Yahoo screener'},
+  {method:'GET',path:'/api/trading/scanner/10x-v2/assets',desc:'10X scanner v2 — Pine Script aligned assets (35% range, 200-bar, trend-filtered)'},
+  {method:'GET',path:'/api/trading/scanner/10x-v2/stocks',desc:'10X scanner v2 — Pine Script aligned equities'},
+  {method:'GET',path:'/api/trading/scanner/backtest/:type',desc:'Historical signal backtest (v1/v2 via ?version=) — 24h cache'},
+  {method:'GET',path:'/api/trading/scanner/best-setups',desc:'Best setups filter — ?version=&type=&minWinRate= (Pro plan)'},
+
+  {section:'Volatility'},
+  {method:'GET',path:'/api/volatility/assets',desc:'Safe-haven assets + VIX + 1M change% (10m cache)'},
+  {method:'POST',path:'/api/volatility/briefing',desc:'AI macro stress briefing (Haiku, 30m cache) — Insight plan'},
+  {method:'GET',path:'/api/futures/news',desc:'Futures market news headlines'},
+
+  {section:'Economy'},
+  {method:'GET',path:'/api/usa-debt',desc:'US national debt + deficit + interest payments (12h cache)'},
+  {method:'GET',path:'/api/bonds',desc:'US Treasury yield curve 3m/5Y/10Y/30Y + spread3m10y + curveStatus (10m cache)'},
+  {method:'GET',path:'/api/sectors',desc:'S&P 500 sector ETF 1W/1M change% (15m cache)'},
+  {method:'GET',path:'/api/crises',desc:'Geopolitical crises with severity levels'},
+  {method:'GET',path:'/api/search',desc:'Yahoo Finance symbol/name search — ?q=QUERY'},
+  {method:'GET',path:'/api/country-data/:code',desc:'World Bank GDP, trade balance; REST Countries demographics (24h cache)'},
+
+  {section:'Heatmap'},
+  {method:'GET',path:'/api/heatmap',desc:'Regional + asset class performance heatmap (15m cache, concurrency-deduplicated)'},
+  {method:'GET',path:'/api/heatmap/assets',desc:'Per-category heatmap tiles — ?category=US+Equities|Commodities|Crypto|…'},
+
+  {section:'Exposure'},
+  {method:'GET',path:'/api/exposure/analysis',desc:'AI tariff analysis — comparable companies + earnings impact (Insight plan, 24h cache)'},
+
+  {section:'Billing'},
+  {method:'POST',path:'/api/billing/webhook',desc:'RevenueCat webhook: PURCHASE / RENEWAL / CANCELLATION / EXPIRATION — updates devicePlanMap'},
+];
+
+const ALL_PROVIDERS = [
+  {name:'strategyProvider',type:'NotifierProvider<StrategyNotifier, TradingStrategy>',persist:'SharedPrefs key: activeStrategy',desc:'Active trading strategy S1–S9. Use strategy.serverParam ("1"–"9") for API calls, never strategy.label ("S1"–"S9").'},
+  {name:'alertProvider',type:'NotifierProvider<AlertNotifier, List<PriceAlert>>',persist:'SharedPrefs key: priceAlerts (JSON)',desc:'Price alerts with 10s polling timer when alerts exist. Free plan capped at 3 — checks EntitlementService.can("alerts_unlimited").'},
+  {name:'watchlistProvider',type:'NotifierProvider<WatchlistNotifier, List<String>>',persist:'SharedPrefs key: watchlist_symbols',desc:'User watchlist symbols. toggle(symbol) adds or removes.'},
+  {name:'chartProviderProvider',type:'NotifierProvider<ChartProviderNotifier, ChartDataProvider>',persist:'SharedPrefs key: chart_provider',desc:'Yahoo Finance vs TradingView chart source. Changing triggers full app restart via RestartWidget.'},
+  {name:'themeModeProvider',type:'NotifierProvider<ThemeModeNotifier, ThemeMode>',persist:'SharedPrefs key: themeMode',desc:'Dark / Light / System. Default: Dark. AppTypography base color is dark-mode literal — always .copyWith(color: c.textPrimary) for dynamic text.'},
+  {name:'lastMainTabProvider',type:'StateProvider<int>',persist:'Memory only',desc:'Tracks last active tab index (0–5) so detail screens keep the correct tab highlighted.'},
+  {name:'sharedPreferencesProvider',type:'Provider<SharedPreferences>',persist:'Injected at startup',desc:'Synchronous SharedPreferences singleton. Overridden in ProviderScope via override in main().'},
+];
+
+// ── Sidebar ─────────────────────────────────────────────────
+function buildSidebar() {
+  const sections = [
+    {id:'meta', label:'System'},
+    {id:'init', label:'App Init'},
+    {id:'tabs', label:'Main Tabs'},
+    {id:'detail', label:'Detail Screens'},
+  ];
+  let html = '';
+  for (const sec of sections) {
+    const items = ROUTES.filter(r => r.section === sec.id);
+    if (!items.length) continue;
+    html += `<div class="sb-group"><div class="sb-group-label">${sec.label}</div></div>`;
+    for (const r of items) {
+      html += `<div class="sb-item" data-id="${r.id}" onclick="select('${r.id}')">
+        <div class="sb-route">${r.path}</div>
+        <div class="sb-name">${r.label}</div>
+      </div>`;
+    }
+  }
+  document.getElementById('sb').innerHTML = html;
+}
+
+// ── Select route ─────────────────────────────────────────────
+function select(id) {
+  document.querySelectorAll('.sb-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === id);
+  });
+  const content = document.getElementById('content');
+  content.scrollTop = 0;
+  const route = ROUTES.find(r => r.id === id);
+  if (!route) return;
+  if (id === 'overview') { content.innerHTML = renderOverview(); return; }
+  if (id === 'server')   { content.innerHTML = renderServer(); return; }
+  if (id === 'providers'){ content.innerHTML = renderProviders(); return; }
+  content.innerHTML = renderTrace(route);
+}
+
+// ── Overview ─────────────────────────────────────────────────
+function renderOverview() {
+  const screens = ROUTES.filter(r => !['overview','server','providers'].includes(r.id));
+  let cards = screens.map(r => {
+    const tags = [
+      (r.state||[]).length > 0 ? `<span class="oc-tag p">${(r.state||[]).length} state</span>` : '',
+      (r.repos||[]).length > 0 ? `<span class="oc-tag r">${(r.repos||[]).length} repo</span>` : '',
+      (r.endpoints||[]).length > 0 ? `<span class="oc-tag e">${(r.endpoints||[]).length} endpoint${(r.endpoints||[]).length!==1?'s':''}</span>` : '',
+      (r.nav||[]).length > 0 ? `<span class="oc-tag n">→ ${(r.nav||[]).length}</span>` : '',
+    ].join('');
+    const shortDesc = r.desc ? r.desc.split('.')[0] + '.' : '';
+    return `<div class="ov-card" onclick="select('${r.id}')">
+      <div class="ov-card-route">${r.path}</div>
+      <div class="ov-card-name">${r.label}</div>
+      <div class="ov-card-desc">${shortDesc}</div>
+      <div class="ov-card-tags">${tags}</div>
+    </div>`;
+  }).join('');
+
+  return `<div class="ov-intro">
+    <h2>Moby Architecture</h2>
+    <p>Flutter (iOS/Android) + TypeScript Express API on port 5001. Click any route card to trace its full stack — screen → state providers → repositories → server endpoints.</p>
+  </div>
+  <div class="sec-label">ALL SCREENS (${screens.length})</div>
+  <div class="ov-grid">${cards}</div>
+  <div style="margin-top:28px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;" onclick="select('server')">
+      <div style="font-size:11px;font-weight:700;color:var(--endpoint);margin-bottom:6px;">SERVER ENDPOINTS</div>
+      <div style="font-size:22px;font-weight:700;margin-bottom:4px;">36</div>
+      <div style="font-size:11px;color:var(--muted);">GET + POST routes across 8 modules</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;cursor:pointer;" onclick="select('providers')">
+      <div style="font-size:11px;font-weight:700;color:var(--provider);margin-bottom:6px;">GLOBAL PROVIDERS</div>
+      <div style="font-size:22px;font-weight:700;margin-bottom:4px;">7</div>
+      <div style="font-size:11px;color:var(--muted);">Riverpod providers, 5 persisted to SharedPrefs</div>
+    </div>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;">
+      <div style="font-size:11px;font-weight:700;color:var(--repo);margin-bottom:6px;">REPOSITORIES</div>
+      <div style="font-size:22px;font-weight:700;margin-bottom:4px;">5</div>
+      <div style="font-size:11px;color:var(--muted);">Markets · Trading · Volatility · Heatmap · Debt</div>
+    </div>
+  </div>`;
+}
+
+// ── Server endpoints table ───────────────────────────────────
+function renderServer() {
+  let rows = '';
+  for (const ep of ALL_ENDPOINTS) {
+    if (ep.section) {
+      rows += `<tr><td colspan="3" class="ep-section">${ep.section}</td></tr>`;
+    } else {
+      rows += `<tr>
+        <td><span class="method ${ep.method.toLowerCase()}">${ep.method}</span></td>
+        <td class="ep-path">${ep.path}</td>
+        <td class="ep-desc">${ep.desc}</td>
+      </tr>`;
+    }
+  }
+  return `<div style="margin-bottom:20px;">
+    <h2 style="font-size:20px;font-weight:700;letter-spacing:-.4px;margin-bottom:6px;">Server Endpoints</h2>
+    <p style="font-size:12px;color:var(--muted);">Express API on port 5001. macOS AirPlay owns 5000 — never use 5000. CORS allows any http://localhost:* origin; null/opaque origins (WebView loadHtmlString) are blocked.</p>
+  </div>
+  <table class="ep-table">
+    <thead><tr><th style="width:60px;">Method</th><th>Path</th><th>Description</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+// ── Providers page ───────────────────────────────────────────
+function renderProviders() {
+  const cards = ALL_PROVIDERS.map(p => `
+    <div class="prov-card">
+      <div class="prov-name">${p.name}</div>
+      <div class="prov-type">${p.type}</div>
+      <div class="prov-desc">${p.desc}</div>
+      <span class="prov-persist">${p.persist}</span>
+    </div>
+  `).join('');
+  return `<div style="margin-bottom:20px;">
+    <h2 style="font-size:20px;font-weight:700;letter-spacing:-.4px;margin-bottom:6px;">Global State Providers</h2>
+    <p style="font-size:12px;color:var(--muted);">All providers use Riverpod. Screen-local FutureProviders are defined inline and use autoDispose. Global providers live in moby/lib/providers/ and are injected via ProviderScope in main.dart.</p>
+  </div>
+  <div class="prov-grid">${cards}</div>
+  <div style="margin-top:24px;padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;">
+    <div style="font-size:10px;font-weight:700;color:var(--warning);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px;">Strategy API Param Pitfall</div>
+    <div style="font-size:11px;color:var(--muted);line-height:1.7;">
+      <span style="color:var(--danger)">WRONG:</span> <code style="background:var(--surface3);padding:1px 5px;border-radius:3px;color:var(--danger)">strategy.label</code> → "S1" &nbsp;&nbsp;
+      <span style="color:var(--repo)">RIGHT:</span> <code style="background:var(--surface3);padding:1px 5px;border-radius:3px;color:var(--repo)">strategy.serverParam</code> → "1"<br>
+      Always use <code style="background:var(--surface3);padding:1px 5px;border-radius:3px;">serverParam</code> when calling <code style="background:var(--surface3);padding:1px 5px;border-radius:3px;">/api/trading/signals/:symbol?strategy=</code>
+    </div>
+  </div>`;
+}
+
+// ── Trace view ───────────────────────────────────────────────
+function renderTrace(route) {
+  let html = `<div class="tr-header">
+    <div class="tr-screen">
+      <h2>${route.label}</h2>
+      ${route.file ? `<div class="tr-file">${route.file}</div>` : ''}
+    </div>
+    <div class="route-badge">${route.path}</div>
+  </div>
+  <div class="tr-desc">${route.desc}</div>`;
+
+  // Sub-tabs
+  if ((route.tabs||[]).length > 0) {
+    html += `<div class="sec-label" style="margin-bottom:8px;">SUB-TABS</div>
+    <div class="tabs-row" style="margin-bottom:18px;">
+      ${route.tabs.map(t => `<div class="tab-chip">${t}</div>`).join('')}
+    </div>`;
+  }
+
+  // Entitlements
+  if (route.entitlements && Object.keys(route.entitlements).length > 0) {
+    const feats = Object.entries(route.entitlements).map(([k,v]) =>
+      `<div class="ent-feat">${k} <span class="ent-badge ${v}">${v.toUpperCase()}</span></div>`
+    ).join('');
+    html += `<div class="ent-row"><span class="ent-row-label">Plan gating:</span>${feats}</div>`;
+  }
+
+  // Trace grid
+  html += `<div class="sec-label" style="margin-bottom:12px;">DEPENDENCY TRACE</div>
+  <div class="tr-grid">`;
+
+  // State col
+  html += `<div class="tr-col">
+    <div class="tr-col-hd p">State / Providers</div>`;
+  if ((route.state||[]).length > 0) {
+    for (const s of route.state) {
+      html += `<div class="tr-node p"><div class="nd-name">${s.name}</div><div class="nd-sub">${s.sub||''}</div></div>`;
+    }
+  } else if ((route.local||[]).length > 0) {
+    for (const l of route.local) {
+      html += `<div class="tr-node local"><div class="nd-name">${l}</div><div class="nd-sub">hardcoded / local</div></div>`;
+    }
+  } else {
+    html += `<div class="tr-empty">No state</div>`;
+  }
+  html += `</div>`;
+
+  // Repo col
+  html += `<div class="tr-col">
+    <div class="tr-col-hd r">Repositories</div>`;
+  if ((route.repos||[]).length > 0) {
+    for (const r of route.repos) {
+      const methods = (r.methods||[]).map(m => `<div class="nd-sub">· ${m}</div>`).join('');
+      html += `<div class="tr-node r"><div class="nd-name">${r.name}</div>${methods}</div>`;
+    }
+  } else {
+    html += `<div class="tr-empty">No repository calls</div>`;
+  }
+  html += `</div>`;
+
+  // Endpoints col
+  html += `<div class="tr-col">
+    <div class="tr-col-hd e">Server Endpoints</div>`;
+  if ((route.endpoints||[]).length > 0) {
+    for (const ep of route.endpoints) {
+      html += `<div class="tr-node e">
+        <div class="nd-name"><span class="nd-method">${ep.method}</span>${ep.path}</div>
+        <div class="nd-sub">${ep.desc}</div>
+      </div>`;
+    }
+  } else {
+    html += `<div class="tr-empty">No server calls</div>`;
+  }
+  html += `</div>`;
+
+  // Navigation col
+  html += `<div class="tr-col">
+    <div class="tr-col-hd n">Navigates To</div>`;
+  if ((route.nav||[]).length > 0) {
+    for (const n of route.nav) {
+      const clickable = n.id ? `onclick="select('${n.id}')"` : '';
+      html += `<div class="tr-node n" ${clickable}>
+        <div class="nd-name">${n.label}</div>
+        <div class="nd-sub">${n.id ? 'click to trace →' : n.overlay ? 'overlay / external' : ''}</div>
+      </div>`;
+    }
+  } else {
+    html += `<div class="tr-empty">Terminal screen</div>`;
+  }
+  html += `</div></div>`;
+
+  // Models
+  if ((route.models||[]).length > 0) {
+    html += `<div class="sec-label" style="margin-top:22px;margin-bottom:8px;">DATA MODELS</div>
+    <div class="models-row">
+      ${route.models.map(m => `<div class="model-chip">${m}</div>`).join('')}
+    </div>`;
+  }
+
+  // Local data note
+  if ((route.local||[]).length > 0) {
+    html += `<div style="margin-top:18px;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;border-left:3px solid var(--screen);">
+      <div style="font-size:10px;font-weight:700;color:var(--screen);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px;">Local Data Source</div>
+      <div style="font-size:11px;color:var(--muted);">${route.local.join(', ')} — no network call for the primary list. Hardcoded in <code style="background:var(--surface3);padding:1px 4px;border-radius:3px;">moby/lib/data/sources/tariffs_data.dart</code></div>
+    </div>`;
+  }
+
+  return html;
+}
+
+// ── Init ─────────────────────────────────────────────────────
+buildSidebar();
+select('overview');
+</script>
+</body>
+</html>

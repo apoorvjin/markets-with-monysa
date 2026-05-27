@@ -2,6 +2,11 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/models/price_alert.dart';
+import '../services/entitlement_service.dart';
+
+enum AddAlertResult { added, limitReached }
+
+const _freeAlertLimit = 3;
 
 class AlertNotifier extends Notifier<List<PriceAlert>> {
   static const _key = 'priceAlerts';
@@ -27,9 +32,14 @@ class AlertNotifier extends Notifier<List<PriceAlert>> {
     await prefs.setString(_key, json.encode(state.map((a) => a.toJson()).toList()));
   }
 
-  Future<void> addAlert(PriceAlert alert) async {
+  Future<AddAlertResult> addAlert(PriceAlert alert) async {
+    if (!EntitlementService.can('alerts_unlimited') &&
+        state.length >= _freeAlertLimit) {
+      return AddAlertResult.limitReached;
+    }
     state = [...state, alert];
     await _save();
+    return AddAlertResult.added;
   }
 
   Future<void> removeAlert(String id) async {

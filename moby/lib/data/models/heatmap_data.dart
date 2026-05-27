@@ -10,6 +10,8 @@ class HeatmapTile {
     this.perf3M,
     this.perf6M,
     this.perf1Y,
+    this.perf3Y,
+    this.perf5Y,
   });
 
   final String name;
@@ -22,6 +24,8 @@ class HeatmapTile {
   final double? perf3M;
   final double? perf6M;
   final double? perf1Y;
+  final double? perf3Y;
+  final double? perf5Y;
 
   factory HeatmapTile.fromJson(Map<String, dynamic> j) => HeatmapTile(
         name: j['name'] as String,
@@ -34,6 +38,8 @@ class HeatmapTile {
         perf3M: (j['perf3M'] as num?)?.toDouble(),
         perf6M: (j['perf6M'] as num?)?.toDouble(),
         perf1Y: (j['perf1Y'] as num?)?.toDouble(),
+        perf3Y: (j['perf3Y'] as num?)?.toDouble(),
+        perf5Y: (j['perf5Y'] as num?)?.toDouble(),
       );
 }
 

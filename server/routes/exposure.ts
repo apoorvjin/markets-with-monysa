@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { getDevicePlan, isInsight } from "../plan-enforcement";
 
 const _anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -16,6 +17,10 @@ export function registerExposureRoutes(app: Express): void {
 
     if (!country || !sector) {
       return res.status(400).json({ error: "country and sector are required" });
+    }
+
+    if (!isInsight(getDevicePlan(req))) {
+      return res.status(403).json({ error: "AI Tariff Analysis requires Insight plan.", code: "PLAN_REQUIRED" });
     }
 
     const key = `${country}_${sector}_${tariffRate}`;

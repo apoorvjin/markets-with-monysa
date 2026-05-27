@@ -27,6 +27,14 @@ abstract final class ApiEndpoints {
       '$baseUrl/api/trading/analyst-note/$symbol';
   static String tradingFundamentals(String symbol) =>
       '$baseUrl/api/trading/fundamentals/$symbol';
+  static String get tenXAssets => '$baseUrl/api/trading/scanner/10x/assets';
+  static String get tenXStocks => '$baseUrl/api/trading/scanner/10x/stocks';
+  static String get tenXV2Assets => '$baseUrl/api/trading/scanner/10x-v2/assets';
+  static String get tenXV2Stocks => '$baseUrl/api/trading/scanner/10x-v2/stocks';
+  static String tenXBacktest({required String type, required String version}) =>
+      '$baseUrl/api/trading/scanner/backtest/$type?version=$version';
+  static String bestSetups({required String version, required String type}) =>
+      '$baseUrl/api/trading/scanner/best-setups?version=$version&type=$type';
 
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';

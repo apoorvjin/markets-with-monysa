@@ -235,6 +235,326 @@ class CrisisEvent {
       );
 }
 
+class TenXScanResult {
+  const TenXScanResult({
+    required this.symbol,
+    required this.name,
+    required this.flag,
+    required this.category,
+    required this.price,
+    required this.changePercent,
+    required this.volumeRatio,
+    required this.volumeSpike,
+    required this.volumeGreen,
+    required this.heartbeat,
+    required this.consolidationRangePct,
+    required this.nearBreakout,
+    required this.recordQuarter,
+    required this.epsHistory,
+    required this.epsApplicable,
+    required this.trendUp,
+    required this.signalsActive,
+  });
+
+  final String symbol;
+  final String name;
+  final String flag;
+  final String category;
+  final double price;
+  final double changePercent;
+  final double volumeRatio;
+  final bool volumeSpike;
+  final bool volumeGreen;
+  final bool heartbeat;
+  final double consolidationRangePct;
+  final bool nearBreakout;
+  final bool recordQuarter;
+  final List<double> epsHistory;
+  final bool epsApplicable;
+  final bool trendUp;
+  final int signalsActive;
+
+  factory TenXScanResult.fromJson(Map<String, dynamic> j) => TenXScanResult(
+        symbol: j['symbol'] as String,
+        name: j['name'] as String,
+        flag: j['flag'] as String? ?? '',
+        category: j['category'] as String? ?? 'Assets',
+        price: (j['price'] as num).toDouble(),
+        changePercent: (j['changePercent'] as num).toDouble(),
+        volumeRatio: (j['volumeRatio'] as num).toDouble(),
+        volumeSpike: j['volumeSpike'] as bool? ?? false,
+        volumeGreen: j['volumeGreen'] as bool? ?? false,
+        heartbeat: j['heartbeat'] as bool? ?? false,
+        consolidationRangePct: (j['consolidationRangePct'] as num).toDouble(),
+        nearBreakout: j['nearBreakout'] as bool? ?? false,
+        recordQuarter: j['recordQuarter'] as bool? ?? false,
+        epsHistory: (j['epsHistory'] as List? ?? [])
+            .map((e) => (e as num).toDouble())
+            .toList(),
+        epsApplicable: j['epsApplicable'] as bool? ?? false,
+        trendUp: j['trendUp'] as bool? ?? false,
+        signalsActive: (j['signalsActive'] as num).toInt(),
+      );
+}
+
+class BacktestForwardReturns {
+  const BacktestForwardReturns({
+    this.d5,
+    this.d21,
+    this.d63,
+    this.d126,
+    this.d252,
+    this.d756,
+  });
+
+  final double? d5;
+  final double? d21;
+  final double? d63;
+  final double? d126;
+  final double? d252;
+  final double? d756; // ~3 years; null for signals fired within last 3 years
+
+  factory BacktestForwardReturns.fromJson(Map<String, dynamic> j) =>
+      BacktestForwardReturns(
+        d5: (j['d5'] as num?)?.toDouble(),
+        d21: (j['d21'] as num?)?.toDouble(),
+        d63: (j['d63'] as num?)?.toDouble(),
+        d126: (j['d126'] as num?)?.toDouble(),
+        d252: (j['d252'] as num?)?.toDouble(),
+        d756: (j['d756'] as num?)?.toDouble(),
+      );
+}
+
+class BacktestSignalEvent {
+  const BacktestSignalEvent({
+    required this.date,
+    required this.signalCount,
+    required this.volumeSpike,
+    required this.heartbeat,
+    required this.recordQuarter,
+    required this.trendUp,
+    required this.epsApplicable,
+    required this.priceAtSignal,
+    required this.returns,
+  });
+
+  final String date;
+  final int signalCount;
+  final bool volumeSpike;
+  final bool heartbeat;
+  final bool recordQuarter;
+  final bool trendUp;
+  final bool epsApplicable;
+  final double priceAtSignal;
+  final BacktestForwardReturns returns;
+
+  factory BacktestSignalEvent.fromJson(Map<String, dynamic> j) =>
+      BacktestSignalEvent(
+        date: j['date'] as String,
+        signalCount: (j['signalCount'] as num).toInt(),
+        volumeSpike: j['volumeSpike'] as bool? ?? true,
+        heartbeat: j['heartbeat'] as bool? ?? false,
+        recordQuarter: j['recordQuarter'] as bool? ?? false,
+        trendUp: j['trendUp'] as bool? ?? false,
+        epsApplicable: j['epsApplicable'] as bool? ?? false,
+        priceAtSignal: (j['priceAtSignal'] as num).toDouble(),
+        returns: BacktestForwardReturns.fromJson(
+            j['returns'] as Map<String, dynamic>),
+      );
+}
+
+class BacktestSummaryStats {
+  const BacktestSummaryStats({
+    required this.events,
+    required this.winRate1m,
+    required this.winRate3m,
+    required this.winRate6m,
+    required this.winRate1y,
+    required this.winRate3y,
+    required this.avgReturn1m,
+    required this.avgReturn3m,
+    required this.avgReturn6m,
+    required this.avgReturn3y,
+    required this.sampleSize3y,
+  });
+
+  final int events;
+  final double winRate1m;
+  final double winRate3m;
+  final double winRate6m;
+  final double winRate1y;
+  final double winRate3y;
+  final double avgReturn1m;
+  final double avgReturn3m;
+  final double avgReturn6m;
+  final double avgReturn3y;
+  final int sampleSize3y; // events with ≥3y of forward data available
+
+  factory BacktestSummaryStats.fromJson(Map<String, dynamic> j) =>
+      BacktestSummaryStats(
+        events: (j['events'] as num).toInt(),
+        winRate1m: (j['winRate1m'] as num).toDouble(),
+        winRate3m: (j['winRate3m'] as num).toDouble(),
+        winRate6m: (j['winRate6m'] as num? ?? j['winRate3m'] as num).toDouble(),
+        winRate1y: (j['winRate1y'] as num? ?? j['winRate3m'] as num).toDouble(),
+        winRate3y: (j['winRate3y'] as num? ?? 0).toDouble(),
+        avgReturn1m: (j['avgReturn1m'] as num).toDouble(),
+        avgReturn3m: (j['avgReturn3m'] as num).toDouble(),
+        avgReturn6m: (j['avgReturn6m'] as num).toDouble(),
+        avgReturn3y: (j['avgReturn3y'] as num).toDouble(),
+        sampleSize3y: (j['sampleSize3y'] as num).toInt(),
+      );
+}
+
+class BacktestAssetResult {
+  const BacktestAssetResult({
+    required this.symbol,
+    required this.name,
+    required this.category,
+    required this.flag,
+    required this.totalEvents,
+    required this.bySignalCount,
+    required this.events,
+  });
+
+  final String symbol;
+  final String name;
+  final String category;
+  final String flag;
+  final int totalEvents;
+  final Map<String, BacktestSummaryStats> bySignalCount;
+  final List<BacktestSignalEvent> events;
+
+  factory BacktestAssetResult.fromJson(Map<String, dynamic> j) =>
+      BacktestAssetResult(
+        symbol: j['symbol'] as String,
+        name: j['name'] as String,
+        category: j['category'] as String? ?? '',
+        flag: j['flag'] as String? ?? '',
+        totalEvents: (j['totalEvents'] as num).toInt(),
+        bySignalCount: (j['bySignalCount'] as Map<String, dynamic>).map(
+          (k, v) => MapEntry(
+              k, BacktestSummaryStats.fromJson(v as Map<String, dynamic>)),
+        ),
+        events: (j['events'] as List? ?? [])
+            .map((e) =>
+                BacktestSignalEvent.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class ScannerBacktestResponse {
+  const ScannerBacktestResponse({
+    required this.version,
+    required this.type,
+    required this.fromDate,
+    required this.toDate,
+    required this.assets,
+    required this.aggregate,
+    required this.lastUpdated,
+  });
+
+  final String version;
+  final String type;
+  final String fromDate;
+  final String toDate;
+  final List<BacktestAssetResult> assets;
+  final Map<String, BacktestSummaryStats> aggregate;
+  final String lastUpdated;
+
+  factory ScannerBacktestResponse.fromJson(Map<String, dynamic> j) =>
+      ScannerBacktestResponse(
+        version: j['version'] as String,
+        type: j['type'] as String,
+        fromDate: j['fromDate'] as String,
+        toDate: j['toDate'] as String,
+        assets: (j['assets'] as List)
+            .map((e) =>
+                BacktestAssetResult.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        aggregate: ((j['aggregate'] as Map<String, dynamic>)['bySignalCount']
+                as Map<String, dynamic>)
+            .map((k, v) => MapEntry(
+                k, BacktestSummaryStats.fromJson(v as Map<String, dynamic>))),
+        lastUpdated: j['lastUpdated'] as String,
+      );
+}
+
+class BestSetup {
+  const BestSetup({
+    required this.symbol,
+    required this.name,
+    required this.flag,
+    required this.category,
+    required this.signalsActive,
+    required this.price,
+    required this.changePercent,
+    required this.volumeRatio,
+    required this.winRate1m,
+    required this.winRate3m,
+    required this.winRate6m,
+    required this.winRate1y,
+    required this.winRate3y,
+    required this.sampleSize3y,
+    required this.avgReturn3m,
+  });
+
+  final String symbol;
+  final String name;
+  final String flag;
+  final String category;
+  final int signalsActive;
+  final double price;
+  final double changePercent;
+  final double volumeRatio;
+  final double winRate1m;
+  final double winRate3m;
+  final double winRate6m;
+  final double winRate1y;
+  final double winRate3y;
+  final int sampleSize3y;
+  final double avgReturn3m;
+
+  factory BestSetup.fromJson(Map<String, dynamic> j) => BestSetup(
+        symbol: j['symbol'] as String,
+        name: j['name'] as String,
+        flag: j['flag'] as String? ?? '',
+        category: j['category'] as String? ?? '',
+        signalsActive: (j['signalsActive'] as num).toInt(),
+        price: (j['price'] as num).toDouble(),
+        changePercent: (j['changePercent'] as num).toDouble(),
+        volumeRatio: (j['volumeRatio'] as num).toDouble(),
+        winRate1m: (j['winRate1m'] as num).toDouble(),
+        winRate3m: (j['winRate3m'] as num).toDouble(),
+        winRate6m: (j['winRate6m'] as num? ?? j['winRate3m'] as num).toDouble(),
+        winRate1y: (j['winRate1y'] as num? ?? j['winRate3m'] as num).toDouble(),
+        winRate3y: (j['winRate3y'] as num? ?? 0).toDouble(),
+        sampleSize3y: (j['sampleSize3y'] as num? ?? 0).toInt(),
+        avgReturn3m: (j['avgReturn3m'] as num).toDouble(),
+      );
+}
+
+class BestSetupsResponse {
+  const BestSetupsResponse({
+    required this.setups,
+    required this.cacheWarm,
+    this.lastUpdated,
+  });
+
+  final List<BestSetup> setups;
+  final bool cacheWarm;
+  final String? lastUpdated;
+
+  factory BestSetupsResponse.fromJson(Map<String, dynamic> j) =>
+      BestSetupsResponse(
+        setups: (j['setups'] as List? ?? [])
+            .map((e) => BestSetup.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        cacheWarm: j['cacheWarm'] as bool? ?? false,
+        lastUpdated: j['lastUpdated'] as String?,
+      );
+}
+
 const kCrisisDataAsOf = 'May 2026';
 
 const kCrisisEvents = [

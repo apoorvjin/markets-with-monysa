@@ -55,22 +55,24 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _animate() async {
-    await Future.delayed(const Duration(milliseconds: 200));
-    _logoCtrl.forward();
-    _starsCtrl.forward();
-    await Future.delayed(const Duration(milliseconds: 900));
-    _badgeCtrl.forward();
-    await Future.delayed(const Duration(milliseconds: 1500));
-    if (mounted) {
-      final prefs = await SharedPreferences.getInstance();
-      final hasSeenOnboarding = prefs.getBool('hasSeenOnboarding') ?? false;
-      if (!hasSeenOnboarding) {
-        if (mounted) context.go('/onboarding');
-        return;
-      }
-      final dest = prefs.getString('lastTab') ?? '/markets';
-      if (mounted) context.go(dest);
+    final prefs = await SharedPreferences.getInstance();
+    final hasSeenOnboarding = prefs.getBool('hasSeenOnboarding') ?? false;
+
+    if (!hasSeenOnboarding) {
+      // First-ever launch — play full animation, then go to onboarding.
+      await Future.delayed(const Duration(milliseconds: 200));
+      _logoCtrl.forward();
+      _starsCtrl.forward();
+      await Future.delayed(const Duration(milliseconds: 900));
+      _badgeCtrl.forward();
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (mounted) context.go('/onboarding');
+      return;
     }
+
+    // Returning user (cold restart) — skip animation, go straight to last tab.
+    final dest = prefs.getString('lastTab') ?? '/markets';
+    if (mounted) context.go(dest);
   }
 
   @override

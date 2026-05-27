@@ -14,17 +14,18 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
+// Non-autoDispose: data survives tab switches so switching tabs never re-fetches.
 
-final _indicesProvider = FutureProvider.autoDispose<List<MarketItem>>(
+final _indicesProvider = FutureProvider<List<MarketItem>>(
     (_) => MarketsRepository.instance.fetchIndices());
 
-final _commoditiesProvider = FutureProvider.autoDispose<List<MarketItem>>(
+final _commoditiesProvider = FutureProvider<List<MarketItem>>(
     (_) => MarketsRepository.instance.fetchCommodities());
 
-final _forexProvider = FutureProvider.autoDispose<List<MarketItem>>(
+final _forexProvider = FutureProvider<List<MarketItem>>(
     (_) => MarketsRepository.instance.fetchForex());
 
-final _cotProvider = FutureProvider.autoDispose<CotData>(
+final _cotProvider = FutureProvider<CotData>(
     (_) => MarketsRepository.instance.fetchCotData());
 
 final _cbRatesProvider = FutureProvider<Map<String, CbRateInfo>>(
@@ -34,14 +35,14 @@ enum _MarketSort { price, change }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-class MarketsScreen extends StatefulWidget {
+class MarketsScreen extends ConsumerStatefulWidget {
   const MarketsScreen({super.key});
 
   @override
-  State<MarketsScreen> createState() => _MarketsScreenState();
+  ConsumerState<MarketsScreen> createState() => _MarketsScreenState();
 }
 
-class _MarketsScreenState extends State<MarketsScreen>
+class _MarketsScreenState extends ConsumerState<MarketsScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tab;
 
@@ -49,6 +50,14 @@ class _MarketsScreenState extends State<MarketsScreen>
   void initState() {
     super.initState();
     _tab = TabController(length: 4, vsync: this);
+    // Pre-warm all tabs in parallel so switching never triggers a fresh fetch.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.read(_indicesProvider);
+      ref.read(_commoditiesProvider);
+      ref.read(_forexProvider);
+      ref.read(_cotProvider);
+      ref.read(_cbRatesProvider);
+    });
   }
 
   @override

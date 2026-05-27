@@ -14,6 +14,7 @@ import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { yahooProvider } from "./providers";
+import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
 
 // Single source of truth for symbol validation across all routes.
 // Character set covers Yahoo Finance (= ^ . - _), TradingView/Polygon (:),
@@ -2390,6 +2391,12 @@ setInterval(() => {
   for (const [k, v] of newsCache)     if (now - v.ts > NEWS_TTL)     newsCache.delete(k);
   for (const [k, v] of _noteCache)    if (now - v.ts > NOTE_TTL)     _noteCache.delete(k);
   for (const [k, v] of _fundCache)    if (now - v.ts > FUND_TTL)     _fundCache.delete(k);
+  for (const [k, v] of epsCache)      if (now - v.ts > EPS_TTL)      epsCache.delete(k);
+  if (_tenXCache && now - _tenXCache.ts > TENX_TTL) _tenXCache = null;
+  if (_stockScanCache && now - _stockScanCache.ts > STOCK_SCAN_TTL) _stockScanCache = null;
+  if (_tenXV2Cache && now - _tenXV2Cache.ts > TENX_TTL) _tenXV2Cache = null;
+  if (_stockV2ScanCache && now - _stockV2ScanCache.ts > STOCK_SCAN_TTL) _stockV2ScanCache = null;
+  if (_screenerCache && now - _screenerCache.ts > SCREENER_TTL) _screenerCache = null;
 }, 10 * 60_000);
 
 async function _callClaude(symbol: string, strategy: string, direction: string, confidence: number): Promise<string> {
@@ -2492,7 +2499,876 @@ const STRATEGY_DEFS = [
   },
 ] as const;
 
+// ─── Analyst Note Rate Limiter ────────────────────────────────────────────────
+// 3 calls per device per day (free tier only).
+
 // ─── Express Router ───────────────────────────────────────────────────────────
+
+// ─── 10X Scanner ─────────────────────────────────────────────────────────────
+// Detects three institutional accumulation patterns described in Felix Prehn's
+// "How to Find the Next 10X Bagger" framework:
+//   1. Volume Spike  — current volume ≥ 3× 20-day avg on a green (up) day
+//   2. Heartbeat     — price consolidating sideways (<30% range) over 1–2 years
+//   3. Record Quarter — most recent EPS is highest of last 4 quarters (stocks only)
+
+interface TenXScanEntry {
+  symbol: string;
+  name: string;
+  flag: string;
+  category: string;
+  price: number;
+  changePercent: number;
+  volumeRatio: number;
+  volumeSpike: boolean;
+  volumeGreen: boolean;
+  heartbeat: boolean;
+  consolidationRangePct: number;
+  nearBreakout: boolean;
+  recordQuarter: boolean;
+  epsHistory: number[];
+  epsApplicable: boolean;
+  trendUp: boolean;
+  signalsActive: number;
+}
+
+interface ScreenerQuote {
+  symbol: string;
+  shortName?: string;
+  longName?: string;
+  regularMarketPrice: number;
+  regularMarketChangePercent: number;
+  regularMarketVolume: number;
+  averageDailyVolume10Day?: number;
+  averageDailyVolume3Month?: number;
+  quoteType?: string;
+  marketCap?: number;
+}
+
+interface ScreenerResponse {
+  finance: {
+    result: Array<{ quotes: ScreenerQuote[] }> | null;
+    error: unknown;
+  };
+}
+
+interface TenXScanResponse {
+  assets: TenXScanEntry[];
+  lastUpdated: string;
+  cacheTtlSeconds: number;
+}
+
+interface FinnhubEarningsItem {
+  period: string;
+  actual: number | null;
+  estimate: number | null;
+  surprise: number | null;
+  surprisePercent: number | null;
+}
+
+let _tenXCache: { data: TenXScanResponse; ts: number } | null = null;
+const TENX_TTL = 30 * 60_000;
+
+let _stockScanCache: { data: TenXScanResponse; ts: number } | null = null;
+const STOCK_SCAN_TTL = 30 * 60_000;
+
+let _tenXV2Cache: { data: TenXScanResponse; ts: number } | null = null;
+let _stockV2ScanCache: { data: TenXScanResponse; ts: number } | null = null;
+
+let _screenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
+const SCREENER_TTL = 60 * 60_000; // 1 hour — screener lists change throughout the trading day
+
+// Shared EPS cache — keyed by symbol, shared across ALL scanner versions (v1 assets, v1 stocks,
+// v2 assets, v2 stocks). EPS data is quarterly so 6h is safe; only successful fetches are cached
+// so transient Finnhub failures always retry on the next scan run.
+const epsCache = new Map<string, {
+  data: { recordQuarter: boolean; epsHistory: number[]; epsApplicable: boolean };
+  ts: number;
+}>();
+const EPS_TTL = 6 * 60 * 60_000; // 6 hours
+
+async function computeVolumeSpike(symbol: string): Promise<{
+  volumeRatio: number;
+  volumeSpike: boolean;
+  volumeGreen: boolean;
+}> {
+  try {
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "1mo")) as OHLCV[];
+    if (candles.length < 2) return { volumeRatio: 0, volumeSpike: false, volumeGreen: false };
+    const volSma = calcVolumeSma(candles);
+    if (!volSma || volSma === 0) return { volumeRatio: 0, volumeSpike: false, volumeGreen: false };
+    const last = candles[candles.length - 1];
+    const volumeRatio = Math.round((last.volume / volSma) * 10) / 10;
+    return {
+      volumeRatio,
+      volumeSpike: volumeRatio >= 3.0,
+      volumeGreen: last.close > last.open,
+    };
+  } catch {
+    return { volumeRatio: 0, volumeSpike: false, volumeGreen: false };
+  }
+}
+
+async function computeHeartbeat(symbol: string): Promise<{
+  heartbeat: boolean;
+  consolidationRangePct: number;
+  nearBreakout: boolean;
+}> {
+  try {
+    let candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "2y")) as OHLCV[];
+    if (candles.length < 200) {
+      candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "1y")) as OHLCV[];
+    }
+    if (candles.length < 50) {
+      return { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+    }
+    const hi = Math.max(...candles.map(c => c.high));
+    const lo = Math.min(...candles.map(c => c.low));
+    const consolidationRangePct = Math.round(((hi - lo) / lo) * 1000) / 10;
+    const heartbeat = consolidationRangePct < 30;
+
+    const closes = candles.map(c => c.close).sort((a, b) => a - b);
+    const p90 = closes[Math.floor(closes.length * 0.9)];
+    const currentPrice = candles[candles.length - 1].close;
+    const nearBreakout = heartbeat && currentPrice > p90;
+
+    return { heartbeat, consolidationRangePct, nearBreakout };
+  } catch {
+    return { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+  }
+}
+
+async function computeRecordQuarter(symbol: string, category: string): Promise<{
+  recordQuarter: boolean;
+  epsHistory: number[];
+  epsApplicable: boolean;
+}> {
+  // Non-stock categories never have EPS — skip API entirely
+  const nonStockCategories: string[] = ["Commodities", "Indices", "Crypto", "Forex"];
+  if (nonStockCategories.includes(category)) {
+    return { recordQuarter: false, epsHistory: [], epsApplicable: false };
+  }
+  if (!FINNHUB_KEY) {
+    return { recordQuarter: false, epsHistory: [], epsApplicable: false };
+  }
+
+  // Shared across ALL scanner pipelines (v1 assets, v1 stocks, v2 assets, v2 stocks).
+  // If any version already fetched this symbol within EPS_TTL, reuse the result directly
+  // — no second Finnhub call, no version-split where one has data and the other doesn't.
+  const cached = epsCache.get(symbol);
+  if (cached && Date.now() - cached.ts < EPS_TTL) return cached.data;
+
+  try {
+    const data = await yfFetch<FinnhubEarningsItem[]>(
+      `https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_KEY}`
+    );
+    if (!Array.isArray(data) || data.length === 0) {
+      // Don't cache empty results — could be a rate-limit or transient failure.
+      // The next scan run will retry Finnhub automatically.
+      return { recordQuarter: false, epsHistory: [], epsApplicable: false };
+    }
+    const sorted = [...data].sort((a, b) => b.period.localeCompare(a.period)).slice(0, 4);
+    const eps = sorted.map(q => q.actual ?? 0);
+    const recordQuarter = eps.length >= 2 && eps[0] > 0 && eps.slice(1).every(v => eps[0] > v);
+    const result = { recordQuarter, epsHistory: eps, epsApplicable: true };
+    // Only cache successful fetches so stale "no data" entries never block retries
+    epsCache.set(symbol, { data: result, ts: Date.now() });
+    return result;
+  } catch {
+    return { recordQuarter: false, epsHistory: [], epsApplicable: false };
+  }
+}
+
+async function scanAsset(asset: TradingAsset): Promise<TenXScanEntry | null> {
+  try {
+    const priceEntry = latestPrices.get(asset.symbol);
+    if (!priceEntry) return null;
+
+    const [vsResult, hbResult, eqResult] = await Promise.allSettled([
+      computeVolumeSpike(asset.symbol),
+      computeHeartbeat(asset.symbol),
+      computeRecordQuarter(asset.symbol, asset.category),
+    ]);
+
+    const vs = vsResult.status === "fulfilled"
+      ? vsResult.value
+      : { volumeRatio: 0, volumeSpike: false, volumeGreen: false };
+    const hb = hbResult.status === "fulfilled"
+      ? hbResult.value
+      : { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+    const eq = eqResult.status === "fulfilled"
+      ? eqResult.value
+      : { recordQuarter: false, epsHistory: [], epsApplicable: false };
+
+    const signalsActive =
+      (vs.volumeSpike && vs.volumeGreen ? 1 : 0) +
+      (hb.heartbeat ? 1 : 0) +
+      (eq.recordQuarter ? 1 : 0);
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      flag: asset.flag,
+      category: asset.category,
+      price: priceEntry.price,
+      changePercent: priceEntry.changePercent,
+      volumeRatio: vs.volumeRatio,
+      volumeSpike: vs.volumeSpike,
+      volumeGreen: vs.volumeGreen,
+      heartbeat: hb.heartbeat,
+      consolidationRangePct: hb.consolidationRangePct,
+      nearBreakout: hb.nearBreakout,
+      recordQuarter: eq.recordQuarter,
+      epsHistory: eq.epsHistory,
+      epsApplicable: eq.epsApplicable,
+      trendUp: false,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runWithConcurrency<TIn, TOut>(
+  items: TIn[],
+  fn: (item: TIn) => Promise<TOut | null>,
+  concurrency: number
+): Promise<(TOut | null)[]> {
+  const results: (TOut | null)[] = [];
+  for (let i = 0; i < items.length; i += concurrency) {
+    const batch = await Promise.allSettled(items.slice(i, i + concurrency).map(fn));
+    for (const r of batch) {
+      results.push(r.status === "fulfilled" ? r.value : null);
+    }
+  }
+  return results;
+}
+
+async function fetchStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_screenerCache && Date.now() - _screenerCache.ts < SCREENER_TTL) {
+    return _screenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=en-US&region=US&count=50&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    // Deduplicate by symbol, filter for equity with meaningful price + volume
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (
+        q.quoteType === "EQUITY" &&
+        q.regularMarketPrice >= 2 &&
+        avgVol >= 100_000
+      ) {
+        stocks.push(q);
+      }
+    }
+
+    _screenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function scanScreenerStock(quote: ScreenerQuote): Promise<TenXScanEntry | null> {
+  try {
+    // Volume data comes directly from the screener — no extra API call needed
+    const avgVol = quote.averageDailyVolume10Day ?? quote.averageDailyVolume3Month ?? 0;
+    const volumeRatio = avgVol > 0
+      ? Math.round((quote.regularMarketVolume / avgVol) * 10) / 10
+      : 0;
+    const volumeSpike = volumeRatio >= 3.0;
+    const volumeGreen = quote.regularMarketChangePercent > 0;
+
+    const [hbResult, eqResult] = await Promise.allSettled([
+      computeHeartbeat(quote.symbol),
+      computeRecordQuarter(quote.symbol, "Stocks"),
+    ]);
+
+    const hb = hbResult.status === "fulfilled"
+      ? hbResult.value
+      : { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+    const eq = eqResult.status === "fulfilled"
+      ? eqResult.value
+      : { recordQuarter: false, epsHistory: [], epsApplicable: false };
+
+    const signalsActive =
+      (volumeSpike && volumeGreen ? 1 : 0) +
+      (hb.heartbeat ? 1 : 0) +
+      (eq.recordQuarter ? 1 : 0);
+
+    return {
+      symbol: quote.symbol,
+      name: quote.shortName ?? quote.longName ?? quote.symbol,
+      flag: "",
+      category: "Stocks",
+      price: quote.regularMarketPrice,
+      changePercent: quote.regularMarketChangePercent,
+      volumeRatio,
+      volumeSpike,
+      volumeGreen,
+      heartbeat: hb.heartbeat,
+      consolidationRangePct: hb.consolidationRangePct,
+      nearBreakout: hb.nearBreakout,
+      recordQuarter: eq.recordQuarter,
+      epsHistory: eq.epsHistory,
+      epsApplicable: eq.epsApplicable,
+      trendUp: false,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runAssetScanner(): Promise<TenXScanResponse> {
+  if (_tenXCache && Date.now() - _tenXCache.ts < TENX_TTL) return _tenXCache.data;
+  const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(TRADING_ASSETS, scanAsset, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: TENX_TTL / 1000,
+  };
+  _tenXCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runStockScanner(): Promise<TenXScanResponse> {
+  if (_stockScanCache && Date.now() - _stockScanCache.ts < STOCK_SCAN_TTL) return _stockScanCache.data;
+  const universe = await fetchStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(universe, scanScreenerStock, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
+  };
+  _stockScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── 10X Scanner v2 (Pine Script Aligned) ───────────────────────────────────
+// Differences from v1:
+//   - Heartbeat: ≤35% range over last 200 daily bars (was <30% over 2y)
+//   - nearBreakout: close > highest(50)[1] (was price in top 10% of 2y range)
+//   - trendUp: MA50 flat or rising (new 4th signal)
+
+async function computeHeartbeatV2(symbol: string): Promise<{
+  heartbeat: boolean;
+  consolidationRangePct: number;
+  nearBreakout: boolean;
+}> {
+  try {
+    let candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "1y")) as OHLCV[];
+    if (candles.length > 200) candles = candles.slice(-200);
+    if (candles.length < 50) return { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+
+    const hi = Math.max(...candles.map(c => c.high));
+    const lo = Math.min(...candles.map(c => c.low));
+    const consolidationRangePct = Math.round(((hi - lo) / lo) * 1000) / 10;
+    const heartbeat = consolidationRangePct <= 35;
+
+    const last51 = candles.slice(-51, -1);
+    const highest50 = last51.length > 0 ? Math.max(...last51.map(c => c.high)) : hi;
+    const currentPrice = candles[candles.length - 1].close;
+    const nearBreakout = heartbeat && currentPrice > highest50;
+
+    return { heartbeat, consolidationRangePct, nearBreakout };
+  } catch {
+    return { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+  }
+}
+
+async function computeTrend(symbol: string): Promise<{ trendUp: boolean }> {
+  try {
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "6mo")) as OHLCV[];
+    if (candles.length < 70) return { trendUp: false };
+    const closes = candles.map(c => c.close);
+    const n = closes.length;
+    const sma50 = (end: number) =>
+      closes.slice(Math.max(0, end - 50), end).reduce((a, b) => a + b, 0) /
+      Math.min(50, end);
+    const trendUp = sma50(n) >= sma50(Math.max(50, n - 20));
+    return { trendUp };
+  } catch {
+    return { trendUp: false };
+  }
+}
+
+async function scanAssetV2(asset: TradingAsset): Promise<TenXScanEntry | null> {
+  try {
+    const priceEntry = latestPrices.get(asset.symbol);
+    if (!priceEntry) return null;
+
+    const [vsResult, hbResult, eqResult, trResult] = await Promise.allSettled([
+      computeVolumeSpike(asset.symbol),
+      computeHeartbeatV2(asset.symbol),
+      computeRecordQuarter(asset.symbol, asset.category),
+      computeTrend(asset.symbol),
+    ]);
+
+    const vs = vsResult.status === "fulfilled"
+      ? vsResult.value
+      : { volumeRatio: 0, volumeSpike: false, volumeGreen: false };
+    const hb = hbResult.status === "fulfilled"
+      ? hbResult.value
+      : { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+    const eq = eqResult.status === "fulfilled"
+      ? eqResult.value
+      : { recordQuarter: false, epsHistory: [], epsApplicable: false };
+    const tr = trResult.status === "fulfilled"
+      ? trResult.value
+      : { trendUp: false };
+
+    const signalsActive =
+      (vs.volumeSpike && vs.volumeGreen ? 1 : 0) +
+      (hb.heartbeat ? 1 : 0) +
+      (eq.recordQuarter ? 1 : 0) +
+      (tr.trendUp ? 1 : 0);
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      flag: asset.flag,
+      category: asset.category,
+      price: priceEntry.price,
+      changePercent: priceEntry.changePercent,
+      volumeRatio: vs.volumeRatio,
+      volumeSpike: vs.volumeSpike,
+      volumeGreen: vs.volumeGreen,
+      heartbeat: hb.heartbeat,
+      consolidationRangePct: hb.consolidationRangePct,
+      nearBreakout: hb.nearBreakout,
+      recordQuarter: eq.recordQuarter,
+      epsHistory: eq.epsHistory,
+      epsApplicable: eq.epsApplicable,
+      trendUp: tr.trendUp,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function scanScreenerStockV2(quote: ScreenerQuote): Promise<TenXScanEntry | null> {
+  try {
+    const avgVol = quote.averageDailyVolume10Day ?? quote.averageDailyVolume3Month ?? 0;
+    const volumeRatio = avgVol > 0
+      ? Math.round((quote.regularMarketVolume / avgVol) * 10) / 10
+      : 0;
+    const volumeSpike = volumeRatio >= 3.0;
+    const volumeGreen = quote.regularMarketChangePercent > 0;
+
+    const [hbResult, eqResult, trResult] = await Promise.allSettled([
+      computeHeartbeatV2(quote.symbol),
+      computeRecordQuarter(quote.symbol, "Stocks"),
+      computeTrend(quote.symbol),
+    ]);
+
+    const hb = hbResult.status === "fulfilled"
+      ? hbResult.value
+      : { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+    const eq = eqResult.status === "fulfilled"
+      ? eqResult.value
+      : { recordQuarter: false, epsHistory: [], epsApplicable: false };
+    const tr = trResult.status === "fulfilled"
+      ? trResult.value
+      : { trendUp: false };
+
+    const signalsActive =
+      (volumeSpike && volumeGreen ? 1 : 0) +
+      (hb.heartbeat ? 1 : 0) +
+      (eq.recordQuarter ? 1 : 0) +
+      (tr.trendUp ? 1 : 0);
+
+    return {
+      symbol: quote.symbol,
+      name: quote.shortName ?? quote.longName ?? quote.symbol,
+      flag: "",
+      category: "Stocks",
+      price: quote.regularMarketPrice,
+      changePercent: quote.regularMarketChangePercent,
+      volumeRatio,
+      volumeSpike,
+      volumeGreen,
+      heartbeat: hb.heartbeat,
+      consolidationRangePct: hb.consolidationRangePct,
+      nearBreakout: hb.nearBreakout,
+      recordQuarter: eq.recordQuarter,
+      epsHistory: eq.epsHistory,
+      epsApplicable: eq.epsApplicable,
+      trendUp: tr.trendUp,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runAssetScannerV2(): Promise<TenXScanResponse> {
+  if (_tenXV2Cache && Date.now() - _tenXV2Cache.ts < TENX_TTL) return _tenXV2Cache.data;
+  const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(TRADING_ASSETS, scanAssetV2, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: TENX_TTL / 1000,
+  };
+  _tenXV2Cache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runStockScannerV2(): Promise<TenXScanResponse> {
+  if (_stockV2ScanCache && Date.now() - _stockV2ScanCache.ts < STOCK_SCAN_TTL) return _stockV2ScanCache.data;
+  const universe = await fetchStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(universe, scanScreenerStockV2, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
+  };
+  _stockV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── 10X Scanner Backtest ────────────────────────────────────────────────────
+// Validates whether historical volume-spike events preceded positive returns.
+// Trigger: volume spike on green day. Context: heartbeat, trend, record quarter.
+// Each event's forward returns are measured at +5/+21/+63/+126/+252 trading days.
+
+interface BacktestForwardReturns {
+  d5: number | null;   // ~1 week
+  d21: number | null;  // ~1 month
+  d63: number | null;  // ~3 months
+  d126: number | null; // ~6 months
+  d252: number | null; // ~1 year
+  d756: number | null; // ~3 years (null for signals < 3y from today)
+}
+
+interface BacktestSignalEvent {
+  date: string;
+  signalCount: number;
+  volumeSpike: boolean;
+  heartbeat: boolean;
+  recordQuarter: boolean;
+  trendUp: boolean;
+  epsApplicable: boolean;
+  priceAtSignal: number;
+  returns: BacktestForwardReturns;
+}
+
+interface BacktestSummaryStats {
+  events: number;
+  winRate1m: number;
+  winRate3m: number;
+  winRate6m: number;
+  winRate1y: number;
+  winRate3y: number;
+  avgReturn1m: number;
+  avgReturn3m: number;
+  avgReturn6m: number;
+  avgReturn3y: number;
+  sampleSize3y: number; // how many events had ≥3y of forward data
+}
+
+interface BacktestAssetResult {
+  symbol: string;
+  name: string;
+  category: string;
+  flag: string;
+  totalEvents: number;
+  bySignalCount: Record<string, BacktestSummaryStats>;
+  events: BacktestSignalEvent[];
+}
+
+interface ScannerBacktestResponse {
+  version: string;
+  type: string;
+  fromDate: string;
+  toDate: string;
+  assets: BacktestAssetResult[];
+  aggregate: {
+    totalEvents: number;
+    bySignalCount: Record<string, BacktestSummaryStats>;
+  };
+  lastUpdated: string;
+}
+
+// Cache: keyed by "v1-assets", "v1-stocks", "v2-assets", "v2-stocks"
+const _backtestCache = new Map<string, { data: ScannerBacktestResponse; ts: number }>();
+const BACKTEST_SCANNER_TTL = 24 * 60 * 60_000; // 24h — historical data doesn't change
+
+function computeForwardReturns(candles: OHLCV[], idx: number, entryPrice: number): BacktestForwardReturns {
+  const ret = (offset: number): number | null => {
+    const future = candles[idx + offset];
+    if (!future || entryPrice === 0) return null;
+    return Math.round(((future.close - entryPrice) / entryPrice) * 10000) / 100;
+  };
+  return { d5: ret(5), d21: ret(21), d63: ret(63), d126: ret(126), d252: ret(252), d756: ret(756) };
+}
+
+function evalEpsRecordQuarter(
+  epsData: FinnhubEarningsItem[],
+  dateStr: string,
+  category: string
+): { recordQuarter: boolean; epsApplicable: boolean } {
+  const nonStock = ["Commodities", "Indices", "Crypto", "Forex"];
+  if (nonStock.includes(category)) return { recordQuarter: false, epsApplicable: false };
+  if (!FINNHUB_KEY || epsData.length === 0) return { recordQuarter: false, epsApplicable: false };
+  const available = epsData
+    .filter(e => e.period <= dateStr)
+    .sort((a, b) => b.period.localeCompare(a.period))
+    .slice(0, 4);
+  if (available.length < 2) return { recordQuarter: false, epsApplicable: true };
+  const vals = available.map(e => e.actual ?? 0);
+  const recordQuarter = vals[0] > 0 && vals.slice(1).every(v => vals[0] > v);
+  return { recordQuarter, epsApplicable: true };
+}
+
+function buildAssetResult(
+  symbol: string, name: string, category: string, flag: string,
+  events: BacktestSignalEvent[]
+): BacktestAssetResult {
+  const bySignalCount: Record<string, BacktestSummaryStats> = {};
+  for (let n = 1; n <= 4; n++) {
+    const evs = events.filter(e => e.signalCount === n);
+    if (evs.length === 0) continue;
+    const returns1m = evs.map(e => e.returns.d21).filter((v): v is number => v !== null);
+    const returns3m = evs.map(e => e.returns.d63).filter((v): v is number => v !== null);
+    const returns6m = evs.map(e => e.returns.d126).filter((v): v is number => v !== null);
+    const returns1y = evs.map(e => e.returns.d252).filter((v): v is number => v !== null);
+    const returns3y = evs.map(e => e.returns.d756).filter((v): v is number => v !== null);
+    const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 100) / 100 : 0;
+    const winRate = (arr: number[]) => arr.length ? Math.round(arr.filter(v => v > 0).length / arr.length * 1000) / 10 : 0;
+    bySignalCount[String(n)] = {
+      events: evs.length,
+      winRate1m: winRate(returns1m),
+      winRate3m: winRate(returns3m),
+      winRate6m: winRate(returns6m),
+      winRate1y: winRate(returns1y),
+      winRate3y: winRate(returns3y),
+      avgReturn1m: avg(returns1m),
+      avgReturn3m: avg(returns3m),
+      avgReturn6m: avg(returns6m),
+      avgReturn3y: avg(returns3y),
+      sampleSize3y: returns3y.length,
+    };
+  }
+  return { symbol, name, category, flag, totalEvents: events.length, bySignalCount, events };
+}
+
+async function backtestSymbol(
+  symbol: string,
+  name: string,
+  category: string,
+  flag: string,
+  version: "v1" | "v2"
+): Promise<BacktestAssetResult | null> {
+  try {
+    const allCandles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "5y")) as OHLCV[];
+    if (allCandles.length < 300) return null;
+
+    // Fetch EPS once (non-stocks return [] immediately)
+    let epsData: FinnhubEarningsItem[] = [];
+    const nonStock = ["Commodities", "Indices", "Crypto", "Forex"];
+    if (!nonStock.includes(category) && FINNHUB_KEY) {
+      try {
+        const raw = await yfFetch<FinnhubEarningsItem[]>(
+          `https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_KEY}`
+        );
+        if (Array.isArray(raw)) epsData = raw;
+      } catch { /* skip EPS if unavailable */ }
+    }
+
+    const lookback = version === "v1" ? 504 : 220;
+    const events: BacktestSignalEvent[] = [];
+    const startIdx = Math.max(lookback, 70); // ensure enough history for MA50 too
+    const endIdx = allCandles.length - 253;  // need at least 1y forward data
+
+    for (let i = startIdx; i <= endIdx; i++) {
+      const c = allCandles[i];
+
+      // Volume spike (in-memory)
+      const slice20 = allCandles.slice(i - 20, i);
+      const avgVol = slice20.reduce((s, v) => s + v.volume, 0) / 20;
+      if (avgVol === 0 || c.volume / avgVol < 3.0 || c.close <= c.open) continue;
+
+      // Heartbeat (in-memory slice)
+      const hbSlice = allCandles.slice(i - lookback, i + 1);
+      const hi = Math.max(...hbSlice.map(v => v.high));
+      const lo = Math.min(...hbSlice.map(v => v.low));
+      const rangePct = ((hi - lo) / lo) * 100;
+      const heartbeat = rangePct < (version === "v1" ? 30 : 35);
+
+      // Trend — v2 only (in-memory MA50)
+      let trendUp = false;
+      if (version === "v2") {
+        const closes = allCandles.slice(Math.max(0, i - 69), i + 1).map(v => v.close);
+        const n = closes.length;
+        const sma50 = (end: number) =>
+          closes.slice(Math.max(0, end - 50), end).reduce((a, b) => a + b, 0) /
+          Math.min(50, Math.max(1, end));
+        trendUp = sma50(n) >= sma50(Math.max(20, n - 20));
+      }
+
+      // Record quarter (EPS filtered to ≤ signal date)
+      const dateStr = new Date(c.time * 1000).toISOString().slice(0, 10);
+      const { recordQuarter, epsApplicable } = evalEpsRecordQuarter(epsData, dateStr, category);
+
+      const signalCount =
+        1 + (heartbeat ? 1 : 0) + (recordQuarter ? 1 : 0) + (trendUp ? 1 : 0);
+
+      events.push({
+        date: dateStr,
+        signalCount,
+        volumeSpike: true,
+        heartbeat,
+        recordQuarter,
+        trendUp,
+        epsApplicable,
+        priceAtSignal: c.close,
+        returns: computeForwardReturns(allCandles, i, c.close),
+      });
+    }
+
+    return buildAssetResult(symbol, name, category, flag, events);
+  } catch {
+    return null;
+  }
+}
+
+function buildAggregate(assets: BacktestAssetResult[]): ScannerBacktestResponse["aggregate"] {
+  let totalEvents = 0;
+  const combined: Record<string, BacktestSignalEvent[]> = {};
+  for (const a of assets) {
+    totalEvents += a.totalEvents;
+    for (const e of a.events) {
+      const k = String(e.signalCount);
+      (combined[k] ??= []).push(e);
+    }
+  }
+  const bySignalCount: Record<string, BacktestSummaryStats> = {};
+  for (const [k, evs] of Object.entries(combined)) {
+    const r1m = evs.map(e => e.returns.d21).filter((v): v is number => v !== null);
+    const r3m = evs.map(e => e.returns.d63).filter((v): v is number => v !== null);
+    const r6m = evs.map(e => e.returns.d126).filter((v): v is number => v !== null);
+    const r1y = evs.map(e => e.returns.d252).filter((v): v is number => v !== null);
+    const r3y = evs.map(e => e.returns.d756).filter((v): v is number => v !== null);
+    const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 100) / 100 : 0;
+    const wr = (arr: number[]) => arr.length ? Math.round(arr.filter(v => v > 0).length / arr.length * 1000) / 10 : 0;
+    bySignalCount[k] = {
+      events: evs.length,
+      winRate1m: wr(r1m), winRate3m: wr(r3m), winRate6m: wr(r6m), winRate1y: wr(r1y), winRate3y: wr(r3y),
+      avgReturn1m: avg(r1m), avgReturn3m: avg(r3m), avgReturn6m: avg(r6m), avgReturn3y: avg(r3y),
+      sampleSize3y: r3y.length,
+    };
+  }
+  return { totalEvents, bySignalCount };
+}
+
+async function runScannerBacktest(version: "v1" | "v2", type: "assets" | "stocks"): Promise<ScannerBacktestResponse> {
+  const cacheKey = `${version}-${type}`;
+  const cached = _backtestCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < BACKTEST_SCANNER_TTL) return cached.data;
+
+  const targets: Array<{ symbol: string; name: string; category: string; flag: string }> =
+    type === "assets"
+      ? TRADING_ASSETS.map(a => ({ symbol: a.symbol, name: a.name, category: a.category, flag: a.flag }))
+      : (await fetchStockUniverse()).map(q => ({
+          symbol: q.symbol,
+          name: q.shortName ?? q.longName ?? q.symbol,
+          category: "Stocks",
+          flag: "",
+        }));
+
+  const raw = await runWithConcurrency<typeof targets[0], BacktestAssetResult>(
+    targets,
+    t => backtestSymbol(t.symbol, t.name, t.category, t.flag, version),
+    3  // lower concurrency — 5y candle fetches are heavy
+  );
+
+  const assets = raw.filter((r): r is BacktestAssetResult => r !== null && r.totalEvents > 0);
+  assets.sort((a, b) => b.totalEvents - a.totalEvents);
+
+  const allCandles5yAgo = new Date(Date.now() - 5 * 365.25 * 24 * 60 * 60 * 1000);
+  const data: ScannerBacktestResponse = {
+    version,
+    type,
+    fromDate: allCandles5yAgo.toISOString().slice(0, 10),
+    toDate: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10), // yesterday
+    assets,
+    aggregate: buildAggregate(assets),
+    lastUpdated: new Date().toISOString(),
+  };
+  _backtestCache.set(cacheKey, { data, ts: Date.now() });
+  return data;
+}
+
+// ── Backtest pre-warming ──────────────────────────────────────────────────────
+
+export async function runAllBacktests(): Promise<void> {
+  const combos: Array<["v1" | "v2", "assets" | "stocks"]> = [
+    ["v1", "assets"],
+    ["v2", "assets"],
+    ["v1", "stocks"],
+    ["v2", "stocks"],
+  ];
+  for (const [version, type] of combos) {
+    try {
+      console.log(`[BacktestWarm] starting ${version}-${type}`);
+      await runScannerBacktest(version, type);
+      console.log(`[BacktestWarm] done ${version}-${type}`);
+    } catch (err) {
+      console.error(`[BacktestWarm] ${version}-${type} failed:`, err);
+    }
+    // 5s gap between combos to ease Yahoo Finance / Finnhub rate-limit pressure
+    await new Promise<void>(r => setTimeout(r, 5_000));
+  }
+}
+
+// Startup warm: 2 min after boot so cache is hot shortly after every deploy
+setTimeout(() => {
+  runAllBacktests().catch(err => console.error("[BacktestWarm] startup failed:", err));
+}, 2 * 60_000);
+
+// Nightly refresh at 00:05 UTC, then every 24 h
+(function scheduleNightlyBacktest() {
+  const now = new Date();
+  const next = new Date();
+  next.setUTCHours(0, 5, 0, 0);
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+  setTimeout(() => {
+    runAllBacktests().catch(err => console.error("[BacktestWarm] nightly failed:", err));
+    setInterval(() => {
+      runAllBacktests().catch(err => console.error("[BacktestWarm] nightly failed:", err));
+    }, 24 * 60 * 60_000);
+  }, next.getTime() - now.getTime());
+})();
 
 export function createTradingRouter(): Router {
   const router = Router();
@@ -2555,6 +3431,12 @@ export function createTradingRouter(): Router {
       return res.status(400).json({ error: "Invalid strategy. Use: 1, 2, 3, 4, 5, 6, 7, 8" });
     }
 
+    // Strategies 4-9 require Pro plan
+    const advancedStrategies = ["4", "5", "6", "7", "8", "9"] as const;
+    if ((advancedStrategies as readonly string[]).includes(strategy) && !isPro(getDevicePlan(req))) {
+      return res.status(403).json({ error: "Strategy requires Pro plan.", code: "PLAN_REQUIRED" });
+    }
+
     // S3 and S6 need news; S7 needs HTF candles + cross-asset candles
     let newsSentiment = 0;
     let newsArticles: NewsArticle[] = [];
@@ -2596,6 +3478,14 @@ export function createTradingRouter(): Router {
     if (!symbolSchema.safeParse(symbol).success) {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
+
+    if (!isPro(getDevicePlan(req))) {
+      return res.status(403).json({
+        error: "Analyst notes require Pro plan.",
+        code: "PLAN_REQUIRED",
+      });
+    }
+
     const strategy = (req.query.strategy as string) ?? "1";
     const direction = (req.query.direction as string) ?? "HOLD";
     const confidence = parseFloat(req.query.confidence as string) || 50;
@@ -2677,6 +3567,133 @@ export function createTradingRouter(): Router {
     }
     const result = await fetchNewsForSymbol(symbol);
     return res.json(result);
+  });
+
+  // GET /api/trading/scanner/10x/assets  — 49 base assets (Commodities/Indices/Crypto/Forex)
+  router.get("/scanner/10x/assets", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAssetScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Asset Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/stocks  — auto-discovered equities via Yahoo screener
+  router.get("/scanner/10x/stocks", async (_req: Request, res: Response) => {
+    try {
+      const result = await runStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Stock Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/assets  — v2: Pine Script aligned (35% range, 200-bar, trend)
+  router.get("/scanner/10x-v2/assets", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAssetScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Asset Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/stocks  — v2: Pine Script aligned stocks
+  router.get("/scanner/10x-v2/stocks", async (_req: Request, res: Response) => {
+    try {
+      const result = await runStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Stock Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/backtest/:type?version=v1|v2  — historical signal backtest (24h cache)
+  router.get("/scanner/backtest/:type", async (req: Request, res: Response) => {
+    const type = req.params.type as string;
+    if (type !== "assets" && type !== "stocks") {
+      return res.status(400).json({ error: "type must be 'assets' or 'stocks'" });
+    }
+    const version = (req.query.version === "v2" ? "v2" : "v1") as "v1" | "v2";
+    try {
+      const result = await runScannerBacktest(version, type);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Backtest]", err);
+      return res.status(503).json({ error: "Backtest temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/best-setups?version=v1&type=assets&minWinRate=0.65
+  router.get("/scanner/best-setups", async (req: Request, res: Response) => {
+    const version = (req.query.version === "v2" ? "v2" : "v1") as "v1" | "v2";
+    const type = (req.query.type === "stocks" ? "stocks" : "assets") as "assets" | "stocks";
+    const minWinRate = parseFloat((req.query.minWinRate as string) || "0.65");
+
+    const cacheKey = `${version}-${type}`;
+    const cached = _backtestCache.get(cacheKey);
+    if (!cached) {
+      return res.json({ setups: [], cacheWarm: false, lastUpdated: null });
+    }
+    const btData = cached.data;
+
+    try {
+      const scanData =
+        version === "v2"
+          ? type === "stocks"
+            ? await runStockScannerV2()
+            : await runAssetScannerV2()
+          : type === "stocks"
+            ? await runStockScanner()
+            : await runAssetScanner();
+
+      const btBySymbol = new Map(btData.assets.map((a) => [a.symbol, a]));
+
+      const setups: Array<{
+        symbol: string; name: string; flag: string; category: string;
+        signalsActive: number; price: number; changePercent: number;
+        volumeRatio: number;
+        winRate1m: number; winRate3m: number; winRate6m: number;
+        winRate1y: number; winRate3y: number; sampleSize3y: number;
+        avgReturn3m: number;
+      }> = [];
+
+      for (const entry of scanData.assets) {
+        if (entry.signalsActive < 1) continue;
+        const bt = btBySymbol.get(entry.symbol);
+        if (!bt) continue;
+        const stats = bt.bySignalCount[String(entry.signalsActive)];
+        if (!stats || stats.winRate1m < minWinRate * 100) continue;
+        setups.push({
+          symbol: entry.symbol, name: entry.name, flag: entry.flag,
+          category: entry.category, signalsActive: entry.signalsActive,
+          price: entry.price, changePercent: entry.changePercent,
+          volumeRatio: entry.volumeRatio,
+          winRate1m: stats.winRate1m, winRate3m: stats.winRate3m,
+          winRate6m: stats.winRate6m, winRate1y: stats.winRate1y,
+          winRate3y: stats.winRate3y, sampleSize3y: stats.sampleSize3y,
+          avgReturn3m: stats.avgReturn3m,
+        });
+      }
+
+      setups.sort((a, b) => b.winRate1m - a.winRate1m);
+      return res
+        .setHeader("Cache-Control", "public, max-age=1800")
+        .json({ setups: setups.slice(0, 5), cacheWarm: true, lastUpdated: scanData.lastUpdated });
+    } catch (err) {
+      console.error("[Best Setups]", err);
+      return res.status(503).json({ error: "Best setups temporarily unavailable" });
+    }
   });
 
   // GET /api/trading/fundamentals/:symbol

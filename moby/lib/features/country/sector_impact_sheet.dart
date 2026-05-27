@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/api_client.dart';
@@ -5,6 +6,7 @@ import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../shared/widgets/upgrade_sheet.dart';
 
 class _CompEntry {
   final String name;
@@ -30,8 +32,16 @@ class _CompEntry {
 class _ExposureResult {
   final List<_CompEntry> comps;
   final String summary;
+  final bool planRequired;
 
-  const _ExposureResult({required this.comps, required this.summary});
+  const _ExposureResult({
+    required this.comps,
+    required this.summary,
+    this.planRequired = false,
+  });
+
+  static const planRequiredSentinel =
+      _ExposureResult(comps: [], summary: '', planRequired: true);
 
   factory _ExposureResult.fromJson(Map<String, dynamic> j) => _ExposureResult(
         comps: (j['comps'] as List? ?? [])
@@ -50,8 +60,15 @@ final _exposureProvider =
     sector: key.sector,
     tariffRate: key.tariffRate,
   );
-  final data = await ApiClient.instance.get(url) as Map<String, dynamic>;
-  return _ExposureResult.fromJson(data);
+  try {
+    final data = await ApiClient.instance.get(url) as Map<String, dynamic>;
+    return _ExposureResult.fromJson(data);
+  } on DioException catch (e) {
+    if (e.response?.statusCode == 403) {
+      return _ExposureResult.planRequiredSentinel;
+    }
+    rethrow;
+  }
 });
 
 void showSectorImpactSheet(
@@ -103,7 +120,7 @@ class _SectorImpactSheet extends ConsumerWidget {
       minChildSize: 0.4,
       maxChildSize: 0.92,
       expand: false,
-      builder: (_, scrollController) => Container(
+      builder: (sheetCtx, scrollController) => Container(
         decoration: BoxDecoration(
           color: c.surface,
           borderRadius: const BorderRadius.vertical(
@@ -209,9 +226,62 @@ class _SectorImpactSheet extends ConsumerWidget {
                     ),
                   ),
                 ),
-                data: (result) => ListView(
+                data: (result) {
+                  if (result.planRequired) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.s6),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: c.accentDim,
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.lock_rounded,
+                                  color: c.accent, size: 28),
+                            ),
+                            const SizedBox(height: AppSpacing.s4),
+                            Text('Insight Feature',
+                                style: AppTypography.headingSm
+                                    .copyWith(color: c.textPrimary)),
+                            const SizedBox(height: AppSpacing.s2),
+                            Text(
+                              'AI Tariff Analysis is available on the Insight plan.',
+                              style: AppTypography.md
+                                  .copyWith(color: c.textSecondary),
+                              textAlign: TextAlign.center,
+                            ),
+                            const SizedBox(height: AppSpacing.s5),
+                            FilledButton(
+                              onPressed: () {
+                                Navigator.of(context).pop();
+                                UpgradeSheet.show(context,
+                                    feature: 'exposure_ai');
+                              },
+                              style: FilledButton.styleFrom(
+                                backgroundColor: c.accent,
+                                foregroundColor: Colors.black,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(
+                                        AppRadius.md)),
+                              ),
+                              child: const Text('View Plans'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView(
                   controller: scrollController,
-                  padding: const EdgeInsets.all(AppSpacing.s5),
+                  padding: EdgeInsets.fromLTRB(
+                      AppSpacing.s5,
+                      AppSpacing.s5,
+                      AppSpacing.s5,
+                      AppSpacing.s5 + MediaQuery.of(sheetCtx).padding.bottom),
                   children: [
                     // Summary card
                     if (result.summary.isNotEmpty) ...[
@@ -252,7 +322,8 @@ class _SectorImpactSheet extends ConsumerWidget {
                     ),
                     const SizedBox(height: AppSpacing.s3),
                   ],
-                ),
+                );
+                },
               ),
             ),
           ],

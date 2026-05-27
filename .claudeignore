@@ -1,0 +1,40 @@
+# ── Build artifacts ────────────────────────────────────────────────────────────
+moby/build/
+moby/.dart_tool/
+moby/linux/
+moby/windows/
+moby/web/
+
+# ── iOS / macOS native ─────────────────────────────────────────────────────────
+moby/ios/Pods/
+moby/ios/.symlinks/
+moby/ios/Flutter/flutter_export_environment.sh
+moby/ios/Flutter/Generated.xcconfig
+moby/macos/Pods/
+moby/macos/.symlinks/
+moby/macos/Flutter/GeneratedPluginRegistrant.swift
+moby/macos/Flutter/flutter_export_environment.sh
+
+# ── Android ───────────────────────────────────────────────────────────────────
+moby/android/.gradle/
+moby/android/build/
+moby/android/local.properties
+
+# ── Lock files (versions locked in pubspec.yaml / package.json — lock files
+#    are generated and Claude never needs to read them) ────────────────────────
+moby/pubspec.lock
+moby/ios/Podfile.lock
+moby/macos/Podfile.lock
+package-lock.json
+
+# ── Node modules ──────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Generated / compiled server output ────────────────────────────────────────
+dist/
+
+# ── Misc artefacts ─────────────────────────────────────────────────────────────
+*.iml
+moby/moby.iml
+sector_lines.txt
+architecture.html

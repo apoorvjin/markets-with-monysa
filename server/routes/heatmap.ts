@@ -3,6 +3,9 @@ import { fetchYahooPrice, fetchRangeData } from "./shared";
 
 const HEATMAP_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 let heatmapCache: { data: unknown; timestamp: number } | null = null;
+// Deduplicates concurrent fetches: if a fetch is already in flight, all concurrent
+// callers await the same Promise rather than each firing 72+ Yahoo Finance requests.
+let heatmapInFlight: Promise<void> | null = null;
 
 // Representative symbols per geographic macro-region
 const REGION_SYMBOLS: { name: string; flag: string; symbols: string[] }[] = [
@@ -28,16 +31,20 @@ type PerSymbolData = {
   perf3M: number | null;
   perf6M: number | null;
   perf1Y: number | null;
+  perf3Y: number | null;
+  perf5Y: number | null;
 };
 
 async function fetchSymbolData(symbol: string): Promise<PerSymbolData> {
-  const [price, week, month, quarter, halfYear, year] = await Promise.all([
+  const [price, week, month, quarter, halfYear, year, threeYear, fiveYear] = await Promise.all([
     fetchYahooPrice(symbol),
     fetchRangeData(symbol, "5d"),
     fetchRangeData(symbol, "1mo"),
     fetchRangeData(symbol, "3mo"),
     fetchRangeData(symbol, "6mo"),
     fetchRangeData(symbol, "1y"),
+    fetchRangeData(symbol, "3y"),
+    fetchRangeData(symbol, "5y"),
   ]);
   return {
     changePercent: price?.changePercent ?? null,
@@ -46,6 +53,8 @@ async function fetchSymbolData(symbol: string): Promise<PerSymbolData> {
     perf3M: quarter?.changePercent ?? null,
     perf6M: halfYear?.changePercent ?? null,
     perf1Y: year?.changePercent ?? null,
+    perf3Y: threeYear?.changePercent ?? null,
+    perf5Y: fiveYear?.changePercent ?? null,
   };
 }
 
@@ -100,8 +109,26 @@ const INDIVIDUAL_ASSETS: { symbol: string; name: string; emoji: string; category
   { symbol: "DOGE-USD", name: "Dogecoin",  emoji: "🐕", category: "Crypto" },
 ];
 
+// Resolves with null fields after timeoutMs rather than hanging indefinitely.
+async function fetchSymbolDataSafe(symbol: string, timeoutMs = 6000): Promise<PerSymbolData> {
+  const fallback: PerSymbolData = {
+    changePercent: null, perf1W: null, perf1M: null, perf3M: null,
+    perf6M: null, perf1Y: null, perf3Y: null, perf5Y: null,
+  };
+  try {
+    return await Promise.race([
+      fetchSymbolData(symbol),
+      new Promise<PerSymbolData>((resolve) => setTimeout(() => resolve(fallback), timeoutMs)),
+    ]);
+  } catch {
+    return fallback;
+  }
+}
+
 const ASSETS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
-let assetsCache: { data: unknown; timestamp: number } | null = null;
+// Per-category caches so Indices/Commodities/Crypto are fetched independently.
+const assetsCacheMap = new Map<string, { data: unknown; timestamp: number }>();
+const assetsInFlightMap = new Map<string, Promise<void>>();
 
 export function registerHeatmapRoutes(app: Express): void {
   app.get("/api/heatmap", async (_req, res) => {
@@ -110,80 +137,99 @@ export function registerHeatmapRoutes(app: Express): void {
         return res.json(heatmapCache.data);
       }
 
-      // Collect all unique symbols to avoid duplicate fetches
-      const regionSymbols = REGION_SYMBOLS.flatMap((r) => r.symbols);
-      const assetSymbols = ASSET_CLASS_SYMBOLS.flatMap((a) => a.symbols);
-      const allSymbols = [...new Set([...regionSymbols, ...assetSymbols])];
+      // If a fetch is already in flight, join it rather than firing a second
+      // batch of 72+ Yahoo Finance requests simultaneously.
+      if (!heatmapInFlight) {
+        heatmapInFlight = (async () => {
+          // Collect all unique symbols to avoid duplicate fetches
+          const regionSymbols = REGION_SYMBOLS.flatMap((r) => r.symbols);
+          const assetSymbols = ASSET_CLASS_SYMBOLS.flatMap((a) => a.symbols);
+          const allSymbols = [...new Set([...regionSymbols, ...assetSymbols])];
 
-      // Fetch all symbols in parallel
-      const symbolDataMap = new Map<string, PerSymbolData>();
-      const results = await Promise.all(allSymbols.map((s) => fetchSymbolData(s)));
-      allSymbols.forEach((s, i) => symbolDataMap.set(s, results[i]));
+          // Fetch all symbols in parallel
+          const symbolDataMap = new Map<string, PerSymbolData>();
+          const results = await Promise.all(allSymbols.map((s) => fetchSymbolData(s)));
+          allSymbols.forEach((s, i) => symbolDataMap.set(s, results[i]));
 
-      const regions = REGION_SYMBOLS.map((r) => {
-        const group = r.symbols.map((s) => symbolDataMap.get(s)!);
-        return {
-          name: r.name,
-          emoji: r.flag,
-          changePercent: avg(group.map((d) => d.changePercent)),
-          perf1W: avg(group.map((d) => d.perf1W)),
-          perf1M: avg(group.map((d) => d.perf1M)),
-          perf3M: avg(group.map((d) => d.perf3M)),
-          perf6M: avg(group.map((d) => d.perf6M)),
-          perf1Y: avg(group.map((d) => d.perf1Y)),
-        };
-      });
+          const regions = REGION_SYMBOLS.map((r) => {
+            const group = r.symbols.map((s) => symbolDataMap.get(s)!);
+            return {
+              name: r.name,
+              emoji: r.flag,
+              changePercent: avg(group.map((d) => d.changePercent)),
+              perf1W: avg(group.map((d) => d.perf1W)),
+              perf1M: avg(group.map((d) => d.perf1M)),
+              perf3M: avg(group.map((d) => d.perf3M)),
+              perf6M: avg(group.map((d) => d.perf6M)),
+              perf1Y: avg(group.map((d) => d.perf1Y)),
+              perf3Y: avg(group.map((d) => d.perf3Y)),
+              perf5Y: avg(group.map((d) => d.perf5Y)),
+            };
+          });
 
-      const assetClasses = ASSET_CLASS_SYMBOLS.map((a) => {
-        const group = a.symbols.map((s) => symbolDataMap.get(s)!);
-        return {
-          name: a.name,
-          emoji: a.emoji,
-          changePercent: avg(group.map((d) => d.changePercent)),
-          perf1W: avg(group.map((d) => d.perf1W)),
-          perf1M: avg(group.map((d) => d.perf1M)),
-          perf3M: avg(group.map((d) => d.perf3M)),
-          perf6M: avg(group.map((d) => d.perf6M)),
-          perf1Y: avg(group.map((d) => d.perf1Y)),
-        };
-      });
+          const assetClasses = ASSET_CLASS_SYMBOLS.map((a) => {
+            const group = a.symbols.map((s) => symbolDataMap.get(s)!);
+            return {
+              name: a.name,
+              emoji: a.emoji,
+              changePercent: avg(group.map((d) => d.changePercent)),
+              perf1W: avg(group.map((d) => d.perf1W)),
+              perf1M: avg(group.map((d) => d.perf1M)),
+              perf3M: avg(group.map((d) => d.perf3M)),
+              perf6M: avg(group.map((d) => d.perf6M)),
+              perf1Y: avg(group.map((d) => d.perf1Y)),
+              perf3Y: avg(group.map((d) => d.perf3Y)),
+              perf5Y: avg(group.map((d) => d.perf5Y)),
+            };
+          });
 
-      const result = { regions, assetClasses, lastUpdated: new Date().toISOString() };
-      heatmapCache = { data: result, timestamp: Date.now() };
-      res.json(result);
+          const result = { regions, assetClasses, lastUpdated: new Date().toISOString() };
+          heatmapCache = { data: result, timestamp: Date.now() };
+        })().finally(() => { heatmapInFlight = null; });
+      }
+
+      await heatmapInFlight;
+      return res.json(heatmapCache!.data);
     } catch (e) {
       console.error("Error fetching heatmap data:", e);
       res.status(500).json({ error: "Failed to fetch heatmap data" });
     }
   });
 
-  // Individual assets — separate endpoint + cache so it only runs on demand
-  app.get("/api/heatmap/assets", async (_req, res) => {
+  // Individual assets — ?category=Indices|Commodities|Crypto fetches only that subset.
+  // Each category has its own cache and in-flight deduplication.
+  app.get("/api/heatmap/assets", async (req, res) => {
     try {
-      if (assetsCache && Date.now() - assetsCache.timestamp < ASSETS_CACHE_DURATION) {
-        return res.json(assetsCache.data);
+      const category = (req.query.category as string | undefined)?.trim() ?? "all";
+      const assetsToFetch = category === "all"
+        ? INDIVIDUAL_ASSETS
+        : INDIVIDUAL_ASSETS.filter((a) => a.category === category);
+
+      const cached = assetsCacheMap.get(category);
+      if (cached && Date.now() - cached.timestamp < ASSETS_CACHE_DURATION) {
+        return res.json(cached.data);
       }
 
-      const results = await Promise.all(
-        INDIVIDUAL_ASSETS.map((a) => fetchSymbolData(a.symbol))
-      );
+      if (!assetsInFlightMap.has(category)) {
+        const inFlight = (async () => {
+          const BATCH = 10;
+          const results: PerSymbolData[] = [];
+          for (let i = 0; i < assetsToFetch.length; i += BATCH) {
+            const batch = assetsToFetch.slice(i, i + BATCH);
+            const batchResults = await Promise.all(batch.map((a) => fetchSymbolDataSafe(a.symbol)));
+            results.push(...batchResults);
+          }
+          const assets = assetsToFetch.map((a, i) => ({
+            name: a.name, emoji: a.emoji, symbol: a.symbol, category: a.category,
+            ...results[i],
+          }));
+          assetsCacheMap.set(category, { data: { assets, lastUpdated: new Date().toISOString() }, timestamp: Date.now() });
+        })().finally(() => { assetsInFlightMap.delete(category); });
+        assetsInFlightMap.set(category, inFlight);
+      }
 
-      const assets = INDIVIDUAL_ASSETS.map((a, i) => ({
-        name: a.name,
-        emoji: a.emoji,
-        symbol: a.symbol,
-        category: a.category,
-        changePercent: results[i].changePercent,
-        perf1W: results[i].perf1W,
-        perf1M: results[i].perf1M,
-        perf3M: results[i].perf3M,
-        perf6M: results[i].perf6M,
-        perf1Y: results[i].perf1Y,
-      }));
-
-      const result = { assets, lastUpdated: new Date().toISOString() };
-      assetsCache = { data: result, timestamp: Date.now() };
-      res.json(result);
+      await assetsInFlightMap.get(category);
+      return res.json(assetsCacheMap.get(category)!.data);
     } catch (e) {
       console.error("Error fetching individual assets heatmap:", e);
       res.status(500).json({ error: "Failed to fetch assets heatmap" });

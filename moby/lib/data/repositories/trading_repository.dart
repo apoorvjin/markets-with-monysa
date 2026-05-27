@@ -67,21 +67,83 @@ class TradingRepository {
     return articles.map((e) => NewsArticle.fromJson(e as Map<String, dynamic>)).toList();
   }
 
+  // Sentinel returned when the server rejects due to plan limits.
+  // The UI checks for this value to show the upgrade sheet instead of an error.
+  static const planLimitSentinel = '__plan_limit__';
+
   Future<String?> fetchAnalystNote(
     String symbol, {
     required String strategy,
     required String direction,
     required double confidence,
   }) async {
+    try {
+      final data = await ApiClient.instance.get(
+        ApiEndpoints.tradingAnalystNote(symbol),
+        params: {
+          'strategy': strategy,
+          'direction': direction,
+          'confidence': confidence.toStringAsFixed(1),
+        },
+      ) as Map<String, dynamic>;
+      return data['note'] as String?;
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 429 || status == 403) return planLimitSentinel;
+      rethrow;
+    }
+  }
+
+  Future<List<TenXScanResult>> fetchTenXAssets() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXAssets)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2Assets() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2Assets)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2Stocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2Stocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<ScannerBacktestResponse> fetchScannerBacktest({
+    required String type,
+    required String version,
+  }) async {
     final data = await ApiClient.instance.get(
-      ApiEndpoints.tradingAnalystNote(symbol),
-      params: {
-        'strategy': strategy,
-        'direction': direction,
-        'confidence': confidence.toStringAsFixed(1),
-      },
+      ApiEndpoints.tenXBacktest(type: type, version: version),
     ) as Map<String, dynamic>;
-    return data['note'] as String?;
+    return ScannerBacktestResponse.fromJson(data);
+  }
+
+  Future<BestSetupsResponse> fetchBestSetups({
+    required String version,
+    required String type,
+  }) async {
+    final data = await ApiClient.instance.get(
+      ApiEndpoints.bestSetups(version: version, type: type),
+    ) as Map<String, dynamic>;
+    return BestSetupsResponse.fromJson(data);
   }
 
   Future<List<StockSearchResult>> searchStocks(String query) async {

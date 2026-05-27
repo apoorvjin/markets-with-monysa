@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import '../models/heatmap_data.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
@@ -10,8 +11,8 @@ class HeatmapRepository {
   DateTime? _heatmapFetchedAt;
   static const _heatmapTtl = Duration(minutes: 15);
 
-  List<HeatmapTile>? _assetsCache;
-  DateTime? _assetsFetchedAt;
+  final Map<String, List<HeatmapTile>> _assetsCache = {};
+  final Map<String, DateTime> _assetsFetchedAt = {};
   static const _assetsTtl = Duration(minutes: 30);
 
   Future<HeatmapData> fetchHeatmap() async {
@@ -26,23 +27,29 @@ class HeatmapRepository {
     return _heatmapCache!;
   }
 
-  Future<List<HeatmapTile>> fetchAssets() async {
-    if (_assetsCache != null &&
-        _assetsFetchedAt != null &&
-        DateTime.now().difference(_assetsFetchedAt!) < _assetsTtl) {
-      return _assetsCache!;
+  Future<List<HeatmapTile>> fetchAssets(String category) async {
+    final cached = _assetsCache[category];
+    final fetchedAt = _assetsFetchedAt[category];
+    if (cached != null && fetchedAt != null &&
+        DateTime.now().difference(fetchedAt) < _assetsTtl) {
+      return cached;
     }
-    final data = await ApiClient.instance.get(ApiEndpoints.heatmapAssets)
-        as Map<String, dynamic>;
-    _assetsCache = (data['assets'] as List)
+    final data = await ApiClient.instance.get(
+      ApiEndpoints.heatmapAssets,
+      params: {'category': category},
+      options: Options(receiveTimeout: const Duration(seconds: 90)),
+    ) as Map<String, dynamic>;
+    final tiles = (data['assets'] as List)
         .map((e) => HeatmapTile.fromJson(e as Map<String, dynamic>))
         .toList();
-    _assetsFetchedAt = DateTime.now();
-    return _assetsCache!;
+    _assetsCache[category] = tiles;
+    _assetsFetchedAt[category] = DateTime.now();
+    return tiles;
   }
 
   void invalidateCache() {
     _heatmapFetchedAt = null;
-    _assetsFetchedAt = null;
+    _assetsCache.clear();
+    _assetsFetchedAt.clear();
   }
 }

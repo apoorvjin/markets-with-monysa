@@ -4,7 +4,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/models/heatmap_data.dart';
 
-enum _HeatmapTimeframe { d1, w1, m1, m3, m6, y1 }
+enum _HeatmapTimeframe { d1, w1, m1, m3, m6, y1, y3, y5 }
 
 class PerformanceHeatmap extends StatefulWidget {
   const PerformanceHeatmap({super.key, required this.tiles});
@@ -25,6 +25,8 @@ class _PerformanceHeatmapState extends State<PerformanceHeatmap> {
         _HeatmapTimeframe.m3 => t.perf3M,
         _HeatmapTimeframe.m6 => t.perf6M,
         _HeatmapTimeframe.y1 => t.perf1Y,
+        _HeatmapTimeframe.y3 => t.perf3Y,
+        _HeatmapTimeframe.y5 => t.perf5Y,
       };
 
   // Saturation cap scales with timeframe so short-term noise doesn't pin all tiles.
@@ -35,6 +37,8 @@ class _PerformanceHeatmapState extends State<PerformanceHeatmap> {
         _HeatmapTimeframe.m3 => 15.0,
         _HeatmapTimeframe.m6 => 25.0,
         _HeatmapTimeframe.y1 => 40.0,
+        _HeatmapTimeframe.y3 => 80.0,
+        _HeatmapTimeframe.y5 => 150.0,
       };
 
   Color _tileColor(double? pct, AppPalette c) {
@@ -144,38 +148,40 @@ class _TimeframeToggle extends StatelessWidget {
       (_HeatmapTimeframe.m3, '3M'),
       (_HeatmapTimeframe.m6, '6M'),
       (_HeatmapTimeframe.y1, '1Y'),
+      (_HeatmapTimeframe.y3, '3Y'),
+      (_HeatmapTimeframe.y5, '5Y'),
     ];
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: options.map((opt) {
-        final (tf, label) = opt;
-        final isActive = selected == tf;
-        return GestureDetector(
-          onTap: () => onChanged(tf),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            margin: const EdgeInsets.only(right: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            decoration: BoxDecoration(
-              color: isActive ? c.accent.withAlpha(30) : Colors.transparent,
-              borderRadius: BorderRadius.circular(AppRadius.full),
-              border: Border.all(
-                color: isActive ? c.accent : c.border,
-                width: 1,
+        mainAxisSize: MainAxisSize.min,
+        children: options.map((opt) {
+          final (tf, label) = opt;
+          final isActive = selected == tf;
+          return GestureDetector(
+            onTap: () => onChanged(tf),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              margin: const EdgeInsets.only(right: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: isActive ? c.accent.withAlpha(30) : Colors.transparent,
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(
+                  color: isActive ? c.accent : c.border,
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                label,
+                style: AppTypography.xs.copyWith(
+                  color: isActive ? c.accent : c.textSecondary,
+                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                ),
               ),
             ),
-            child: Text(
-              label,
-              style: AppTypography.xs.copyWith(
-                color: isActive ? c.accent : c.textSecondary,
-                fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-              ),
-            ),
-          ),
-        );
-      }).toList(),
+          );
+        }).toList(),
       ),
     );
   }

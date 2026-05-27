@@ -387,13 +387,15 @@ export function registerEconomyRoutes(app: Express): void {
 
       const sectorData = await Promise.all(
         SECTOR_ETFS.map(async (etf) => {
-          const [quote, perf1W, perf1M, perf3M, perf6M, perf1Y] = await Promise.all([
+          const [quote, perf1W, perf1M, perf3M, perf6M, perf1Y, perf3Y, perf5Y] = await Promise.all([
             fetchYahooPrice(etf.symbol),
             fetchRangeData(etf.symbol, "5d"),
             fetchRangeData(etf.symbol, "1mo"),
             fetchRangeData(etf.symbol, "3mo"),
             fetchRangeData(etf.symbol, "6mo"),
             fetchRangeData(etf.symbol, "1y"),
+            fetchRangeData(etf.symbol, "3y"),
+            fetchRangeData(etf.symbol, "5y"),
           ]);
           return {
             symbol: etf.symbol,
@@ -406,6 +408,8 @@ export function registerEconomyRoutes(app: Express): void {
             perf3M: perf3M?.changePercent ?? null,
             perf6M: perf6M?.changePercent ?? null,
             perf1Y: perf1Y?.changePercent ?? null,
+            perf3Y: perf3Y?.changePercent ?? null,
+            perf5Y: perf5Y?.changePercent ?? null,
           };
         })
       );

@@ -5,8 +5,10 @@ import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/sources/tariffs_data.dart';
+import '../../services/entitlement_service.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/upgrade_sheet.dart';
 import 'sector_impact_sheet.dart';
 
 final _tariffsProvider = FutureProvider<List<CountryTariff>>(
@@ -201,13 +203,19 @@ class _SectorRow extends StatelessWidget {
           ),
           const SizedBox(width: AppSpacing.s2),
           GestureDetector(
-            onTap: () => showSectorImpactSheet(
-              context,
-              countryCode: countryCode,
-              countryName: countryName,
-              sectorName: sector.sectorName,
-              tariffRate: sector.tariffRate,
-            ),
+            onTap: () {
+              if (!EntitlementService.can('exposure_ai')) {
+                UpgradeSheet.show(context, feature: 'exposure_ai');
+              } else {
+                showSectorImpactSheet(
+                  context,
+                  countryCode: countryCode,
+                  countryName: countryName,
+                  sectorName: sector.sectorName,
+                  tariffRate: sector.tariffRate,
+                );
+              }
+            },
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -217,12 +225,19 @@ class _SectorRow extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.auto_awesome_rounded,
-                      size: 11, color: c.accent),
+                  Icon(
+                    EntitlementService.can('exposure_ai')
+                        ? Icons.auto_awesome_rounded
+                        : Icons.lock_rounded,
+                    size: 11,
+                    color: c.accent,
+                  ),
                   const SizedBox(width: 3),
-                  Text('AI',
-                      style: AppTypography.xs.copyWith(
-                          color: c.accent, fontWeight: FontWeight.w700)),
+                  Text(
+                    EntitlementService.can('exposure_ai') ? 'AI' : 'Insight',
+                    style: AppTypography.xs.copyWith(
+                        color: c.accent, fontWeight: FontWeight.w700),
+                  ),
                 ],
               ),
             ),

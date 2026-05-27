@@ -9,12 +9,14 @@ import '../../data/models/heatmap_data.dart';
 import '../../data/repositories/volatility_repository.dart';
 import '../../data/repositories/markets_repository.dart';
 import '../../data/repositories/heatmap_repository.dart';
+import '../../services/entitlement_service.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/sparkline_chart.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/performance_heatmap.dart';
+import '../../shared/widgets/upgrade_sheet.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -46,14 +48,17 @@ final _crisesProvider = FutureProvider.autoDispose<
   (_) => VolatilityRepository.instance.fetchCrises(),
 );
 
-final _heatmapProvider = FutureProvider.autoDispose<HeatmapData>(
+// Not autoDispose: fetching heatmap data is expensive (72–240 Yahoo Finance
+// requests). Disposing on category switch then re-watching restarts the fetch,
+// which compounds with the retry interceptor into a request storm.
+final _heatmapProvider = FutureProvider<HeatmapData>(
     (_) => HeatmapRepository.instance.fetchHeatmap());
 
-final _heatmapAssetsProvider = FutureProvider.autoDispose<List<HeatmapTile>>(
-    (_) => HeatmapRepository.instance.fetchAssets());
+final _assetsProvider = FutureProvider.family<List<HeatmapTile>, String>(
+    (_, category) => HeatmapRepository.instance.fetchAssets(category));
 
 final _sectorsHeatmapProvider =
-    FutureProvider.autoDispose<List<HeatmapTile>>((ref) async {
+    FutureProvider<List<HeatmapTile>>((ref) async {
   final raw = await MarketsRepository.instance.fetchSectors();
   return raw
       .map((s) => HeatmapTile(
@@ -65,6 +70,8 @@ final _sectorsHeatmapProvider =
             perf3M: (s['perf3M'] as num?)?.toDouble(),
             perf6M: (s['perf6M'] as num?)?.toDouble(),
             perf1Y: (s['perf1Y'] as num?)?.toDouble(),
+            perf3Y: (s['perf3Y'] as num?)?.toDouble(),
+            perf5Y: (s['perf5Y'] as num?)?.toDouble(),
           ))
       .toList();
 });
@@ -111,7 +118,7 @@ class VolatilityScreen extends ConsumerWidget {
               ref.invalidate(_volAssetsProvider);
               ref.invalidate(_briefingProvider);
               ref.invalidate(_heatmapProvider);
-              ref.invalidate(_heatmapAssetsProvider);
+              ref.invalidate(_assetsProvider);
               ref.invalidate(_sectorsHeatmapProvider);
             },
             child: MaxWidthLayout(
@@ -187,7 +194,7 @@ class _MarketHeatmapSection extends ConsumerStatefulWidget {
 
 class _MarketHeatmapSectionState extends ConsumerState<_MarketHeatmapSection> {
   _HeatmapCategory _category = _HeatmapCategory.sectors;
-  String _assetSub = 'Commodities'; // sub-filter for Assets view
+  String _assetSub = 'Indices'; // sub-filter for Assets view
 
   Widget _categoryChip(String label, bool isActive, AppPalette c,
       VoidCallback onTap) {
@@ -220,33 +227,38 @@ class _MarketHeatmapSectionState extends ConsumerState<_MarketHeatmapSection> {
   Widget build(BuildContext context) {
     final c = context.colors;
 
+    // Sectors and regions/assetClasses share providers — watch unconditionally
+    // so both fetch in parallel on first render.
+    final sectorsAsync = ref.watch(_sectorsHeatmapProvider);
+    final heatmapAsync = ref.watch(_heatmapProvider);
+
     List<HeatmapTile>? tiles;
     bool isLoading = false;
     bool hasError = false;
 
     switch (_category) {
       case _HeatmapCategory.sectors:
-        ref.watch(_sectorsHeatmapProvider).when(
+        sectorsAsync.when(
           data: (d) => tiles = d,
           loading: () => isLoading = true,
           error: (_, __) => hasError = true,
         );
       case _HeatmapCategory.regions:
-        ref.watch(_heatmapProvider).when(
+        heatmapAsync.when(
           data: (d) => tiles = d.regions,
           loading: () => isLoading = true,
           error: (_, __) => hasError = true,
         );
       case _HeatmapCategory.assetClasses:
-        ref.watch(_heatmapProvider).when(
+        heatmapAsync.when(
           data: (d) => tiles = d.assetClasses,
           loading: () => isLoading = true,
           error: (_, __) => hasError = true,
         );
       case _HeatmapCategory.assets:
-        ref.watch(_heatmapAssetsProvider).when(
-          data: (d) => tiles =
-              d.where((t) => t.category == _assetSub).toList(),
+        // Only the active sub-category is watched — others load on first tap.
+        ref.watch(_assetsProvider(_assetSub)).when(
+          data: (d) => tiles = d,
           loading: () => isLoading = true,
           error: (_, __) => hasError = true,
         );
@@ -259,7 +271,7 @@ class _MarketHeatmapSectionState extends ConsumerState<_MarketHeatmapSection> {
       (_HeatmapCategory.assets, 'Assets'),
     ];
 
-    const assetSubs = ['Commodities', 'Indices', 'Crypto'];
+    const assetSubs = ['Indices', 'Commodities', 'Crypto'];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -923,7 +935,14 @@ class _AiBriefingCardState extends ConsumerState<_AiBriefingCard> {
           const SizedBox(height: AppSpacing.s4),
           if (!_requested)
             GestureDetector(
-              onTap: () => setState(() => _requested = true),
+              onTap: () {
+                if (!EntitlementService.can('analyst_notes_unlimited')) {
+                  UpgradeSheet.show(context,
+                      feature: 'analyst_notes_unlimited');
+                } else {
+                  setState(() => _requested = true);
+                }
+              },
               child: Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
@@ -940,6 +959,22 @@ class _AiBriefingCardState extends ConsumerState<_AiBriefingCard> {
                     const SizedBox(width: AppSpacing.s2),
                     Text('Generate AI Briefing',
                         style: AppTypography.labelMd.copyWith(color: c.accent)),
+                    if (!EntitlementService.can('analyst_notes_unlimited')) ...[
+                      const SizedBox(width: AppSpacing.s2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: c.accent,
+                          borderRadius:
+                              BorderRadius.circular(AppRadius.full),
+                        ),
+                        child: Text('Pro',
+                            style: AppTypography.xs.copyWith(
+                                color: Colors.black,
+                                fontWeight: FontWeight.w700)),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1484,10 +1519,13 @@ void _showCalendarInfo(BuildContext context) {
       initialChildSize: 0.75,
       minChildSize: 0.4,
       maxChildSize: 0.92,
-      builder: (_, scrollCtrl) => ListView(
+      builder: (ctx, scrollCtrl) => ListView(
         controller: scrollCtrl,
-        padding: const EdgeInsets.fromLTRB(
-            AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s8),
+        padding: EdgeInsets.fromLTRB(
+            AppSpacing.s5,
+            AppSpacing.s5,
+            AppSpacing.s5,
+            AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
         children: [
           Center(
             child: Container(

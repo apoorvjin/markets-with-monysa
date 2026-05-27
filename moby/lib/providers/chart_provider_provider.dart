@@ -2,9 +2,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'strategy_provider.dart';
 
 enum ChartDataProvider {
-  yahoo('Yahoo Finance', 'yahoo');
-  // To expose a new provider later, add a line here, e.g.:
-  // polygon('Polygon.io', 'polygon');
+  yahoo('Yahoo Finance', 'yahoo'),
+  tradingView('TradingView', 'tradingview');
 
   const ChartDataProvider(this.label, this.value);
   final String label;

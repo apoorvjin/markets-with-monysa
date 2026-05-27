@@ -19,7 +19,10 @@ import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/chart_modal.dart';
 import '../../utils/tv_symbol.dart';
+import '../../providers/chart_provider_provider.dart';
 import '../../providers/watchlist_provider.dart';
+import '../../services/entitlement_service.dart';
+import '../../shared/widgets/upgrade_sheet.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -200,16 +203,16 @@ class _AssetDetailScreenState extends State<AssetDetailScreen>
 
 // ── Chart Tab ─────────────────────────────────────────────────────────────────
 
-class _ChartTab extends StatefulWidget {
+class _ChartTab extends ConsumerStatefulWidget {
   const _ChartTab({required this.symbol, required this.name});
   final String symbol;
   final String name;
 
   @override
-  State<_ChartTab> createState() => _ChartTabState();
+  ConsumerState<_ChartTab> createState() => _ChartTabState();
 }
 
-class _ChartTabState extends State<_ChartTab> {
+class _ChartTabState extends ConsumerState<_ChartTab> {
   String _range = '1M';
   late final WebViewController _controller;
   bool _loading = true;
@@ -265,6 +268,11 @@ class _ChartTabState extends State<_ChartTab> {
     });
     try {
       final range = _rangeMap[_range] ?? '1mo';
+      // Resolve TV symbol for watermark label when TradingView provider is active
+      final provider = ref.read(chartProviderProvider);
+      final tvLabel = provider == ChartDataProvider.tradingView
+          ? TvSymbol.resolveForTv(widget.symbol)
+          : null;
       final data = await ApiClient.instance.get(
         ApiEndpoints.chart(widget.symbol),
         params: {'range': range},
@@ -272,7 +280,8 @@ class _ChartTabState extends State<_ChartTab> {
       final candles = data['candles'] as List? ?? [];
       if (!mounted) return;
       _timeoutTimer?.cancel();
-      await _controller.loadHtmlString(_buildHtml(jsonEncode(candles), _isDark ?? false));
+      await _controller.loadHtmlString(
+          _buildHtml(jsonEncode(candles), _isDark ?? false, tvLabel: tvLabel));
     } catch (e) {
       _timeoutTimer?.cancel();
       if (mounted) setState(() => _error = 'Failed to load chart data');
@@ -281,7 +290,7 @@ class _ChartTabState extends State<_ChartTab> {
     }
   }
 
-  String _buildHtml(String candleJson, bool isDark) {
+  String _buildHtml(String candleJson, bool isDark, {String? tvLabel}) {
     final bg          = isDark ? '#0a0a0a' : '#ffffff';
     final textColor   = isDark ? '#adb5bd'  : '#374151';
     final gridColor   = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
@@ -291,6 +300,11 @@ class _ChartTabState extends State<_ChartTab> {
     final upVol       = isDark ? 'rgba(0,212,170,0.3)'  : 'rgba(0,196,154,0.3)';
     final downVol     = isDark ? 'rgba(255,77,106,0.3)' : 'rgba(232,56,79,0.3)';
     final vwapColor   = isDark ? '#FFB84D' : '#E6952A';
+    final wmColor     = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+    // Watermark: shows TV symbol identifier (e.g. FX:EURUSD) when TV provider is active
+    final watermarkJs = tvLabel != null
+        ? "chart.applyOptions({ watermark: { color: '$wmColor', visible: true, text: '$tvLabel', fontSize: 18, horzAlign: 'center', vertAlign: 'center' } });"
+        : '';
 
     return '''
 <!DOCTYPE html>
@@ -349,6 +363,7 @@ if (vwapData.length > 0) {
   vwapSeries.setData(vwapData);
 }
 
+$watermarkJs
 chart.timeScale().fitContent();
 
 window.addEventListener('resize', () => chart.resize(window.innerWidth, window.innerHeight));
@@ -361,9 +376,10 @@ window.addEventListener('resize', () => chart.resize(window.innerWidth, window.i
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+
     return Column(
       children: [
-        // Range selector row with fullscreen button
+        // Toolbar row: range chips + fullscreen button (always visible)
         Row(
           children: [
             Expanded(
@@ -502,52 +518,110 @@ class _StrategyPillRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final all = TradingStrategy.values;
+
+    Widget chip(TradingStrategy s) {
+      const silver = Color(0xFFC0C0C0);
+      final isActive = s == selected;
+      final isS9 = s == TradingStrategy.s9;
+      final isAdvanced = int.parse(s.serverParam) >= 4;
+      final isLocked = isAdvanced && !EntitlementService.can('signals_advanced');
+      final chipColor = isS9 ? Color.lerp(c.accent, silver, 0.5)! : c.accent;
+      final chipBg = isS9
+          ? Color.lerp(c.accentDim, silver.withAlpha(30), 0.5)!
+          : c.accentDim;
+
+      return GestureDetector(
+        onTap: () {
+          if (isLocked) {
+            UpgradeSheet.show(context, feature: 'signals_advanced');
+          } else {
+            onSelect(s);
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          decoration: BoxDecoration(
+            color: isActive ? chipBg : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.full),
+            border: Border.all(
+              color: isActive
+                  ? chipColor
+                  : isLocked
+                      ? c.border.withAlpha(120)
+                      : c.border,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (isLocked) ...[
+                Icon(Icons.lock_rounded,
+                    size: 9, color: c.textMuted.withAlpha(160)),
+                const SizedBox(width: 3),
+              ],
+              Text(
+                s.label,
+                style: AppTypography.sm.copyWith(
+                  color: isLocked
+                      ? c.textMuted.withAlpha(160)
+                      : isActive
+                          ? chipColor
+                          : c.textSecondary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Row buildRow(List<TradingStrategy> row) {
+      final items = <Widget>[];
+      for (int i = 0; i < row.length; i++) {
+        items.add(Expanded(child: chip(row[i])));
+        if (i < row.length - 1) items.add(const SizedBox(width: 5));
+      }
+      return Row(children: items);
+    }
+
     return Container(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, AppSpacing.s3),
       decoration: BoxDecoration(
         border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.s5, vertical: AppSpacing.s3),
-              child: Row(
-                children: TradingStrategy.values.map((s) {
-                  final isActive = s == selected;
-                  return GestureDetector(
-                    onTap: () => onSelect(s),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: AppSpacing.s2),
-                      padding:
-                          const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isActive ? c.accent : c.surfaceCard,
-                        borderRadius: BorderRadius.circular(AppRadius.full),
-                        border: Border.all(
-                          color: isActive ? c.accent : c.border,
-                        ),
-                      ),
-                      child: Text(
-                        s.label,
-                        style: AppTypography.labelSm.copyWith(
-                          color: isActive ? c.background : c.textSecondary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  );
-                }).toList(),
+          Row(
+            children: [
+              Text('Strategy',
+                  style: AppTypography.sm.copyWith(color: c.textMuted)),
+              const SizedBox(width: AppSpacing.s2),
+              GestureDetector(
+                onTap: () => _showStrategyInfoModal(context),
+                child: Icon(Icons.info_outline_rounded,
+                    size: 14, color: c.textMuted),
               ),
-            ),
+            ],
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: AppSpacing.s4),
-            child: GestureDetector(
-              onTap: () => _showStrategyInfoModal(context),
-              child: Icon(Icons.info_outline_rounded, size: 18, color: c.textMuted),
-            ),
+          const SizedBox(height: AppSpacing.s2),
+          buildRow(all.sublist(0, 4)),
+          const SizedBox(height: 5),
+          buildRow(all.sublist(4, 8)),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Expanded(child: chip(all[8])),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+            ],
           ),
         ],
       ),
@@ -569,7 +643,7 @@ void _showStrategyInfoModal(BuildContext context) {
       initialChildSize: 0.75,
       minChildSize: 0.4,
       maxChildSize: 0.92,
-      builder: (_, scrollController) => Column(
+      builder: (ctx, scrollController) => Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(
@@ -599,8 +673,11 @@ void _showStrategyInfoModal(BuildContext context) {
           Expanded(
             child: ListView(
               controller: scrollController,
-              padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.s5, 0, AppSpacing.s5, AppSpacing.s8),
+              padding: EdgeInsets.fromLTRB(
+                  AppSpacing.s5,
+                  0,
+                  AppSpacing.s5,
+                  AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
               children: [
                 _AssetStrategyInfoRow(
                   label: 'S1', title: 'Technical Analysis',
@@ -891,30 +968,62 @@ class _SignalContentState extends ConsumerState<_SignalContent> {
         if (!_noteRequested)
           Padding(
             padding: const EdgeInsets.only(top: AppSpacing.s2),
-            child: GestureDetector(
-              onTap: () => setState(() => _noteRequested = true),
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
-                decoration: BoxDecoration(
-                  color: c.accentDim,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  border: Border.all(color: c.accent.withAlpha(60)),
+            child: Builder(builder: (ctx) {
+              final unlocked =
+                  EntitlementService.can('analyst_notes_unlimited');
+              return GestureDetector(
+                onTap: () {
+                  if (!unlocked) {
+                    UpgradeSheet.show(ctx,
+                        feature: 'analyst_notes_unlimited');
+                  } else {
+                    setState(() => _noteRequested = true);
+                  }
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                  decoration: BoxDecoration(
+                    color: c.accentDim,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(color: c.accent.withAlpha(60)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        unlocked
+                            ? Icons.auto_awesome_rounded
+                            : Icons.lock_rounded,
+                        size: 15,
+                        color: c.accent,
+                      ),
+                      const SizedBox(width: AppSpacing.s2),
+                      Text('Generate Analyst Note',
+                          style: AppTypography.labelMd
+                              .copyWith(color: c.accent)),
+                      if (!unlocked) ...[
+                        const SizedBox(width: AppSpacing.s2),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: c.accent.withAlpha(40),
+                            borderRadius:
+                                BorderRadius.circular(AppRadius.full),
+                          ),
+                          child: Text('Pro',
+                              style: AppTypography.xs.copyWith(
+                                  color: c.accent,
+                                  fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.auto_awesome_rounded,
-                        size: 15, color: c.accent),
-                    const SizedBox(width: AppSpacing.s2),
-                    Text('Generate Analyst Note',
-                        style: AppTypography.labelMd
-                            .copyWith(color: c.accent)),
-                  ],
-                ),
-              ),
-            ),
+              );
+            }),
           )
         else
           Builder(builder: (context) {
@@ -958,12 +1067,43 @@ class _SignalContentState extends ConsumerState<_SignalContent> {
                   ),
                 ),
               ),
-              data: (note) => note != null && note.isNotEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.only(top: AppSpacing.s2),
-                      child: _AnalystNoteCard(note: note),
-                    )
-                  : const SizedBox.shrink(),
+              data: (note) {
+                if (note == TradingRepository.planLimitSentinel) {
+                  return Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.s2),
+                    child: GestureDetector(
+                      onTap: () => UpgradeSheet.show(context,
+                          feature: 'analyst_notes_unlimited'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                        decoration: BoxDecoration(
+                          color: c.accentDim,
+                          borderRadius: BorderRadius.circular(AppRadius.md),
+                          border: Border.all(color: c.accent.withAlpha(60)),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.lock_rounded,
+                                size: 14, color: c.accent),
+                            const SizedBox(width: AppSpacing.s2),
+                            Text('Upgrade to Pro for unlimited AI notes',
+                                style: AppTypography.labelMd
+                                    .copyWith(color: c.accent)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }
+                return note != null && note.isNotEmpty
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: AppSpacing.s2),
+                        child: _AnalystNoteCard(note: note),
+                      )
+                    : const SizedBox.shrink();
+              },
             );
           }),
         const SizedBox(height: AppSpacing.s5),
@@ -1639,10 +1779,13 @@ void _showBacktestMethodInfo(BuildContext context) {
       initialChildSize: 0.7,
       minChildSize: 0.4,
       maxChildSize: 0.92,
-      builder: (_, scrollCtrl) => ListView(
+      builder: (ctx, scrollCtrl) => ListView(
         controller: scrollCtrl,
-        padding: const EdgeInsets.fromLTRB(
-            AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s8),
+        padding: EdgeInsets.fromLTRB(
+            AppSpacing.s5,
+            AppSpacing.s5,
+            AppSpacing.s5,
+            AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
         children: [
           Center(
             child: Container(
