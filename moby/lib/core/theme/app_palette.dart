@@ -75,7 +75,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     }
   }
 
-  // ── Dark palette (existing values) ────────────────────────────────────────
+  // ── Dark palette ──────────────────────────────────────────────────────────
 
   static const dark = AppPalette(
     background: Color(0xFF000000),
@@ -88,13 +88,15 @@ class AppPalette extends ThemeExtension<AppPalette> {
     textFaint: Color(0x66FFFFFF),
     border: Color(0x1FFFFFFF),
     borderStrong: Color(0x33FFFFFF),
-    accent: Color(0xFF00D4AA),
-    accentDim: Color(0x1F00D4AA),
-    accentDim18: Color(0x2E00D4AA),
+    // Brand: Electric Indigo
+    accent: Color(0xFF6366F1),
+    accentDim: Color(0x1F6366F1),
+    accentDim18: Color(0x2E6366F1),
     danger: Color(0xFFFF4D6A),
     dangerDim: Color(0x1FFF4D6A),
     warning: Color(0xFFFFB84D),
     warningDim: Color(0x1FFFB84D),
+    // Positive (BUY/up) stays teal — universal green-adjacent convention
     positive: Color(0xFF00D4AA),
     positiveDim: Color(0x1F00D4AA),
     headerBg: Color(0xD1000000),
@@ -115,13 +117,15 @@ class AppPalette extends ThemeExtension<AppPalette> {
     textFaint: Color(0x590D1117),
     border: Color(0x1A000000),
     borderStrong: Color(0x2E000000),
-    accent: Color(0xFF00C49A),
-    accentDim: Color(0x1F00C49A),
-    accentDim18: Color(0x2E00C49A),
+    // Brand: Indigo-600 for better contrast on light bg
+    accent: Color(0xFF4F46E5),
+    accentDim: Color(0x1F4F46E5),
+    accentDim18: Color(0x2E4F46E5),
     danger: Color(0xFFE8384F),
     dangerDim: Color(0x1FE8384F),
     warning: Color(0xFFE6952A),
     warningDim: Color(0x1FE6952A),
+    // Positive (BUY/up) stays teal
     positive: Color(0xFF00C49A),
     positiveDim: Color(0x1F00C49A),
     headerBg: Color(0xF2FFFFFF),

@@ -278,7 +278,7 @@ class TenXScanResult {
         symbol: j['symbol'] as String,
         name: j['name'] as String,
         flag: j['flag'] as String? ?? '',
-        category: j['category'] as String? ?? 'Assets',
+        category: j['category'] is String ? j['category'] as String : (j['category']?.toString() ?? 'Stocks'),
         price: (j['price'] as num).toDouble(),
         changePercent: (j['changePercent'] as num).toDouble(),
         volumeRatio: (j['volumeRatio'] as num).toDouble(),
@@ -685,3 +685,192 @@ const kCrisisEvents = [
     description: 'OPEC embargo following Yom Kippur War triggered stagflation, ended Bretton Woods, and permanently changed energy policy',
   ),
 ];
+
+// ── Quiver Strategy Screener ───────────────────────────────────────────────────
+
+class QuiverScanItem {
+  const QuiverScanItem({
+    required this.symbol,
+    required this.name,
+    required this.price,
+    required this.changePercent,
+    required this.weight,
+    required this.rank,
+    required this.badge,
+    required this.badgeLabel,
+  });
+
+  final String symbol;
+  final String name;
+  final double? price;
+  final double? changePercent;
+  final double weight;
+  final int rank;
+  final String badge;      // "$3.4M" | "+42%" | "8 buys"
+  final String badgeLabel; // "disclosed" | "QoQ spend" | "insiders"
+
+  factory QuiverScanItem.fromJson(Map<String, dynamic> j) => QuiverScanItem(
+        symbol:        j['symbol'] as String,
+        name:          j['name'] as String,
+        price:         (j['price'] as num?)?.toDouble(),
+        changePercent: (j['changePercent'] as num?)?.toDouble(),
+        weight:        (j['weight'] as num).toDouble(),
+        rank:          j['rank'] as int,
+        badge:         j['badge'] as String,
+        badgeLabel:    j['badgeLabel'] as String,
+      );
+}
+
+class QuiverScanResponse {
+  const QuiverScanResponse({
+    required this.items,
+    required this.label,
+    required this.rebalance,
+    required this.lastUpdated,
+  });
+
+  final List<QuiverScanItem> items;
+  final String label;
+  final String rebalance;
+  final String lastUpdated;
+
+  factory QuiverScanResponse.fromJson(Map<String, dynamic> j) {
+    final meta = j['meta'] as Map<String, dynamic>? ?? {};
+    return QuiverScanResponse(
+      items: (j['items'] as List)
+          .map((e) => QuiverScanItem.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      label:       meta['label'] as String? ?? '',
+      rebalance:   meta['rebalance'] as String? ?? '',
+      lastUpdated: j['lastUpdated'] as String? ?? '',
+    );
+  }
+}
+
+// ── Congress Trade (raw individual STOCK Act disclosure) ──────────────────────
+
+class CongressTrade {
+  const CongressTrade({
+    required this.memberName,
+    required this.chamber,
+    required this.ticker,
+    required this.assetDescription,
+    required this.type,
+    required this.transactionDate,
+    required this.filingDate,
+    required this.amount,
+    this.name,
+    this.amountMidpoint,
+    this.party,
+    this.state,
+  });
+
+  final String memberName;
+  final String chamber;         // "Senate" | "House"
+  final String ticker;
+  final String? name;           // Company name e.g. "NVIDIA Corp"
+  final String assetDescription;
+  final String type;            // "buy" | "sell"
+  final String transactionDate; // YYYY-MM-DD
+  final String filingDate;      // YYYY-MM-DD
+  final String amount;          // STOCK Act range e.g. "$1,001 - $15,000"
+  final double? amountMidpoint; // Numeric midpoint for sorting
+  final String? party;          // "D" | "R" | "I"
+  final String? state;          // "CA", "TX", etc.
+
+  String get displayName => name?.isNotEmpty == true ? name! : ticker;
+
+  factory CongressTrade.fromJson(Map<String, dynamic> j) => CongressTrade(
+        memberName:       j['memberName'] as String? ?? '',
+        chamber:          j['chamber'] as String? ?? '',
+        ticker:           j['ticker'] as String? ?? '',
+        name:             j['name'] as String?,
+        assetDescription: j['assetDescription'] as String? ?? '',
+        type:             j['type'] as String? ?? 'buy',
+        transactionDate:  j['transactionDate'] as String? ?? '',
+        filingDate:       j['filingDate'] as String? ?? '',
+        amount:           j['amount'] as String? ?? '',
+        amountMidpoint:   (j['amountMidpoint'] as num?)?.toDouble(),
+        party:            j['party'] as String?,
+        state:            j['state'] as String?,
+      );
+}
+
+class CongressTradesResponse {
+  const CongressTradesResponse({
+    required this.trades,
+    required this.total,
+    required this.lastUpdated,
+  });
+
+  final List<CongressTrade> trades;
+  final int total;
+  final String lastUpdated;
+
+  factory CongressTradesResponse.fromJson(Map<String, dynamic> j) =>
+      CongressTradesResponse(
+        trades: (j['trades'] as List? ?? [])
+            .map((e) => CongressTrade.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        total:       (j['total'] as num?)?.toInt() ?? 0,
+        lastUpdated: j['lastUpdated'] as String? ?? '',
+      );
+}
+
+// ── OGE Form 278-T Transaction (executive branch — President) ─────────────────
+
+class OgeTransaction {
+  const OgeTransaction({
+    required this.description,
+    required this.type,
+    required this.date,
+    required this.amount,
+    required this.amountMidpoint,
+    required this.filingDate,
+    required this.source,
+  });
+
+  final String description;
+  final String type;           // "purchase" | "sale" | "exchange"
+  final String date;           // YYYY-MM-DD (best-effort from PDF)
+  final String amount;         // "$100,001 - $250,000"
+  final double amountMidpoint;
+  final String filingDate;     // ISO date from OGE API
+  final String source;         // PDF filename
+
+  bool get isPurchase => type == 'purchase' || type == 'exchange';
+
+  factory OgeTransaction.fromJson(Map<String, dynamic> j) => OgeTransaction(
+        description:     j['description'] as String? ?? '',
+        type:            j['type'] as String? ?? 'purchase',
+        date:            j['date'] as String? ?? '',
+        amount:          j['amount'] as String? ?? '',
+        amountMidpoint:  (j['amountMidpoint'] as num?)?.toDouble() ?? 0,
+        filingDate:      j['filingDate'] as String? ?? '',
+        source:          j['source'] as String? ?? '',
+      );
+}
+
+class OgeTransactionsResponse {
+  const OgeTransactionsResponse({
+    required this.transactions,
+    required this.total,
+    required this.lastUpdated,
+    this.loading = false,
+  });
+
+  final List<OgeTransaction> transactions;
+  final int total;
+  final String lastUpdated;
+  final bool loading; // true when server pipeline is still running
+
+  factory OgeTransactionsResponse.fromJson(Map<String, dynamic> j) =>
+      OgeTransactionsResponse(
+        transactions: (j['transactions'] as List? ?? [])
+            .map((e) => OgeTransaction.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        total:       (j['total'] as num?)?.toInt() ?? 0,
+        lastUpdated: j['lastUpdated'] as String? ?? '',
+        loading:     j['loading'] as bool? ?? false,
+      );
+}

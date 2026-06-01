@@ -3,18 +3,26 @@ import '../../features/onboarding/onboarding_screen.dart';
 import '../../features/splash/splash_screen.dart';
 import '../../features/markets/markets_screen.dart';
 import '../../features/trading/trading_screen.dart';
-import '../../features/exposure/exposure_screen.dart';
+import '../../features/investing/investing_screen.dart';
 import '../../features/volatility/volatility_screen.dart';
-import '../../features/usa_debt/usa_debt_screen.dart';
 import '../../features/country/country_detail_screen.dart';
 import '../../features/country/country_stocks_screen.dart';
 import '../../features/asset/asset_detail_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/trading/tenx_backtest_screen.dart';
+import '../../features/investing/multibaggers_screen.dart';
 import '../../app.dart';
 
 final appRouter = GoRouter(
   initialLocation: '/splash',
+  redirect: (context, state) {
+    // Redirect old standalone routes to their new homes
+    final loc = state.matchedLocation;
+    if (loc == '/volatility') return '/macro';
+    if (loc == '/exposure') return '/investing';
+    if (loc == '/debt') return '/macro';
+    return null;
+  },
   routes: [
     GoRoute(
       path: '/splash',
@@ -36,16 +44,12 @@ final appRouter = GoRouter(
           builder: (_, __) => const TradingScreen(),
         ),
         GoRoute(
-          path: '/exposure',
-          builder: (_, __) => const ExposureScreen(),
+          path: '/investing',
+          builder: (_, __) => const InvestingScreen(),
         ),
         GoRoute(
-          path: '/volatility',
-          builder: (_, __) => const VolatilityScreen(),
-        ),
-        GoRoute(
-          path: '/debt',
-          builder: (_, __) => const UsaDebtScreen(),
+          path: '/macro',
+          builder: (_, __) => const MacroScreen(),
         ),
         GoRoute(
           path: '/profile',
@@ -76,6 +80,12 @@ final appRouter = GoRouter(
           builder: (_, state) => TenXBacktestScreen(
             version: state.uri.queryParameters['version'] ?? 'v1',
             type: state.uri.queryParameters['type'] ?? 'assets',
+          ),
+        ),
+        GoRoute(
+          path: '/trading/multibaggers',
+          builder: (_, state) => MultibaggersScreen(
+            country: state.uri.queryParameters['country'] ?? 'india',
           ),
         ),
       ],

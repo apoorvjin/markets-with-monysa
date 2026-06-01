@@ -8,9 +8,11 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.0",
+    "@upstash/redis": "^1.38.0",
     "express": "^5.0.1",
     "express-rate-limit": "^8.5.2",
     "openai": "^6.32.0",
+    "pdf-parse": "^2.4.5",
     "tsx": "^4.20.6",
     "ws": "^8.18.0",
     "zod": "^3.25.76",

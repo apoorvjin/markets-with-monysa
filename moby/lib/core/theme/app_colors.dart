@@ -18,10 +18,10 @@ abstract final class AppColors {
   static const border = Color(0x1FFFFFFF);     // rgba(255,255,255,0.12)
   static const borderStrong = Color(0x33FFFFFF);
 
-  // Accent (teal)
-  static const accent = Color(0xFF00D4AA);
-  static const accentDim = Color(0x1F00D4AA);  // rgba(0,212,170,0.12)
-  static const accentDim18 = Color(0x2E00D4AA); // rgba(0,212,170,0.18)
+  // Accent (Electric Indigo — brand color)
+  static const accent = Color(0xFF6366F1);
+  static const accentDim = Color(0x1F6366F1);  // rgba(99,102,241,0.12)
+  static const accentDim18 = Color(0x2E6366F1); // rgba(99,102,241,0.18)
 
   // Danger (red)
   static const danger = Color(0xFFFF4D6A);

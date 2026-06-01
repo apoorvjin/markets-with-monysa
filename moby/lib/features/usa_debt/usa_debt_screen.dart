@@ -298,53 +298,48 @@ List<_Stat> _applyLiveData(Map<String, dynamic> live) {
   }).toList();
 }
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+// ── Embeddable body (used in Macro › Debt tab) ────────────────────────────────
 
-class UsaDebtScreen extends ConsumerStatefulWidget {
-  const UsaDebtScreen({super.key});
+class UsaDebtBody extends ConsumerStatefulWidget {
+  const UsaDebtBody({super.key});
 
   @override
-  ConsumerState<UsaDebtScreen> createState() => _UsaDebtScreenState();
+  ConsumerState<UsaDebtBody> createState() => _UsaDebtBodyState();
 }
 
-class _UsaDebtScreenState extends ConsumerState<UsaDebtScreen> {
+class _UsaDebtBodyState extends ConsumerState<UsaDebtBody> {
   String _activeCategory = 'big_picture';
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final async = ref.watch(_debtProvider);
-    final topPad = MediaQuery.of(context).padding.top;
 
-    return Scaffold(
-      backgroundColor: c.background,
-      body: Stack(
-        children: [
-          async.when(
-        loading: () =>
-            Center(child: CircularProgressIndicator(color: c.accent)),
-        error: (_, __) => ErrorView(
-          message: 'Failed to load US debt data',
-          onRetry: () => ref.invalidate(_debtProvider),
-        ),
-        data: (live) {
-          final stats = _applyLiveData(live);
-          final heroValue =
-              live['totalDebtFormatted'] as String? ?? r'$36.2T';
-          final dailyIncrease =
-              live['dailyIncrease'] as String? ?? r'$4.8 Billion';
-          final recordDate = live['recordDate'] as String? ?? '';
-          final activeStats =
-              stats.where((s) => s.category == _activeCategory).toList();
-          final cat = _kCats[_activeCategory]!;
+    return async.when(
+      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+      error: (_, __) => ErrorView(
+        message: 'Failed to load US debt data',
+        onRetry: () => ref.invalidate(_debtProvider),
+      ),
+      data: (live) {
+        final stats = _applyLiveData(live);
+        final heroValue =
+            live['totalDebtFormatted'] as String? ?? r'$36.2T';
+        final dailyIncrease =
+            live['dailyIncrease'] as String? ?? r'$4.8 Billion';
+        final recordDate = live['recordDate'] as String? ?? '';
+        final activeStats =
+            stats.where((s) => s.category == _activeCategory).toList();
+        final cat = _kCats[_activeCategory]!;
 
-          return RefreshIndicator(
-            color: c.accent,
-            backgroundColor: c.surface,
-            onRefresh: () => ref.refresh(_debtProvider.future),
-            child: MaxWidthLayout(
-              child: ListView(
-              padding: EdgeInsets.fromLTRB(14, topPad + 8, 14, 40),
+        return RefreshIndicator(
+          color: c.accent,
+          backgroundColor: c.surface,
+          onRefresh: () => ref.refresh(_debtProvider.future),
+          child: MaxWidthLayout(
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(
+                  14, 8, 14, 40 + MediaQuery.of(context).padding.bottom),
               children: [
                 _HeroSection(
                   heroValue: heroValue,
@@ -354,7 +349,8 @@ class _UsaDebtScreenState extends ConsumerState<UsaDebtScreen> {
                 const SizedBox(height: 16),
                 _TabRow(
                   active: _activeCategory,
-                  onSelect: (cat2) => setState(() => _activeCategory = cat2),
+                  onSelect: (cat2) =>
+                      setState(() => _activeCategory = cat2),
                 ),
                 const SizedBox(height: 14),
                 _CatHeader(cat: cat),
@@ -369,12 +365,24 @@ class _UsaDebtScreenState extends ConsumerState<UsaDebtScreen> {
                 _Footer(recordDate: recordDate),
               ],
             ),
-            ),
-          );
-        },
-      ),
-        ],
-      ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Screen ────────────────────────────────────────────────────────────────────
+
+class UsaDebtScreen extends ConsumerWidget {
+  const UsaDebtScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    return Scaffold(
+      backgroundColor: c.background,
+      body: const UsaDebtBody(),
     );
   }
 }

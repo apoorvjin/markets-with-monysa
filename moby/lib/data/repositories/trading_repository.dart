@@ -110,6 +110,102 @@ class TradingRepository {
         .toList();
   }
 
+  Future<List<TenXScanResult>> fetchTenXIndiaStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXIndiaStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2IndiaStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2IndiaStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXUKStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXUKStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2UKStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2UKStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXJapanStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXJapanStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2JapanStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2JapanStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXHKStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXHKStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2HKStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2HKStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXChinaStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXChinaStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2ChinaStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2ChinaStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXEuronextStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXEuronextStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<List<TenXScanResult>> fetchTenXV2EuronextStocks() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tenXV2EuronextStocks)
+        as Map<String, dynamic>;
+    return (data['assets'] as List)
+        .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<TenXScanResult>> fetchTenXV2Assets() async {
     final data = await ApiClient.instance.get(ApiEndpoints.tenXV2Assets)
         as Map<String, dynamic>;
@@ -144,6 +240,31 @@ class TradingRepository {
       ApiEndpoints.bestSetups(version: version, type: type),
     ) as Map<String, dynamic>;
     return BestSetupsResponse.fromJson(data);
+  }
+
+  Future<QuiverScanResponse> fetchQuiverCongress() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.quiverCongress) as Map<String, dynamic>;
+    return QuiverScanResponse.fromJson(data);
+  }
+
+  Future<QuiverScanResponse> fetchQuiverLobbying() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.quiverLobbying) as Map<String, dynamic>;
+    return QuiverScanResponse.fromJson(data);
+  }
+
+  Future<QuiverScanResponse> fetchQuiverInsider() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.quiverInsider) as Map<String, dynamic>;
+    return QuiverScanResponse.fromJson(data);
+  }
+
+  Future<CongressTradesResponse> fetchCongressTrades() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.quiverCongressTrades) as Map<String, dynamic>;
+    return CongressTradesResponse.fromJson(data);
+  }
+
+  Future<OgeTransactionsResponse> fetchTrumpTransactions() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.ogeTrumpTransactions) as Map<String, dynamic>;
+    return OgeTransactionsResponse.fromJson(data);
   }
 
   Future<List<StockSearchResult>> searchStocks(String query) async {

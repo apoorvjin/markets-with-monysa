@@ -204,6 +204,7 @@ export function getHealthStatus() {
     openaiConfigured: Boolean(process.env.AI_INTEGRATIONS_OPENAI_API_KEY),
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
     alphaVantageConfigured: Boolean(process.env.ALPHA_VANTAGE_API_KEY),
+    twelveDataConfigured: Boolean(process.env.TWELVE_DATA_API_KEY),
   };
 }
 
@@ -214,10 +215,186 @@ const YF_HEADERS = {
   "Accept": "application/json",
 };
 
-async function yfFetch<T>(url: string): Promise<T> {
-  const res = await fetch(url, { headers: YF_HEADERS });
+async function yfFetch<T>(url: string, timeoutMs = 10_000): Promise<T> {
+  const res = await fetch(url, {
+    headers: YF_HEADERS,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   if (!res.ok) throw new Error(`YF fetch failed: ${res.status} ${url}`);
   return res.json() as Promise<T>;
+}
+
+// ─── Yahoo Finance Crumb Management (for quoteSummary) ────────────────────────
+
+const YF_CRUMB_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const YF_CRUMB_TTL = 2 * 60 * 60_000; // 2 hours
+
+let _yfCrumb: string | null = null;
+let _yfCookie: string | null = null;
+let _yfCrumbTs = 0;
+
+// Yahoo Finance uses a 307 → guce.yahoo.com/consent redirect that sets the GUCS session
+// cookie on the intermediate response. Node.js fetch with redirect:"follow" doesn't accumulate
+// cookies across hops (no cookie jar), so we follow redirects manually and collect every
+// Set-Cookie header along the way.
+function yfExtractCookies(headers: Headers): Map<string, string> {
+  const h = headers as any;
+  const arr: string[] = typeof h.getSetCookie === "function"
+    ? h.getSetCookie()
+    : (headers.get("set-cookie") ?? "").split(/,\s*(?=[A-Za-z0-9_-]+=)/).filter(Boolean);
+  const jar = new Map<string, string>();
+  for (const c of arr) {
+    const pair = c.split(";")[0];
+    const eq = pair.indexOf("=");
+    if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+  }
+  return jar;
+}
+
+async function fetchYFCrumb(): Promise<{ crumb: string; cookie: string } | null> {
+  const jar = new Map<string, string>();
+  const cookieHeader = () => [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+
+  const yfGet = (url: string) => fetch(url, {
+    headers: { "User-Agent": YF_CRUMB_UA, "Accept": "text/html", "Cookie": cookieHeader() },
+    signal: AbortSignal.timeout(12_000),
+    redirect: "manual",
+  });
+
+  try {
+    let res = await yfGet("https://finance.yahoo.com/quote/AAPL");
+    for (const [k, v] of yfExtractCookies(res.headers)) jar.set(k, v);
+
+    // Follow the redirect chain (typically 307 → guce.yahoo.com/consent → back), up to 5 hops.
+    for (let hop = 0; hop < 5 && [301, 302, 303, 307, 308].includes(res.status); hop++) {
+      const location = res.headers.get("location");
+      if (!location) break;
+      const next = location.startsWith("http") ? location : `https://finance.yahoo.com${location}`;
+      res = await yfGet(next);
+      for (const [k, v] of yfExtractCookies(res.headers)) jar.set(k, v);
+    }
+
+    if (jar.size === 0) {
+      console.warn("[YFCrumb] No cookies after redirect chain, final status:", res.status);
+      return null;
+    }
+
+    const crumbRes = await fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", {
+      headers: { "User-Agent": YF_CRUMB_UA, "Cookie": cookieHeader() },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!crumbRes.ok) {
+      console.warn("[YFCrumb] Crumb fetch failed:", crumbRes.status, "cookies:", [...jar.keys()].join(","));
+      return null;
+    }
+    const crumb = await crumbRes.text();
+    if (!crumb || crumb.startsWith("{") || crumb.length > 20) {
+      console.warn("[YFCrumb] Unexpected crumb response:", crumb.slice(0, 60));
+      return null;
+    }
+    console.log("[YFCrumb] OK — cookies:", [...jar.keys()].join(","), "crumb len:", crumb.length);
+    return { crumb, cookie: cookieHeader() };
+  } catch (err) {
+    console.warn("[YFCrumb] Exception:", err);
+    return null;
+  }
+}
+
+async function getYFCrumb(): Promise<{ crumb: string; cookie: string } | null> {
+  if (_yfCrumb && _yfCookie && Date.now() - _yfCrumbTs < YF_CRUMB_TTL) {
+    return { crumb: _yfCrumb, cookie: _yfCookie };
+  }
+  const result = await fetchYFCrumb();
+  if (result) {
+    _yfCrumb = result.crumb;
+    _yfCookie = result.cookie;
+    _yfCrumbTs = Date.now();
+  }
+  return result;
+}
+
+interface YFEarningsHistoryItem {
+  epsActual?: number;
+  quarter?: number;
+}
+
+interface YFQuoteSummaryResponse {
+  quoteSummary: {
+    result: Array<{
+      earningsHistory?: { history: YFEarningsHistoryItem[] };
+    }> | null;
+    error: unknown;
+  };
+}
+
+async function fetchYFEarningsHistory(symbol: string): Promise<number[]> {
+  const auth = await getYFCrumb();
+  if (!auth) return [];
+  try {
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=earningsHistory&formatted=false&crumb=${encodeURIComponent(auth.crumb)}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": YF_CRUMB_UA, "Cookie": auth.cookie, "Accept": "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      if (res.status === 401) { _yfCrumb = null; _yfCookie = null; }
+      return [];
+    }
+    const data = await res.json() as YFQuoteSummaryResponse;
+    const history = data?.quoteSummary?.result?.[0]?.earningsHistory?.history ?? [];
+    return [...history]
+      .filter(h => h.epsActual != null)
+      .sort((a, b) => (b.quarter ?? 0) - (a.quarter ?? 0))
+      .slice(0, 4)
+      .map(h => h.epsActual!);
+  } catch {
+    return [];
+  }
+}
+
+// ─── Twelve Data EPS (international stocks) ──────────────────────────────────
+
+// Yahoo Finance suffix → Twelve Data exchange code
+const YF_TO_TWLV: Record<string, string> = {
+  NS: "NSE",   BO: "BSE",   L:  "LSE",   HK: "HKEX",
+  SS: "SSE",   SZ: "SZSE",  PA: "XPAR",  AS: "XAMS",
+  DE: "XETR",  MI: "MIL",   BR: "XBRU",  LS: "ENXTLS",
+  T:  "TSE",   KS: "KRX",   AX: "ASX",   TO: "TSX",
+  SW: "SIX",   MC: "BME",
+};
+
+interface TwelveDataEarningsItem {
+  date: string;
+  eps_actual: number | null;
+}
+
+async function fetchTwelveDataEarnings(symbol: string): Promise<number[]> {
+  if (!TWELVE_DATA_KEY) return [];
+  const dot = symbol.lastIndexOf(".");
+  if (dot < 0) return []; // US stocks handled by Finnhub
+  const base = symbol.slice(0, dot);
+  const exchange = YF_TO_TWLV[symbol.slice(dot + 1).toUpperCase()];
+  if (!exchange) return [];
+
+  try {
+    const url = `https://api.twelvedata.com/earnings?symbol=${encodeURIComponent(base)}&exchange=${encodeURIComponent(exchange)}&outputsize=8&apikey=${TWELVE_DATA_KEY}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "markets-api/1.0", "Accept": "application/json" },
+      signal: AbortSignal.timeout(10_000),
+    });
+    // 429 = rate-limited: don't cache so the next scan run retries
+    if (!res.ok) return [];
+    const data = await res.json() as { earnings?: TwelveDataEarningsItem[]; status?: string; code?: number };
+    if (data.status === "error" || data.code === 429) return [];
+    const earnings = data.earnings ?? [];
+    return earnings
+      .filter(e => e.eps_actual != null)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 4)
+      .map(e => e.eps_actual!);
+  } catch {
+    return [];
+  }
 }
 
 async function fetchCurrentPrice(symbol: string): Promise<PriceEntry | null> {
@@ -262,6 +439,7 @@ setInterval(() => pollAllPrices().catch(() => {}), 10_000);
 
 const FINNHUB_KEY = process.env.FINNHUB_API_KEY;
 const AV_KEY = process.env.ALPHA_VANTAGE_API_KEY ?? null;
+const TWELVE_DATA_KEY = process.env.TWELVE_DATA_API_KEY ?? null;
 
 // Free tier supports ~5 concurrent subscriptions; limit to highest-liquidity crypto.
 const FINNHUB_SYMBOLS = ["BTC-USD", "ETH-USD", "BNB-USD", "SOL-USD", "XRP-USD"];
@@ -2397,6 +2575,24 @@ setInterval(() => {
   if (_tenXV2Cache && now - _tenXV2Cache.ts > TENX_TTL) _tenXV2Cache = null;
   if (_stockV2ScanCache && now - _stockV2ScanCache.ts > STOCK_SCAN_TTL) _stockV2ScanCache = null;
   if (_screenerCache && now - _screenerCache.ts > SCREENER_TTL) _screenerCache = null;
+  if (_indianScreenerCache && now - _indianScreenerCache.ts > SCREENER_TTL) _indianScreenerCache = null;
+  if (_indianScanCache && now - _indianScanCache.ts > STOCK_SCAN_TTL) _indianScanCache = null;
+  if (_indianV2ScanCache && now - _indianV2ScanCache.ts > STOCK_SCAN_TTL) _indianV2ScanCache = null;
+  if (_ukScreenerCache && now - _ukScreenerCache.ts > SCREENER_TTL) _ukScreenerCache = null;
+  if (_ukScanCache && now - _ukScanCache.ts > STOCK_SCAN_TTL) _ukScanCache = null;
+  if (_ukV2ScanCache && now - _ukV2ScanCache.ts > STOCK_SCAN_TTL) _ukV2ScanCache = null;
+  if (_jpScreenerCache && now - _jpScreenerCache.ts > SCREENER_TTL) _jpScreenerCache = null;
+  if (_jpScanCache && now - _jpScanCache.ts > STOCK_SCAN_TTL) _jpScanCache = null;
+  if (_jpV2ScanCache && now - _jpV2ScanCache.ts > STOCK_SCAN_TTL) _jpV2ScanCache = null;
+  if (_hkScreenerCache && now - _hkScreenerCache.ts > SCREENER_TTL) _hkScreenerCache = null;
+  if (_hkScanCache && now - _hkScanCache.ts > STOCK_SCAN_TTL) _hkScanCache = null;
+  if (_hkV2ScanCache && now - _hkV2ScanCache.ts > STOCK_SCAN_TTL) _hkV2ScanCache = null;
+  if (_cnScreenerCache && now - _cnScreenerCache.ts > SCREENER_TTL) _cnScreenerCache = null;
+  if (_cnScanCache && now - _cnScanCache.ts > STOCK_SCAN_TTL) _cnScanCache = null;
+  if (_cnV2ScanCache && now - _cnV2ScanCache.ts > STOCK_SCAN_TTL) _cnV2ScanCache = null;
+  if (_euronextScreenerCache && now - _euronextScreenerCache.ts > SCREENER_TTL) _euronextScreenerCache = null;
+  if (_euronextScanCache && now - _euronextScanCache.ts > STOCK_SCAN_TTL) _euronextScanCache = null;
+  if (_euronextV2ScanCache && now - _euronextV2ScanCache.ts > STOCK_SCAN_TTL) _euronextV2ScanCache = null;
 }, 10 * 60_000);
 
 async function _callClaude(symbol: string, strategy: string, direction: string, confidence: number): Promise<string> {
@@ -2575,6 +2771,30 @@ let _tenXV2Cache: { data: TenXScanResponse; ts: number } | null = null;
 let _stockV2ScanCache: { data: TenXScanResponse; ts: number } | null = null;
 
 let _screenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _indianScreenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _indianScanCache: { data: TenXScanResponse; ts: number } | null = null;
+let _indianV2ScanCache: { data: TenXScanResponse; ts: number } | null = null;
+
+let _ukScreenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _ukScanCache:     { data: TenXScanResponse; ts: number } | null = null;
+let _ukV2ScanCache:   { data: TenXScanResponse; ts: number } | null = null;
+
+let _jpScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _jpScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _jpV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
+
+let _hkScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _hkScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _hkV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
+
+let _cnScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _cnScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _cnV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
+
+let _euronextScreenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _euronextScanCache:     { data: TenXScanResponse; ts: number } | null = null;
+let _euronextV2ScanCache:   { data: TenXScanResponse; ts: number } | null = null;
+
 const SCREENER_TTL = 60 * 60_000; // 1 hour — screener lists change throughout the trading day
 
 // Shared EPS cache — keyed by symbol, shared across ALL scanner versions (v1 assets, v1 stocks,
@@ -2647,35 +2867,49 @@ async function computeRecordQuarter(symbol: string, category: string): Promise<{
   if (nonStockCategories.includes(category)) {
     return { recordQuarter: false, epsHistory: [], epsApplicable: false };
   }
-  if (!FINNHUB_KEY) {
-    return { recordQuarter: false, epsHistory: [], epsApplicable: false };
-  }
 
-  // Shared across ALL scanner pipelines (v1 assets, v1 stocks, v2 assets, v2 stocks).
-  // If any version already fetched this symbol within EPS_TTL, reuse the result directly
-  // — no second Finnhub call, no version-split where one has data and the other doesn't.
+  // Shared across ALL scanner pipelines — one fetch serves v1/v2 assets/stocks.
   const cached = epsCache.get(symbol);
   if (cached && Date.now() - cached.ts < EPS_TTL) return cached.data;
 
-  try {
-    const data = await yfFetch<FinnhubEarningsItem[]>(
-      `https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_KEY}`
-    );
-    if (!Array.isArray(data) || data.length === 0) {
-      // Don't cache empty results — could be a rate-limit or transient failure.
-      // The next scan run will retry Finnhub automatically.
-      return { recordQuarter: false, epsHistory: [], epsApplicable: false };
-    }
-    const sorted = [...data].sort((a, b) => b.period.localeCompare(a.period)).slice(0, 4);
-    const eps = sorted.map(q => q.actual ?? 0);
-    const recordQuarter = eps.length >= 2 && eps[0] > 0 && eps.slice(1).every(v => eps[0] > v);
-    const result = { recordQuarter, epsHistory: eps, epsApplicable: true };
-    // Only cache successful fetches so stale "no data" entries never block retries
-    epsCache.set(symbol, { data: result, ts: Date.now() });
-    return result;
-  } catch {
-    return { recordQuarter: false, epsHistory: [], epsApplicable: false };
+  // International symbols have a dot suffix (.NS, .L, .HK, .SS, .DE …) → Yahoo.
+  // US symbols (no dot) → Finnhub first, Yahoo as fallback.
+  const isInternational = symbol.includes(".");
+  let eps: number[] = [];
+
+  if (!isInternational && FINNHUB_KEY) {
+    try {
+      const data = await yfFetch<FinnhubEarningsItem[]>(
+        `https://finnhub.io/api/v1/stock/earnings?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_KEY}`
+      );
+      if (Array.isArray(data) && data.length > 0) {
+        const sorted = [...data].sort((a, b) => b.period.localeCompare(a.period)).slice(0, 4);
+        eps = sorted.map(q => q.actual ?? 0);
+      }
+    } catch { /* fall through to Yahoo */ }
   }
+
+  // International stocks: Twelve Data (primary). US stocks fall back here if Finnhub was empty.
+  if (eps.length === 0) {
+    eps = await fetchTwelveDataEarnings(symbol);
+  }
+
+  // Last-resort: Yahoo quoteSummary crumb (unreliable from cloud IPs, kept as deep fallback).
+  if (eps.length === 0) {
+    eps = await fetchYFEarningsHistory(symbol);
+  }
+
+  if (eps.length === 0) {
+    // Data unavailable (transient failure or unsupported exchange) — retry on next scan run.
+    // epsApplicable stays true: EPS is conceptually valid for stocks; the lock icon is reserved
+    // for non-stock asset classes (Crypto/Indices/Forex/Commodities) where EPS is N/A by nature.
+    return { recordQuarter: false, epsHistory: [], epsApplicable: true };
+  }
+
+  const recordQuarter = eps.length >= 2 && eps[0] > 0 && eps.slice(1).every(v => eps[0] > v);
+  const result = { recordQuarter, epsHistory: eps, epsApplicable: true };
+  epsCache.set(symbol, { data: result, ts: Date.now() });
+  return result;
 }
 
 async function scanAsset(asset: TradingAsset): Promise<TenXScanEntry | null> {
@@ -2735,7 +2969,7 @@ async function runWithConcurrency<TIn, TOut>(
 ): Promise<(TOut | null)[]> {
   const results: (TOut | null)[] = [];
   for (let i = 0; i < items.length; i += concurrency) {
-    const batch = await Promise.allSettled(items.slice(i, i + concurrency).map(fn));
+    const batch = await Promise.allSettled(items.slice(i, i + concurrency).map(item => fn(item)));
     for (const r of batch) {
       results.push(r.status === "fulfilled" ? r.value : null);
     }
@@ -2749,7 +2983,7 @@ async function fetchStockUniverse(): Promise<ScreenerQuote[]> {
   }
   try {
     const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
-    const params = "&formatted=false&lang=en-US&region=US&count=50&start=0";
+    const params = "&formatted=false&lang=en-US&region=US&count=100&start=0";
     const [activeRes, gainersRes] = await Promise.allSettled([
       yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives${params}`),
       yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers${params}`),
@@ -2785,7 +3019,7 @@ async function fetchStockUniverse(): Promise<ScreenerQuote[]> {
   }
 }
 
-async function scanScreenerStock(quote: ScreenerQuote): Promise<TenXScanEntry | null> {
+async function scanScreenerStock(quote: ScreenerQuote, category = "Stocks"): Promise<TenXScanEntry | null> {
   try {
     // Volume data comes directly from the screener — no extra API call needed
     const avgVol = quote.averageDailyVolume10Day ?? quote.averageDailyVolume3Month ?? 0;
@@ -2834,6 +3068,67 @@ async function scanScreenerStock(quote: ScreenerQuote): Promise<TenXScanEntry | 
   } catch {
     return null;
   }
+}
+
+async function fetchIndianStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_indianScreenerCache && Date.now() - _indianScreenerCache.ts < SCREENER_TTL) {
+    return _indianScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=en-IN&region=IN&count=100&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_in${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers_in${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (
+        q.quoteType === "EQUITY" &&
+        q.regularMarketPrice >= 2 &&
+        avgVol >= 100_000
+      ) {
+        stocks.push(q);
+      }
+    }
+
+    _indianScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runIndianStockScanner(): Promise<TenXScanResponse> {
+  if (_indianScanCache && Date.now() - _indianScanCache.ts < STOCK_SCAN_TTL) return _indianScanCache.data;
+  const universe = await fetchIndianStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "India"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
+  };
+  _indianScanCache = { data, ts: Date.now() };
+  return data;
 }
 
 async function runAssetScanner(): Promise<TenXScanResponse> {
@@ -2970,7 +3265,7 @@ async function scanAssetV2(asset: TradingAsset): Promise<TenXScanEntry | null> {
   }
 }
 
-async function scanScreenerStockV2(quote: ScreenerQuote): Promise<TenXScanEntry | null> {
+async function scanScreenerStockV2(quote: ScreenerQuote, category = "Stocks"): Promise<TenXScanEntry | null> {
   try {
     const avgVol = quote.averageDailyVolume10Day ?? quote.averageDailyVolume3Month ?? 0;
     const volumeRatio = avgVol > 0
@@ -3005,7 +3300,7 @@ async function scanScreenerStockV2(quote: ScreenerQuote): Promise<TenXScanEntry 
       symbol: quote.symbol,
       name: quote.shortName ?? quote.longName ?? quote.symbol,
       flag: "",
-      category: "Stocks",
+      category,
       price: quote.regularMarketPrice,
       changePercent: quote.regularMarketChangePercent,
       volumeRatio,
@@ -3023,6 +3318,398 @@ async function scanScreenerStockV2(quote: ScreenerQuote): Promise<TenXScanEntry 
   } catch {
     return null;
   }
+}
+
+async function runIndianStockScannerV2(): Promise<TenXScanResponse> {
+  if (_indianV2ScanCache && Date.now() - _indianV2ScanCache.ts < STOCK_SCAN_TTL) return _indianV2ScanCache.data;
+  const universe = await fetchIndianStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "India"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
+  };
+  _indianV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function fetchUKStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_ukScreenerCache && Date.now() - _ukScreenerCache.ts < SCREENER_TTL) {
+    return _ukScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=en-GB&region=GB&count=100&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_gb${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers_gb${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (
+        q.quoteType === "EQUITY" &&
+        q.regularMarketPrice >= 1 &&
+        avgVol >= 100_000
+      ) {
+        stocks.push(q);
+      }
+    }
+
+    _ukScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runUKStockScanner(): Promise<TenXScanResponse> {
+  if (_ukScanCache && Date.now() - _ukScanCache.ts < STOCK_SCAN_TTL) return _ukScanCache.data;
+  const universe = await fetchUKStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "UK"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
+  };
+  _ukScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runUKStockScannerV2(): Promise<TenXScanResponse> {
+  if (_ukV2ScanCache && Date.now() - _ukV2ScanCache.ts < STOCK_SCAN_TTL) return _ukV2ScanCache.data;
+  const universe = await fetchUKStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "UK"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
+  };
+  _ukV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Japan ────────────────────────────────────────────────────────────────────
+
+async function fetchJapanStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_jpScreenerCache && Date.now() - _jpScreenerCache.ts < SCREENER_TTL) {
+    return _jpScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=ja-JP&region=JP&count=250&start=0";
+    const activeRes = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_jp${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes[0])];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _jpScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runJapanStockScanner(): Promise<TenXScanResponse> {
+  if (_jpScanCache && Date.now() - _jpScanCache.ts < STOCK_SCAN_TTL) return _jpScanCache.data;
+  const universe = await fetchJapanStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Japan"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _jpScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runJapanStockScannerV2(): Promise<TenXScanResponse> {
+  if (_jpV2ScanCache && Date.now() - _jpV2ScanCache.ts < STOCK_SCAN_TTL) return _jpV2ScanCache.data;
+  const universe = await fetchJapanStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Japan"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _jpV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Hong Kong ────────────────────────────────────────────────────────────────
+
+async function fetchHKStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_hkScreenerCache && Date.now() - _hkScreenerCache.ts < SCREENER_TTL) {
+    return _hkScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=zh-HK&region=HK&count=250&start=0";
+    const activeRes = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_hk${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes[0])];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _hkScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runHKStockScanner(): Promise<TenXScanResponse> {
+  if (_hkScanCache && Date.now() - _hkScanCache.ts < STOCK_SCAN_TTL) return _hkScanCache.data;
+  const universe = await fetchHKStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Hong Kong"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _hkScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runHKStockScannerV2(): Promise<TenXScanResponse> {
+  if (_hkV2ScanCache && Date.now() - _hkV2ScanCache.ts < STOCK_SCAN_TTL) return _hkV2ScanCache.data;
+  const universe = await fetchHKStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Hong Kong"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _hkV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── China ────────────────────────────────────────────────────────────────────
+
+async function fetchChinaStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_cnScreenerCache && Date.now() - _cnScreenerCache.ts < SCREENER_TTL) {
+    return _cnScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=zh-CN&region=CN&count=250&start=0";
+    const activeRes = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_cn${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes[0])];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _cnScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runChinaStockScanner(): Promise<TenXScanResponse> {
+  if (_cnScanCache && Date.now() - _cnScanCache.ts < STOCK_SCAN_TTL) return _cnScanCache.data;
+  const universe = await fetchChinaStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "China"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _cnScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runChinaStockScannerV2(): Promise<TenXScanResponse> {
+  if (_cnV2ScanCache && Date.now() - _cnV2ScanCache.ts < STOCK_SCAN_TTL) return _cnV2ScanCache.data;
+  const universe = await fetchChinaStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "China"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _cnV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Euronext (FR + NL + DE + IT + NO) ───────────────────────────────────────
+
+async function fetchEuronextStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_euronextScreenerCache && Date.now() - _euronextScreenerCache.ts < SCREENER_TTL) {
+    return _euronextScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const regions: Array<{ scrId: string; lang: string; region: string }> = [
+      { scrId: "most_actives_fr", lang: "fr-FR", region: "FR" },
+      { scrId: "most_actives_nl", lang: "nl-NL", region: "NL" },
+      { scrId: "most_actives_de", lang: "de-DE", region: "DE" },
+      { scrId: "most_actives_it", lang: "it-IT", region: "IT" },
+      { scrId: "most_actives_no", lang: "no-NO", region: "NO" },
+    ];
+
+    const results = await Promise.allSettled(
+      regions.map(r =>
+        yfFetch<ScreenerResponse>(
+          `${base}?scrIds=${r.scrId}&formatted=false&lang=${r.lang}&region=${r.region}&count=250&start=0`
+        )
+      )
+    );
+
+    const combined: ScreenerQuote[] = [];
+    for (const res of results) {
+      if (res.status === "fulfilled") {
+        combined.push(...(res.value?.finance?.result?.[0]?.quotes ?? []));
+      }
+    }
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _euronextScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runEuronextStockScanner(): Promise<TenXScanResponse> {
+  if (_euronextScanCache && Date.now() - _euronextScanCache.ts < STOCK_SCAN_TTL) return _euronextScanCache.data;
+  const universe = await fetchEuronextStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Euronext"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _euronextScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runEuronextStockScannerV2(): Promise<TenXScanResponse> {
+  if (_euronextV2ScanCache && Date.now() - _euronextV2ScanCache.ts < STOCK_SCAN_TTL) return _euronextV2ScanCache.data;
+  const universe = await fetchEuronextStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Euronext"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _euronextV2ScanCache = { data, ts: Date.now() };
+  return data;
 }
 
 async function runAssetScannerV2(): Promise<TenXScanResponse> {
@@ -3291,20 +3978,34 @@ function buildAggregate(assets: BacktestAssetResult[]): ScannerBacktestResponse[
   return { totalEvents, bySignalCount };
 }
 
-async function runScannerBacktest(version: "v1" | "v2", type: "assets" | "stocks"): Promise<ScannerBacktestResponse> {
+async function runScannerBacktest(version: "v1" | "v2", type: "assets" | "stocks" | "india" | "uk" | "japan" | "hongkong" | "china" | "euronext"): Promise<ScannerBacktestResponse> {
   const cacheKey = `${version}-${type}`;
   const cached = _backtestCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < BACKTEST_SCANNER_TTL) return cached.data;
 
+  const mapQ = (q: ScreenerQuote, category: string) => ({
+    symbol: q.symbol,
+    name: q.shortName ?? q.longName ?? q.symbol,
+    category,
+    flag: "",
+  });
+
   const targets: Array<{ symbol: string; name: string; category: string; flag: string }> =
     type === "assets"
       ? TRADING_ASSETS.map(a => ({ symbol: a.symbol, name: a.name, category: a.category, flag: a.flag }))
-      : (await fetchStockUniverse()).map(q => ({
-          symbol: q.symbol,
-          name: q.shortName ?? q.longName ?? q.symbol,
-          category: "Stocks",
-          flag: "",
-        }));
+      : type === "india"
+        ? (await fetchIndianStockUniverse()).map(q => mapQ(q, "India"))
+        : type === "uk"
+          ? (await fetchUKStockUniverse()).map(q => mapQ(q, "UK"))
+          : type === "japan"
+            ? (await fetchJapanStockUniverse()).map(q => mapQ(q, "Japan"))
+            : type === "hongkong"
+              ? (await fetchHKStockUniverse()).map(q => mapQ(q, "Hong Kong"))
+              : type === "china"
+                ? (await fetchChinaStockUniverse()).map(q => mapQ(q, "China"))
+                : type === "euronext"
+                  ? (await fetchEuronextStockUniverse()).map(q => mapQ(q, "Euronext"))
+                  : (await fetchStockUniverse()).map(q => mapQ(q, "Stocks"));
 
   const raw = await runWithConcurrency<typeof targets[0], BacktestAssetResult>(
     targets,
@@ -3593,6 +4294,18 @@ export function createTradingRouter(): Router {
     }
   });
 
+  // GET /api/trading/scanner/10x/india  — Indian equities via Yahoo Finance IN screener
+  router.get("/scanner/10x/india", async (_req: Request, res: Response) => {
+    try {
+      const result = await runIndianStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X India Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
   // GET /api/trading/scanner/10x-v2/assets  — v2: Pine Script aligned (35% range, 200-bar, trend)
   router.get("/scanner/10x-v2/assets", async (_req: Request, res: Response) => {
     try {
@@ -3617,15 +4330,150 @@ export function createTradingRouter(): Router {
     }
   });
 
+  // GET /api/trading/scanner/10x-v2/india  — v2 Pine Script aligned Indian equities
+  router.get("/scanner/10x-v2/india", async (_req: Request, res: Response) => {
+    try {
+      const result = await runIndianStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 India Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/uk  — UK equities via Yahoo Finance GB screener
+  router.get("/scanner/10x/uk", async (_req: Request, res: Response) => {
+    try {
+      const result = await runUKStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X UK Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/uk  — v2 Pine Script aligned UK equities
+  router.get("/scanner/10x-v2/uk", async (_req: Request, res: Response) => {
+    try {
+      const result = await runUKStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 UK Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/japan
+  router.get("/scanner/10x/japan", async (_req: Request, res: Response) => {
+    try {
+      const result = await runJapanStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Japan Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/japan
+  router.get("/scanner/10x-v2/japan", async (_req: Request, res: Response) => {
+    try {
+      const result = await runJapanStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Japan Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/hongkong
+  router.get("/scanner/10x/hongkong", async (_req: Request, res: Response) => {
+    try {
+      const result = await runHKStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X HK Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/hongkong
+  router.get("/scanner/10x-v2/hongkong", async (_req: Request, res: Response) => {
+    try {
+      const result = await runHKStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 HK Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/china
+  router.get("/scanner/10x/china", async (_req: Request, res: Response) => {
+    try {
+      const result = await runChinaStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X China Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/china
+  router.get("/scanner/10x-v2/china", async (_req: Request, res: Response) => {
+    try {
+      const result = await runChinaStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 China Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/euronext  — Euronext equities (FR+NL+DE+IT+NO)
+  router.get("/scanner/10x/euronext", async (_req: Request, res: Response) => {
+    try {
+      const result = await runEuronextStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Euronext Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v2/euronext
+  router.get("/scanner/10x-v2/euronext", async (_req: Request, res: Response) => {
+    try {
+      const result = await runEuronextStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Euronext Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
   // GET /api/trading/scanner/backtest/:type?version=v1|v2  — historical signal backtest (24h cache)
   router.get("/scanner/backtest/:type", async (req: Request, res: Response) => {
     const type = req.params.type as string;
-    if (type !== "assets" && type !== "stocks") {
-      return res.status(400).json({ error: "type must be 'assets' or 'stocks'" });
+    if (
+      type !== "assets" && type !== "stocks" && type !== "india" && type !== "uk" &&
+      type !== "japan" && type !== "hongkong" && type !== "china" && type !== "euronext"
+    ) {
+      return res.status(400).json({ error: "type must be 'assets', 'stocks', 'india', 'uk', 'japan', 'hongkong', 'china', or 'euronext'" });
     }
     const version = (req.query.version === "v2" ? "v2" : "v1") as "v1" | "v2";
     try {
-      const result = await runScannerBacktest(version, type);
+      const result = await runScannerBacktest(version, type as "assets" | "stocks" | "india" | "uk" | "japan" | "hongkong" | "china" | "euronext");
       res.setHeader("Cache-Control", "public, max-age=86400");
       return res.json(result);
     } catch (err) {

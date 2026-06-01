@@ -50,15 +50,206 @@ const _gdpBillions = <String, double>{
 
 enum _ExposureSort { marketSize, rate, name }
 
+// ── Embeddable body (used in Investing › Exposure tab) ───────────────────────
+
+class ExposureBody extends ConsumerStatefulWidget {
+  const ExposureBody({super.key});
+
+  @override
+  ConsumerState<ExposureBody> createState() => _ExposureBodyState();
+}
+
+class _ExposureBodyState extends ConsumerState<ExposureBody> {
+  String _search = '';
+  _ExposureSort _sortBy = _ExposureSort.marketSize;
+  bool _ascending = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final async = ref.watch(_tariffsProvider);
+
+    return async.when(
+      loading: () =>
+          Center(child: CircularProgressIndicator(color: c.accent)),
+      error: (e, _) =>
+          const ErrorView(message: 'Failed to load tariff data'),
+      data: (countries) {
+        var list = countries.toList();
+        if (_search.isNotEmpty) {
+          final q = _search.toLowerCase();
+          list = list
+              .where((country) =>
+                  country.countryName.toLowerCase().contains(q) ||
+                  country.countryCode.toLowerCase().contains(q))
+              .toList();
+        }
+        list.sort((a, b) {
+          switch (_sortBy) {
+            case _ExposureSort.marketSize:
+              final aGdp = _gdpBillions[a.countryCode] ?? 0.0;
+              final bGdp = _gdpBillions[b.countryCode] ?? 0.0;
+              return _ascending
+                  ? aGdp.compareTo(bGdp)
+                  : bGdp.compareTo(aGdp);
+            case _ExposureSort.rate:
+              return _ascending
+                  ? a.tariffRate.compareTo(b.tariffRate)
+                  : b.tariffRate.compareTo(a.tariffRate);
+            case _ExposureSort.name:
+              return _ascending
+                  ? a.countryName.compareTo(b.countryName)
+                  : b.countryName.compareTo(a.countryName);
+          }
+        });
+
+        final maxRate = countries
+            .map((c) => c.tariffRate)
+            .reduce((a, b) => a > b ? a : b);
+        final avgRate = countries
+                .map((c) => c.tariffRate)
+                .reduce((a, b) => a + b) /
+            countries.length;
+        final minRate = countries
+            .map((c) => c.tariffRate)
+            .reduce((a, b) => a < b ? a : b);
+
+        return MaxWidthLayout(
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
+                decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(color: c.border))),
+                child: Row(
+                  children: [
+                    _StatBadge('Highest',
+                        '${maxRate.toStringAsFixed(0)}%', c.danger, c),
+                    const SizedBox(width: AppSpacing.s5),
+                    _StatBadge('Average',
+                        '${avgRate.toStringAsFixed(1)}%', c.warning, c),
+                    const SizedBox(width: AppSpacing.s5),
+                    _StatBadge('Lowest',
+                        '${minRate.toStringAsFixed(0)}%', c.positive, c),
+                    const Spacer(),
+                    Text('${countries.length} countries',
+                        style: AppTypography.sm
+                            .copyWith(color: c.textMuted)),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(AppSpacing.s4),
+                child: TextField(
+                  onChanged: (v) => setState(() => _search = v),
+                  decoration: InputDecoration(
+                    hintText: 'Search countries...',
+                    prefixIcon: Icon(Icons.search, color: c.textMuted),
+                  ),
+                  style: AppTypography.lg.copyWith(color: c.textPrimary),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+                child: Row(
+                  children: [
+                    Text('RANK',
+                        style: AppTypography.labelXs
+                            .copyWith(color: c.textMuted)),
+                    const SizedBox(width: AppSpacing.s3),
+                    _SortButton(
+                      label: 'COUNTRY',
+                      active: _sortBy == _ExposureSort.name,
+                      ascending: _ascending,
+                      palette: c,
+                      onTap: () => setState(() {
+                        if (_sortBy == _ExposureSort.name) {
+                          _ascending = !_ascending;
+                        } else {
+                          _sortBy = _ExposureSort.name;
+                          _ascending = true;
+                        }
+                      }),
+                    ),
+                    const Spacer(),
+                    _SortButton(
+                      label: 'MKT SIZE',
+                      active: _sortBy == _ExposureSort.marketSize,
+                      ascending: _ascending,
+                      palette: c,
+                      onTap: () => setState(() {
+                        if (_sortBy == _ExposureSort.marketSize) {
+                          _ascending = !_ascending;
+                        } else {
+                          _sortBy = _ExposureSort.marketSize;
+                          _ascending = false;
+                        }
+                      }),
+                    ),
+                    const SizedBox(width: AppSpacing.s4),
+                    _SortButton(
+                      label: 'RATE',
+                      active: _sortBy == _ExposureSort.rate,
+                      ascending: _ascending,
+                      palette: c,
+                      onTap: () => setState(() {
+                        if (_sortBy == _ExposureSort.rate) {
+                          _ascending = !_ascending;
+                        } else {
+                          _sortBy = _ExposureSort.rate;
+                          _ascending = false;
+                        }
+                      }),
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: c.border),
+              Expanded(
+                child: ListView.builder(
+                  padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).padding.bottom),
+                  itemCount: list.length,
+                  itemBuilder: (ctx, i) => _CountryRow(
+                    country: list[i],
+                    rank: countries.indexOf(list[i]) + 1,
+                    gdp: _gdpBillions[list[i].countryCode],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-class ExposureScreen extends ConsumerStatefulWidget {
+class ExposureScreen extends ConsumerWidget {
   const ExposureScreen({super.key});
 
   @override
-  ConsumerState<ExposureScreen> createState() => _ExposureScreenState();
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    return Scaffold(
+      backgroundColor: c.background,
+      appBar: AppBar(
+        title: Text('Tariff Exposure',
+            style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+        backgroundColor: c.headerBg,
+      ),
+      body: const ExposureBody(),
+    );
+  }
 }
 
+// ── LEGACY build helper (kept for reference) ──────────────────────────────────
+// The old _ExposureScreenState is now replaced by ExposureBody above.
+// ignore: unused_element
 class _ExposureScreenState extends ConsumerState<ExposureScreen> {
   String _search = '';
   _ExposureSort _sortBy = _ExposureSort.marketSize;

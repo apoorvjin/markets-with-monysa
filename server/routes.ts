@@ -7,6 +7,8 @@ import { registerEconomyRoutes } from "./routes/economy";
 import { registerExposureRoutes } from "./routes/exposure";
 import { registerHeatmapRoutes } from "./routes/heatmap";
 import { registerBillingRoutes } from "./routes/billing";
+import { registerQuiverRoutes } from "./routes/quiver";
+import { registerOgeRoutes } from "./routes/oge";
 import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -24,6 +26,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerExposureRoutes(app);
   registerHeatmapRoutes(app);
   registerBillingRoutes(app);
+  registerQuiverRoutes(app);
+  registerOgeRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

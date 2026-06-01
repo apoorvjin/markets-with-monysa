@@ -99,6 +99,10 @@ In dev mode (`APP_SIGNING_SECRET` absent) every device returns `"enterprise"` �
 | `GET /api/heatmap/assets` | Heatmap per-category assets (?category=) | 30m |
 | `GET /api/exposure/analysis` | AI tariff exposure analysis (Insight+ plan) | 24h |
 | `POST /api/billing/webhook` | RevenueCat subscription event webhook | — |
+| `GET /api/quiver/congress` | Top-10 congress buys by disclosed amount (FMP → Quiver → snapshot) | 4h |
+| `GET /api/quiver/lobbying` | Top-10 by QoQ lobbying spend growth (Senate LDA) | 4h |
+| `GET /api/quiver/insider` | Top-10 by insider buy count — 90-day window (SEC EDGAR) | 4h |
+| `GET /api/quiver/congress-trades` | Raw congress trades last 365 days (?ticker=&chamber=&type=) (FMP) | 4h |
 
 ### Exact API Response Shapes
 
@@ -119,6 +123,13 @@ GET /api/crises               → { crises: [...], dataAsOf: "May 2026" }
 GET /api/heatmap              → { tiles: [...], lastUpdated }
 GET /api/heatmap/assets       → { tiles: [...], category, lastUpdated }
 GET /api/exposure/analysis    → { comps: [{ name, ticker, revenueExposurePct, earningsImpactPct }], summary }
+GET /api/quiver/congress      → { items: [QuiverItem], meta: { label, rebalance }, lastUpdated }
+GET /api/quiver/lobbying      → { items: [QuiverItem], meta: { label, rebalance }, lastUpdated }
+GET /api/quiver/insider       → { items: [QuiverItem], meta: { label, rebalance }, lastUpdated }
+                                  QuiverItem: { symbol, name, price, changePercent, weight, rank, badge, badgeLabel }
+GET /api/quiver/congress-trades → { trades: [CongressTrade], total, lastUpdated }
+                                  CongressTrade: { memberName, chamber, ticker, assetDescription, type("buy"|"sell"),
+                                                  transactionDate, filingDate, amount, party?, state? }
 ```
 
 Plan-gated endpoints return `403 { error: "...", code: "PLAN_REQUIRED" }` when the device lacks entitlement.
@@ -133,6 +144,12 @@ ANTHROPIC_API_KEY                  optional — Claude Haiku for AI analyst note
 ALPHA_VANTAGE_API_KEY              optional — Alpha Vantage for fundamentals/historical data fallback
 APP_SIGNING_SECRET                 optional — enables HMAC request signing; absent = dev mode (all devices unrestricted)
 REVENUECAT_WEBHOOK_SECRET          optional — Bearer token for RevenueCat billing webhook
+FMP_API_KEY                        optional — Financial Modeling Prep free-tier key for congress trading data
+                                              (Senate + House last 365 days). Free signup: financialmodelingprep.com
+                                              Used by /api/quiver/congress and /api/quiver/congress-trades.
+                                              Falls back to QUIVER_API_KEY, then snapshot, when absent.
+QUIVER_API_KEY                     optional — Quiver Quantitative paid-tier key for congress trading data.
+                                              Secondary fallback after FMP_API_KEY for /api/quiver/congress.
 ```
 
 All features degrade gracefully when keys are absent.

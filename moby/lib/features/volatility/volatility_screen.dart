@@ -12,11 +12,14 @@ import '../../data/repositories/heatmap_repository.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
+import '../../shared/widgets/shimmer_list.dart';
 import '../../shared/widgets/sparkline_chart.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/performance_heatmap.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
+import '../../shared/widgets/theme_toggle.dart';
+import '../usa_debt/usa_debt_screen.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -78,13 +81,32 @@ final _sectorsHeatmapProvider =
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
-class VolatilityScreen extends ConsumerWidget {
-  const VolatilityScreen({super.key});
+class MacroScreen extends ConsumerStatefulWidget {
+  const MacroScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MacroScreen> createState() => _MacroScreenState();
+}
+
+class _MacroScreenState extends ConsumerState<MacroScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tab;
+
+  @override
+  void initState() {
+    super.initState();
+    _tab = TabController(length: 4, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
-    final async = ref.watch(_volAssetsProvider);
     // Pre-warm so crisis fetch runs in parallel with market data, not after.
     ref.watch(_crisesProvider);
 
@@ -94,87 +116,256 @@ class VolatilityScreen extends ConsumerWidget {
         title: Text('Macro',
             style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
         backgroundColor: c.headerBg,
-      ),
-      body: async.when(
-        loading: () => Center(
-            child: CircularProgressIndicator(color: c.accent)),
-        error: (e, _) => ErrorView(
-          message: 'Failed to load volatility data',
-          onRetry: () => ref.invalidate(_volAssetsProvider),
+        actions: const [ThemeToggleButton()],
+        bottom: TabBar(
+          controller: _tab,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          labelColor: c.accent,
+          unselectedLabelColor: c.textMuted,
+          indicatorColor: c.accent,
+          labelStyle:
+              AppTypography.labelSm.copyWith(fontWeight: FontWeight.w600),
+          unselectedLabelStyle: AppTypography.labelSm,
+          tabs: const [
+            Tab(text: 'Dashboard'),
+            Tab(text: 'Crisis'),
+            Tab(text: 'Debt'),
+            Tab(text: 'Calendar'),
+          ],
         ),
-        data: (data) {
-          final vixMap = data['vix'] as Map<String, dynamic>?;
-          final vix = (vixMap?['price'] as num?)?.toDouble() ?? 20.0;
-          final assets = (data['items'] as List? ?? [])
-              .cast<Map<String, dynamic>>();
-          final lastUpdated = data['lastUpdated'] as String?;
+      ),
+      body: TabBarView(
+        controller: _tab,
+        children: const [
+          _MacroDashboardTab(),
+          _MacroCrisisTab(),
+          UsaDebtBody(),
+          _MacroCalendarTab(),
+        ],
+      ),
+    );
+  }
+}
 
-          return RefreshIndicator(
-            color: c.accent,
-            backgroundColor: c.surface,
-            onRefresh: () async {
-              HeatmapRepository.instance.invalidateCache();
-              MarketsRepository.instance.invalidateSectorsCache();
-              ref.invalidate(_volAssetsProvider);
-              ref.invalidate(_briefingProvider);
-              ref.invalidate(_heatmapProvider);
-              ref.invalidate(_assetsProvider);
-              ref.invalidate(_sectorsHeatmapProvider);
-            },
-            child: MaxWidthLayout(
-              child: ListView(
-                padding: EdgeInsets.fromLTRB(
-                  AppSpacing.s5,
-                  AppSpacing.s5,
-                  AppSpacing.s5,
-                  AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
-                ),
-                children: [
-                  _MacroRegimePanel(vixPrice: vix),
-                  const SizedBox(height: AppSpacing.s3),
-                  // VIX gauge and Stress Meter side by side
-                  IntrinsicHeight(
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Expanded(child: _VixGauge(vix: vix)),
-                        const SizedBox(width: AppSpacing.s3),
-                        Expanded(child: _StressMeter(vix: vix)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _MarketHeatmapSection(),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _BondYieldsSection(),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _AiBriefingCard(),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _EconomicCalendar(),
-                  const SizedBox(height: AppSpacing.s5),
-                  Row(
+// ── Dashboard Tab ─────────────────────────────────────────────────────────────
+
+class _MacroDashboardTab extends ConsumerWidget {
+  const _MacroDashboardTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_volAssetsProvider);
+
+    return async.when(
+      loading: () => const ShimmerList(count: 6, type: ShimmerRowType.signal),
+      error: (e, _) => ErrorView(
+        message: 'Failed to load volatility data',
+        onRetry: () => ref.invalidate(_volAssetsProvider),
+      ),
+      data: (data) {
+        final vixMap = data['vix'] as Map<String, dynamic>?;
+        final vix = (vixMap?['price'] as num?)?.toDouble() ?? 20.0;
+
+        return RefreshIndicator(
+          color: c.accent,
+          backgroundColor: c.surface,
+          onRefresh: () async {
+            HeatmapRepository.instance.invalidateCache();
+            MarketsRepository.instance.invalidateSectorsCache();
+            ref.invalidate(_volAssetsProvider);
+            ref.invalidate(_briefingProvider);
+            ref.invalidate(_heatmapProvider);
+            ref.invalidate(_assetsProvider);
+            ref.invalidate(_sectorsHeatmapProvider);
+          },
+          child: MaxWidthLayout(
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.s5,
+                AppSpacing.s5,
+                AppSpacing.s5,
+                AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+              ),
+              children: [
+                _MacroRegimePanel(vixPrice: vix),
+                const SizedBox(height: AppSpacing.s3),
+                // VIX gauge and Stress Meter side by side
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      Icon(Icons.shield_outlined, color: c.warning, size: 20),
+                      Expanded(child: _VixGauge(vix: vix)),
                       const SizedBox(width: AppSpacing.s3),
-                      Text('Crisis-Response Assets',
-                          style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                      Expanded(child: _StressMeter(vix: vix)),
                     ],
                   ),
-                  if (lastUpdated != null) ...[
-                    const SizedBox(height: AppSpacing.s2),
-                    FreshnessBar(lastUpdated: lastUpdated),
-                  ],
-                  const SizedBox(height: AppSpacing.s3),
-                  ...assets.map((a) => _CrisisAssetCard(data: a)),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _HistoricalPlaybook(),
-                  const SizedBox(height: AppSpacing.s5),
-                  const _GeopoliticalChain(),
+                ),
+                const SizedBox(height: AppSpacing.s5),
+                const _MarketHeatmapSection(),
+                const SizedBox(height: AppSpacing.s5),
+                const _BondYieldsSection(),
+                const SizedBox(height: AppSpacing.s5),
+                const _AiBriefingCard(),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Crisis Tab ────────────────────────────────────────────────────────────────
+
+class _MacroCrisisTab extends ConsumerStatefulWidget {
+  const _MacroCrisisTab();
+
+  @override
+  ConsumerState<_MacroCrisisTab> createState() => _MacroCrisisTabState();
+}
+
+class _MacroCrisisTabState extends ConsumerState<_MacroCrisisTab>
+    with SingleTickerProviderStateMixin {
+  late final TabController _crisisTab;
+
+  @override
+  void initState() {
+    super.initState();
+    _crisisTab = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _crisisTab.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      children: [
+        TabBar(
+          controller: _crisisTab,
+          labelColor: c.accent,
+          unselectedLabelColor: c.textMuted,
+          indicatorColor: c.accent,
+          labelStyle:
+              AppTypography.labelSm.copyWith(fontWeight: FontWeight.w600),
+          unselectedLabelStyle: AppTypography.labelSm,
+          tabs: const [
+            Tab(text: 'Crisis Playbook'),
+            Tab(text: 'Crisis Assets'),
+          ],
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _crisisTab,
+            children: const [
+              _CrisisPlaybookTab(),
+              _CrisisAssetsTab(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CrisisPlaybookTab extends StatelessWidget {
+  const _CrisisPlaybookTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaxWidthLayout(
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+        ),
+        children: const [
+          _HistoricalPlaybook(),
+        ],
+      ),
+    );
+  }
+}
+
+class _CrisisAssetsTab extends ConsumerWidget {
+  const _CrisisAssetsTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_volAssetsProvider);
+
+    return async.when(
+      loading: () => const ShimmerList(count: 4, type: ShimmerRowType.signal),
+      error: (_, __) => ErrorView(
+        message: 'Failed to load crisis assets',
+        onRetry: () => ref.invalidate(_volAssetsProvider),
+      ),
+      data: (data) {
+        final assets = (data['items'] as List? ?? [])
+            .cast<Map<String, dynamic>>();
+        final lastUpdated = data['lastUpdated'] as String?;
+
+        return MaxWidthLayout(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.s5,
+              AppSpacing.s5,
+              AppSpacing.s5,
+              AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+            ),
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.shield_outlined, color: c.warning, size: 20),
+                  const SizedBox(width: AppSpacing.s3),
+                  Text('Crisis-Response Assets',
+                      style: AppTypography.headingSm
+                          .copyWith(color: c.textPrimary)),
                 ],
               ),
-            ),
-          );
-        },
+              if (lastUpdated != null) ...[
+                const SizedBox(height: AppSpacing.s2),
+                FreshnessBar(lastUpdated: lastUpdated),
+              ],
+              const SizedBox(height: AppSpacing.s3),
+              ...assets.map((a) => _CrisisAssetCard(data: a)),
+              const SizedBox(height: AppSpacing.s5),
+              const _GeopoliticalChain(),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ── Calendar Tab ──────────────────────────────────────────────────────────────
+
+class _MacroCalendarTab extends StatelessWidget {
+  const _MacroCalendarTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaxWidthLayout(
+      child: ListView(
+        padding: EdgeInsets.fromLTRB(
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+        ),
+        children: const [
+          _EconomicCalendar(),
+        ],
       ),
     );
   }
@@ -351,6 +542,7 @@ class _StressMeter extends StatelessWidget {
     final c = context.colors;
     final color = _color(c);
     return GlassCard(
+      blur: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -437,6 +629,7 @@ class _VixGauge extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return GlassCard(
+      blur: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -914,6 +1107,7 @@ class _AiBriefingCardState extends ConsumerState<_AiBriefingCard> {
     final c = context.colors;
 
     return GlassCard(
+      blur: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

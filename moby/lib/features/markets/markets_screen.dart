@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
@@ -12,6 +13,7 @@ import '../../data/repositories/markets_repository.dart';
 import '../../shared/widgets/chart_modal.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
+import '../../shared/widgets/shimmer_list.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 // Non-autoDispose: data survives tab switches so switching tabs never re-fetches.
@@ -287,7 +289,7 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
     final c = context.colors;
     final async = ref.watch(_indicesProvider);
     return async.when(
-      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+      loading: () => const ShimmerList(count: 10),
       error: (e, _) => ErrorView(
         message: 'Failed to load indices',
         onRetry: () => ref.invalidate(_indicesProvider),
@@ -316,9 +318,7 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
               FreshnessBar(lastUpdated: repo.indicesLastUpdated!),
             Expanded(
               child: filtered.isEmpty && _query.isNotEmpty
-                  ? Center(
-                      child: Text('No results for "$_query"',
-                          style: AppTypography.sm.copyWith(color: c.textMuted)))
+                  ? _NoSearchResults(query: _query)
                   : RefreshIndicator(
                       color: c.accent,
                       backgroundColor: c.surface,
@@ -328,7 +328,9 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
                             bottom: MediaQuery.of(context).padding.bottom +
                                 AppSpacing.s3),
                         itemCount: sorted.length,
-                        itemBuilder: (ctx, i) => _MarketRow(item: sorted[i]),
+                        itemBuilder: (ctx, i) => _MarketRow(
+                              key: ValueKey(sorted[i].symbol),
+                              item: sorted[i]),
                       ),
                     ),
             ),
@@ -370,7 +372,7 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
     final async = ref.watch(_commoditiesProvider);
 
     return async.when(
-      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+      loading: () => const ShimmerList(count: 10),
       error: (e, _) => ErrorView(
         message: 'Failed to load commodities',
         onRetry: () => ref.invalidate(_commoditiesProvider),
@@ -399,9 +401,7 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
               FreshnessBar(lastUpdated: repo.commoditiesLastUpdated!),
             Expanded(
               child: filtered.isEmpty && _query.isNotEmpty
-                  ? Center(
-                      child: Text('No results for "$_query"',
-                          style: AppTypography.sm.copyWith(color: c.textMuted)))
+                  ? _NoSearchResults(query: _query)
                   : RefreshIndicator(
                       color: c.accent,
                       backgroundColor: c.surface,
@@ -411,7 +411,9 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
                             bottom: MediaQuery.of(context).padding.bottom +
                                 AppSpacing.s3),
                         itemCount: sorted.length,
-                        itemBuilder: (ctx, i) => _MarketRow(item: sorted[i]),
+                        itemBuilder: (ctx, i) => _MarketRow(
+                              key: ValueKey(sorted[i].symbol),
+                              item: sorted[i]),
                       ),
                     ),
             ),
@@ -452,7 +454,7 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
     final c = context.colors;
     final async = ref.watch(_forexProvider);
     return async.when(
-      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+      loading: () => const ShimmerList(count: 12),
       error: (e, _) => ErrorView(
         message: 'Failed to load forex',
         onRetry: () => ref.invalidate(_forexProvider),
@@ -482,9 +484,7 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
               FreshnessBar(lastUpdated: repo.forexLastUpdated!),
             Expanded(
               child: filtered.isEmpty && _query.isNotEmpty
-                  ? Center(
-                      child: Text('No results for "$_query"',
-                          style: AppTypography.sm.copyWith(color: c.textMuted)))
+                  ? _NoSearchResults(query: _query)
                   : RefreshIndicator(
                 color: c.accent,
                 backgroundColor: c.surface,
@@ -513,7 +513,7 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                                     .copyWith(color: c.textMuted, letterSpacing: 1.2),
                               ),
                             ),
-                            ...entry.value.map((item) => _MarketRow(item: item, isForex: true)),
+                            ...entry.value.map((item) => _MarketRow(key: ValueKey(item.symbol), item: item, isForex: true)),
                           ]).toList();
                         })(),
                       )
@@ -522,8 +522,10 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                             bottom: MediaQuery.of(context).padding.bottom +
                                 AppSpacing.s3),
                         itemCount: sorted.length,
-                        itemBuilder: (ctx, i) =>
-                            _MarketRow(item: sorted[i], isForex: true),
+                        itemBuilder: (ctx, i) => _MarketRow(
+                              key: ValueKey(sorted[i].symbol),
+                              item: sorted[i],
+                              isForex: true),
                       ),
               ),
             ),
@@ -536,14 +538,40 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
 
 // ── Market Row ────────────────────────────────────────────────────────────────
 
-class _MarketRow extends StatelessWidget {
-  const _MarketRow({required this.item, this.isForex = false});
+class _MarketRow extends StatefulWidget {
+  const _MarketRow({required this.item, this.isForex = false, super.key});
   final MarketItem item;
   final bool isForex;
 
   @override
+  State<_MarketRow> createState() => _MarketRowState();
+}
+
+class _MarketRowState extends State<_MarketRow> {
+  Color? _flashColor;
+
+  @override
+  void didUpdateWidget(_MarketRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldPrice = oldWidget.item.price;
+    final newPrice = widget.item.price;
+    // Flash briefly when the price ticks up or down on refresh.
+    if (oldPrice != null && newPrice != null && oldPrice != newPrice) {
+      final c = context.colors;
+      final isUp = newPrice > oldPrice;
+      setState(() => _flashColor = isUp
+          ? c.positive.withAlpha(36)
+          : c.danger.withAlpha(36));
+      Future.delayed(const Duration(milliseconds: 700), () {
+        if (mounted) setState(() => _flashColor = null);
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final item = widget.item;
     final pct = item.changePercent;
     final isUp = (pct ?? 0) >= 0;
     final pctColor = isUp ? c.positive : c.danger;
@@ -552,13 +580,15 @@ class _MarketRow extends StatelessWidget {
         : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
 
     return InkWell(
-      onTap: () => ChartModal.show(context, symbol: item.symbol, name: item.name),
-      child: Container(
+      onTap: () {
+        HapticFeedback.selectionClick();
+        ChartModal.show(context, symbol: item.symbol, name: item.name);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 300),
+        color: _flashColor ?? Colors.transparent,
         padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
-        decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: c.border, width: 0.5)),
-        ),
         child: Row(
           children: [
             if (item.flag != null) ...[
@@ -577,7 +607,7 @@ class _MarketRow extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(item.symbol,
                       style: AppTypography.sm.copyWith(color: c.textMuted)),
-                  if (isForex) ...[
+                  if (widget.isForex) ...[
                     const SizedBox(height: 2),
                     _FxDifferential(symbol: item.symbol),
                   ],
@@ -587,14 +617,18 @@ class _MarketRow extends StatelessWidget {
             // Price column
             SizedBox(
               width: 80,
-              child: Text(
-                _formatPrice(item.price, item.unit),
-                style: AppTypography.numericLg.copyWith(color: c.textPrimary),
-                textAlign: TextAlign.end,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 200),
+                child: Text(
+                  _formatPrice(item.price, item.unit),
+                  key: ValueKey(item.price),
+                  style: AppTypography.numericLg.copyWith(color: c.textPrimary),
+                  textAlign: TextAlign.end,
+                ),
               ),
             ),
             const SizedBox(width: AppSpacing.s3),
-            // % Change column
+            // % Change badge
             SizedBox(
               width: 70,
               child: Container(
@@ -622,6 +656,49 @@ class _MarketRow extends StatelessWidget {
     }
     if (price < 1) return price.toStringAsFixed(4);
     return price.toStringAsFixed(2);
+  }
+}
+
+// ── No Search Results ─────────────────────────────────────────────────────────
+
+class _NoSearchResults extends StatelessWidget {
+  const _NoSearchResults({required this.query});
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: c.accentDim,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.search_off_rounded, color: c.accent, size: 26),
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            Text(
+              'No results for "$query"',
+              style: AppTypography.lg.copyWith(color: c.textPrimary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: AppSpacing.s2),
+            Text(
+              'Try the full ticker symbol\ne.g. AAPL, GC=F, EURUSD=X',
+              style: AppTypography.sm.copyWith(color: c.textMuted),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

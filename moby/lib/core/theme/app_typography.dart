@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 abstract final class AppTypography {
-  // Color is a dark-mode fallback; call-sites always override with context.colors.textPrimary.
+  // No hardcoded color — inherits from theme's default text color.
+  // Call-sites that need a specific color still use .copyWith(color: c.textPrimary).
   static TextStyle get _base => GoogleFonts.inter(
-        color: const Color(0xFFFFFFFF),
         letterSpacing: -0.1,
       );
 

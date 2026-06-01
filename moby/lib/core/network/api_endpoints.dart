@@ -29,6 +29,18 @@ abstract final class ApiEndpoints {
       '$baseUrl/api/trading/fundamentals/$symbol';
   static String get tenXAssets => '$baseUrl/api/trading/scanner/10x/assets';
   static String get tenXStocks => '$baseUrl/api/trading/scanner/10x/stocks';
+  static String get tenXIndiaStocks => '$baseUrl/api/trading/scanner/10x/india';
+  static String get tenXV2IndiaStocks => '$baseUrl/api/trading/scanner/10x-v2/india';
+  static String get tenXUKStocks         => '$baseUrl/api/trading/scanner/10x/uk';
+  static String get tenXV2UKStocks       => '$baseUrl/api/trading/scanner/10x-v2/uk';
+  static String get tenXJapanStocks      => '$baseUrl/api/trading/scanner/10x/japan';
+  static String get tenXV2JapanStocks    => '$baseUrl/api/trading/scanner/10x-v2/japan';
+  static String get tenXHKStocks         => '$baseUrl/api/trading/scanner/10x/hongkong';
+  static String get tenXV2HKStocks       => '$baseUrl/api/trading/scanner/10x-v2/hongkong';
+  static String get tenXChinaStocks      => '$baseUrl/api/trading/scanner/10x/china';
+  static String get tenXV2ChinaStocks    => '$baseUrl/api/trading/scanner/10x-v2/china';
+  static String get tenXEuronextStocks   => '$baseUrl/api/trading/scanner/10x/euronext';
+  static String get tenXV2EuronextStocks => '$baseUrl/api/trading/scanner/10x-v2/euronext';
   static String get tenXV2Assets => '$baseUrl/api/trading/scanner/10x-v2/assets';
   static String get tenXV2Stocks => '$baseUrl/api/trading/scanner/10x-v2/stocks';
   static String tenXBacktest({required String type, required String version}) =>
@@ -48,6 +60,13 @@ abstract final class ApiEndpoints {
   static String get crises => '$baseUrl/api/crises';
   static String get heatmap => '$baseUrl/api/heatmap';
   static String get heatmapAssets => '$baseUrl/api/heatmap/assets';
+
+  static String get quiverCongress         => '$baseUrl/api/quiver/congress';
+  static String get quiverLobbying         => '$baseUrl/api/quiver/lobbying';
+  static String get quiverInsider          => '$baseUrl/api/quiver/insider';
+  static String get quiverCongressTrades   => '$baseUrl/api/quiver/congress-trades';
+  static String get ogeTrumpTransactions   => '$baseUrl/api/oge/trump-transactions';
+
 
   static String exposureAnalysis({
     required String country,

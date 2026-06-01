@@ -5,6 +5,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/restart_widget.dart';
 import '../../providers/chart_provider_provider.dart';
+import '../../providers/font_size_provider.dart';
 import '../../providers/theme_provider.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -34,6 +35,8 @@ class ProfileScreen extends ConsumerWidget {
           _SubscriptionCard(),
           SizedBox(height: AppSpacing.s6),
           _ThemeSection(),
+          SizedBox(height: AppSpacing.s6),
+          _FontSizeSection(),
           SizedBox(height: AppSpacing.s6),
           _ChartProviderSection(),
           SizedBox(height: AppSpacing.s6),
@@ -292,6 +295,98 @@ class _ThemeChip extends ConsumerWidget {
                   color: selected ? c.background : c.textMuted,
                   fontWeight:
                       selected ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Font Size Section ─────────────────────────────────────────────────────────
+
+class _FontSizeSection extends ConsumerWidget {
+  const _FontSizeSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final current = ref.watch(fontSizeScaleProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'FONT SIZE',
+          style: AppTypography.labelSm.copyWith(
+            color: c.textMuted,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Container(
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: c.border),
+          ),
+          padding: const EdgeInsets.all(AppSpacing.s2),
+          child: Row(
+            children: FontSizeScale.values
+                .map((scale) => _FontSizeChip(scale: scale, selected: current == scale))
+                .toList(),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Text(
+          'Adjusts text size across the entire app.',
+          style: AppTypography.sm.copyWith(color: c.textMuted),
+        ),
+      ],
+    );
+  }
+}
+
+class _FontSizeChip extends ConsumerWidget {
+  const _FontSizeChip({required this.scale, required this.selected});
+
+  final FontSizeScale scale;
+  final bool selected;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => ref.read(fontSizeScaleProvider.notifier).setScale(scale),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.all(2),
+          padding: const EdgeInsets.symmetric(
+              vertical: AppSpacing.s3, horizontal: AppSpacing.s2),
+          decoration: BoxDecoration(
+            color: selected ? c.accent : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                scale.chip,
+                style: TextStyle(
+                  fontSize: scale == FontSizeScale.regular ? 14 : 16,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? c.background : c.textMuted,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                scale.label,
+                style: AppTypography.labelSm.copyWith(
+                  color: selected ? c.background : c.textMuted,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
                 ),
               ),
             ],

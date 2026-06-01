@@ -8,6 +8,7 @@ import 'core/theme/app_palette.dart';
 import 'core/theme/app_theme.dart';
 import 'core/router/app_router.dart';
 import 'providers/alert_provider.dart';
+import 'providers/font_size_provider.dart';
 import 'providers/theme_provider.dart';
 
 class MobyApp extends ConsumerWidget {
@@ -16,6 +17,7 @@ class MobyApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeModeProvider);
+    final fontScale = ref.watch(fontSizeScaleProvider);
     return MaterialApp.router(
       title: 'Monysa',
       theme: AppTheme.light,
@@ -23,16 +25,21 @@ class MobyApp extends ConsumerWidget {
       themeMode: themeMode,
       routerConfig: appRouter,
       debugShowCheckedModeBanner: false,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(fontScale.scaleFactor),
+        ),
+        child: child!,
+      ),
     );
   }
 }
 
 final _tabs = [
-  (path: '/markets',   icon: Icons.bar_chart_rounded,        label: 'Markets'),
+  (path: '/markets',   icon: Icons.bar_chart_rounded,         label: 'Market'),
   (path: '/trading',   icon: Icons.candlestick_chart_rounded, label: 'Trading'),
-  (path: '/exposure',  icon: Icons.public_rounded,            label: 'Exposure'),
-  (path: '/volatility',icon: Icons.bolt_rounded,              label: 'Macro'),
-  (path: '/debt',      icon: Icons.account_balance_rounded,   label: 'Debt'),
+  (path: '/investing', icon: Icons.trending_up_rounded,       label: 'Investing'),
+  (path: '/macro',     icon: Icons.bolt_rounded,              label: 'Macro'),
   (path: '/profile',   icon: Icons.person_rounded,            label: 'Profile'),
 ];
 
