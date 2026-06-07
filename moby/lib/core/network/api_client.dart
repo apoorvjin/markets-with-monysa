@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
+import 'chart_renderer_interceptor.dart';
 import 'device_id.dart';
 import 'request_signer.dart';
 
@@ -74,6 +75,7 @@ class ApiClient {
 
     _dio.interceptors.add(_SigningInterceptor());
     _dio.interceptors.add(_DeviceIdInterceptor());
+    _dio.interceptors.add(ChartRendererInterceptor());
     _dio.interceptors.add(_RetryInterceptor(_dio));
     _dio.interceptors.add(LogInterceptor(
       requestBody: false,

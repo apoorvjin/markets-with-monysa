@@ -11,6 +11,7 @@ import '../../features/asset/asset_detail_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/trading/tenx_backtest_screen.dart';
 import '../../features/investing/multibaggers_screen.dart';
+import '../../features/investing/politician_profile_screen.dart';
 import '../../app.dart';
 
 final appRouter = GoRouter(
@@ -86,6 +87,13 @@ final appRouter = GoRouter(
           path: '/trading/multibaggers',
           builder: (_, state) => MultibaggersScreen(
             country: state.uri.queryParameters['country'] ?? 'india',
+          ),
+        ),
+        GoRoute(
+          path: '/politician',
+          builder: (_, state) => PoliticianProfileScreen(
+            name: state.uri.queryParameters['name'] ?? '',
+            chamber: state.uri.queryParameters['chamber'] ?? '',
           ),
         ),
       ],

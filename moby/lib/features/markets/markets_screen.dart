@@ -14,6 +14,7 @@ import '../../shared/widgets/chart_modal.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/shimmer_list.dart';
+import 'treemap_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 // Non-autoDispose: data survives tab switches so switching tabs never re-fetches.
@@ -33,7 +34,7 @@ final _cotProvider = FutureProvider<CotData>(
 final _cbRatesProvider = FutureProvider<Map<String, CbRateInfo>>(
     (_) => MarketsRepository.instance.fetchCentralBankRates());
 
-enum _MarketSort { price, change }
+enum _MarketSort { name, price, change }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -51,7 +52,7 @@ class _MarketsScreenState extends ConsumerState<MarketsScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 4, vsync: this);
+    _tab = TabController(length: 5, vsync: this);
     // Pre-warm all tabs in parallel so switching never triggers a fresh fetch.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(_indicesProvider);
@@ -80,7 +81,10 @@ class _MarketsScreenState extends ConsumerState<MarketsScreen>
         actions: const [_GlobalSearchButton(), _AboutButton()],
         bottom: TabBar(
           controller: _tab,
+          isScrollable: true,
+          tabAlignment: TabAlignment.fill,
           tabs: const [
+            Tab(text: 'Heatmap'),
             Tab(text: 'Indices'),
             Tab(text: 'Commodities'),
             Tab(text: 'Forex'),
@@ -91,6 +95,7 @@ class _MarketsScreenState extends ConsumerState<MarketsScreen>
       body: TabBarView(
         controller: _tab,
         children: const [
+          TreemapTab(),
           _IndicesTab(),
           _CommoditiesTab(),
           _ForexTab(),
@@ -166,8 +171,14 @@ class _SortHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text('ASSET',
-                style: AppTypography.labelXs.copyWith(color: c.textMuted)),
+            child: _SortBtn(
+              label: 'ASSET',
+              active: sortBy == _MarketSort.name,
+              ascending: ascending,
+              onTap: () => onSortChange(_MarketSort.name),
+              palette: c,
+              align: TextAlign.start,
+            ),
           ),
           SizedBox(
             width: 80,
@@ -246,6 +257,9 @@ List<MarketItem> _sortItems(
     List<MarketItem> items, _MarketSort sortBy, bool ascending) {
   final sorted = [...items];
   sorted.sort((a, b) {
+    if (sortBy == _MarketSort.name) {
+      return ascending ? a.name.compareTo(b.name) : b.name.compareTo(a.name);
+    }
     double aVal, bVal;
     if (sortBy == _MarketSort.price) {
       aVal = a.price ?? double.negativeInfinity;
@@ -619,11 +633,13 @@ class _MarketRowState extends State<_MarketRow> {
               width: 80,
               child: AnimatedSwitcher(
                 duration: const Duration(milliseconds: 200),
-                child: Text(
-                  _formatPrice(item.price, item.unit),
-                  key: ValueKey(item.price),
-                  style: AppTypography.numericLg.copyWith(color: c.textPrimary),
-                  textAlign: TextAlign.end,
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    _formatPrice(item.price, item.unit),
+                    key: ValueKey(item.price),
+                    style: AppTypography.numericLg.copyWith(color: c.textPrimary),
+                  ),
                 ),
               ),
             ),
@@ -632,6 +648,7 @@ class _MarketRowState extends State<_MarketRow> {
             SizedBox(
               width: 70,
               child: Container(
+                width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: isUp ? c.positiveDim : c.dangerDim,
@@ -875,11 +892,28 @@ class _FxDifferential extends ConsumerWidget {
 
 // ── CFTC Positions Tab ────────────────────────────────────────────────────────
 
-class _CftcTab extends ConsumerWidget {
+enum _CotCategory { metals, energy, agriculture, currencies, indices }
+
+class _CftcTab extends ConsumerStatefulWidget {
   const _CftcTab();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CftcTab> createState() => _CftcTabState();
+}
+
+class _CftcTabState extends ConsumerState<_CftcTab> {
+  _CotCategory _category = _CotCategory.metals;
+
+  static const _chips = [
+    (_CotCategory.metals,      'Metals'),
+    (_CotCategory.energy,      'Energy'),
+    (_CotCategory.agriculture, 'Agriculture'),
+    (_CotCategory.currencies,  'Currencies'),
+    (_CotCategory.indices,     'Indices & Rates'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
     final async = ref.watch(_cotProvider);
     return async.when(
@@ -888,63 +922,89 @@ class _CftcTab extends ConsumerWidget {
         message: 'Failed to load COT data',
         onRetry: () => ref.invalidate(_cotProvider),
       ),
-      data: (cot) => RefreshIndicator(
-        color: c.accent,
-        backgroundColor: c.surface,
-        onRefresh: () => ref.refresh(_cotProvider.future),
-        child: ListView(
-          padding: EdgeInsets.only(
-            top: AppSpacing.s4,
-            bottom: MediaQuery.of(context).padding.bottom + AppSpacing.s3,
-          ),
-          children: [
-            if (cot.metals.isNotEmpty) ...[
-              const _CotSectionHeader('METALS'),
-              ...cot.metals.map((m) => _CotCard(metal: m)),
-            ],
-            if (cot.indicesRates.isNotEmpty) ...[
-              const _CotSectionHeader('INDICES & RATES'),
-              ...cot.indicesRates.map((m) => _CotCard(metal: m)),
-            ],
-            if (cot.currencies.isNotEmpty) ...[
-              const _CotSectionHeader('CURRENCIES'),
-              ...cot.currencies.map((m) => _CotCard(metal: m)),
-            ],
-            if (cot.energy.isNotEmpty) ...[
-              const _CotSectionHeader('ENERGY'),
-              ...cot.energy.map((m) => _CotCard(metal: m)),
-            ],
-            if (cot.agriculture.isNotEmpty) ...[
-              const _CotSectionHeader('AGRICULTURE'),
-              ...cot.agriculture.map((m) => _CotCard(metal: m)),
-            ],
-            if (cot.reportDate != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
-                child: Text('CFTC report date: ${cot.reportDate}',
-                    style: AppTypography.xs.copyWith(color: c.textMuted)),
+      data: (cot) {
+        final items = switch (_category) {
+          _CotCategory.metals      => cot.metals,
+          _CotCategory.energy      => cot.energy,
+          _CotCategory.agriculture => cot.agriculture,
+          _CotCategory.currencies  => cot.currencies,
+          _CotCategory.indices     => cot.indicesRates,
+        };
+
+        return RefreshIndicator(
+          color: c.accent,
+          backgroundColor: c.surface,
+          onRefresh: () => ref.refresh(_cotProvider.future),
+          child: ListView(
+            padding: EdgeInsets.only(
+              top: AppSpacing.s3,
+              bottom: MediaQuery.of(context).padding.bottom + AppSpacing.s3,
+            ),
+            children: [
+              // Category chips
+              SizedBox(
+                height: 36,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+                  children: _chips.map((chip) {
+                    final selected = _category == chip.$1;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: AppSpacing.s2),
+                      child: GestureDetector(
+                        onTap: () => setState(() => _category = chip.$1),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? c.accent.withAlpha(30)
+                                : c.surfaceCard,
+                            borderRadius:
+                                BorderRadius.circular(AppRadius.full),
+                            border: Border.all(
+                              color: selected
+                                  ? c.accent.withAlpha(120)
+                                  : c.border,
+                            ),
+                          ),
+                          child: Text(
+                            chip.$2,
+                            style: AppTypography.labelSm.copyWith(
+                              color: selected ? c.accent : c.textMuted,
+                              fontWeight: selected
+                                  ? FontWeight.w700
+                                  : FontWeight.w400,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
               ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CotSectionHeader extends StatelessWidget {
-  const _CotSectionHeader(this.label);
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s3),
-      child: Text(label,
-          style: AppTypography.labelSm
-              .copyWith(color: c.textMuted, letterSpacing: 1.2)),
+              const SizedBox(height: AppSpacing.s3),
+              if (items.isNotEmpty)
+                ...items.map((m) => _CotCard(metal: m))
+              else
+                Padding(
+                  padding: const EdgeInsets.all(AppSpacing.s8),
+                  child: Center(
+                    child: Text('No data available',
+                        style: AppTypography.sm.copyWith(color: c.textMuted)),
+                  ),
+                ),
+              if (cot.reportDate != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
+                  child: Text('CFTC report date: ${cot.reportDate}',
+                      style: AppTypography.xs.copyWith(color: c.textMuted)),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

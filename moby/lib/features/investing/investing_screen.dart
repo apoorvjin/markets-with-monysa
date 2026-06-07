@@ -14,29 +14,10 @@ import '../../shared/widgets/theme_toggle.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 import '../exposure/exposure_screen.dart';
 import 'multibaggers_screen.dart';
+import 'house_trades_tab.dart';
+import 'earnings_calendar_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
-
-final _tenXAssetScannerProvider =
-    FutureProvider.autoDispose<List<TenXScanResult>>(
-  (_) => TradingRepository.instance.fetchTenXAssets(),
-);
-
-final _tenXStockScannerProvider =
-    FutureProvider.autoDispose<List<TenXScanResult>>(
-  (_) => TradingRepository.instance.fetchTenXStocks(),
-);
-
-
-final _tenXV2AssetScannerProvider =
-    FutureProvider.autoDispose<List<TenXScanResult>>(
-  (_) => TradingRepository.instance.fetchTenXV2Assets(),
-);
-
-final _tenXV2StockScannerProvider =
-    FutureProvider.autoDispose<List<TenXScanResult>>(
-  (_) => TradingRepository.instance.fetchTenXV2Stocks(),
-);
 
 final _bestSetupsProvider = FutureProvider.autoDispose
     .family<BestSetupsResponse, ({String version, String type})>(
@@ -44,6 +25,12 @@ final _bestSetupsProvider = FutureProvider.autoDispose
     version: args.version,
     type: args.type,
   ),
+);
+
+final _sectorBestSetupsProvider =
+    FutureProvider.autoDispose.family<SectorBestSetupsResponse, String>(
+  (_, version) =>
+      TradingRepository.instance.fetchSectorBestSetups(version: version),
 );
 
 final _congressTradesProvider =
@@ -84,7 +71,7 @@ class _InvestingScreenState extends State<InvestingScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 7, vsync: this);
+    _tab = TabController(length: 8, vsync: this);
   }
 
   @override
@@ -115,26 +102,28 @@ class _InvestingScreenState extends State<InvestingScreen>
               AppTypography.labelSm.copyWith(fontWeight: FontWeight.w600),
           unselectedLabelStyle: AppTypography.labelSm,
           tabs: const [
-            Tab(text: 'Dashboard'),
             Tab(text: 'Exposure'),
-            Tab(text: '10X'),
+            Tab(text: 'Dashboard'),
             Tab(text: 'Multibaggers'),
-            Tab(text: 'Congress'),
             Tab(text: 'Presidential'),
+            Tab(text: 'Congress'),
             Tab(text: 'Smart \$'),
+            Tab(text: 'House Trades'),
+            Tab(text: 'Earnings'),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tab,
         children: const [
-          _InvestingDashboardTab(),
           ExposureBody(),
-          _ScannerTab(),
+          _InvestingDashboardTab(),
           MultibaggersBody(),
-          _CongressTradesTab(),
           _PresidentialTab(),
+          _CongressTradesTab(),
           _QuiverTab(),
+          HouseTradesTab(),
+          EarningsCalendarTab(),
         ],
       ),
     );
@@ -157,6 +146,22 @@ class _InvestingDashboardTabState
   String _type = 'assets';
 
   @override
+  void initState() {
+    super.initState();
+    // Pre-warm the default combination and sector card so they are already
+    // cached or in-flight by the time the user looks at the tab.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      TradingRepository.instance
+          .fetchBestSetups(version: 'v1', type: 'assets')
+          .ignore();
+      TradingRepository.instance
+          .fetchSectorBestSetups(version: 'v1')
+          .ignore();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.colors;
     final isPro = EntitlementService.can('best_setups');
@@ -172,553 +177,185 @@ class _InvestingDashboardTabState
           AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
         ),
         children: [
-          Row(
-            children: [
-              Icon(Icons.bolt_rounded, size: 18, color: c.warning),
-              const SizedBox(width: AppSpacing.s2),
-              Expanded(
-                child: Text('Best Setups Right Now',
-                    style:
-                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
-              ),
-              GestureDetector(
-                onTap: () => _showBestSetupsInfo(context),
-                child: Icon(Icons.info_outline_rounded,
-                    size: 16, color: c.textMuted),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s2),
-          Text(
-            'Signals firing today with ≥65% historical 1m win rate',
-            style: AppTypography.xs.copyWith(color: c.textMuted),
-          ),
-          const SizedBox(height: AppSpacing.s4),
-          Row(
-            children: [
-              GestureDetector(
-                onTap: () => setState(
-                    () => _type = _type == 'assets' ? 'stocks' : 'assets'),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: c.surfaceCard,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                    border: Border.all(color: c.border),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _VersionDot(label: 'Assets', active: _type == 'assets', c: c),
-                      const SizedBox(width: 6),
-                      _VersionDot(label: 'Stocks', active: _type == 'stocks', c: c),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: AppSpacing.s3),
-              GestureDetector(
-                onTap: () => setState(
-                    () => _version = _version == 'v1' ? 'v2' : 'v1'),
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: c.surfaceCard,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                    border: Border.all(color: c.border),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _VersionDot(label: 'v1', active: _version == 'v1', c: c),
-                      const SizedBox(width: 6),
-                      _VersionDot(label: 'v2', active: _version == 'v2', c: c),
-                    ],
-                  ),
-                ),
-              ),
-              const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: c.accentDim18,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-                child: Text('Pro',
-                    style: AppTypography.xs.copyWith(
-                        color: c.accent, fontWeight: FontWeight.w700)),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s4),
           Container(
+            padding: const EdgeInsets.all(AppSpacing.s4),
             decoration: BoxDecoration(
-              color: c.surfaceCard,
+              color: c.surfaceElevated,
               borderRadius: BorderRadius.circular(AppRadius.md),
               border: Border.all(color: c.border),
             ),
-            child: !isPro
-                ? _BestSetupsLockedBody(c: c, context: context)
-                : async.when(
-                    loading: () => _BestSetupsLoadingBody(c: c),
-                    error: (_, __) => Padding(
-                      padding: const EdgeInsets.all(AppSpacing.s4),
-                      child: Text('Unable to load setups',
-                          style: AppTypography.xs.copyWith(color: c.textMuted)),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.bolt_rounded, size: 18, color: c.warning),
+                    const SizedBox(width: AppSpacing.s2),
+                    Expanded(
+                      child: Text('Best Setups Right Now',
+                          style: AppTypography.headingSm
+                              .copyWith(color: c.textPrimary)),
                     ),
-                    data: (resp) {
-                      if (!resp.cacheWarm) {
-                        return Padding(
-                          padding: const EdgeInsets.all(AppSpacing.s4),
-                          child: Row(
-                            children: [
-                              Icon(Icons.hourglass_top_rounded,
-                                  size: 14, color: c.textMuted),
-                              const SizedBox(width: 6),
-                              Text('Warming up — check back in ~2 min',
-                                  style: AppTypography.xs
-                                      .copyWith(color: c.textMuted)),
-                            ],
-                          ),
-                        );
-                      }
-                      if (resp.setups.isEmpty) {
-                        return Padding(
-                          padding: const EdgeInsets.all(AppSpacing.s4),
-                          child: Text('No setups above 65% win rate today',
-                              style: AppTypography.xs
-                                  .copyWith(color: c.textMuted)),
-                        );
-                      }
-                      return Column(
-                        children: [
-                          ...resp.setups.map((s) => _SetupRow(
-                                setup: s,
-                                version: _version,
-                                type: _type,
-                              )),
-                          GestureDetector(
-                            onTap: () => context.push(
-                                '/trading/10x-backtest?version=$_version&type=$_type'),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: AppSpacing.s4,
-                                  vertical: AppSpacing.s3),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text('View Backtest History',
-                                      style: AppTypography.xs
-                                          .copyWith(color: c.accent)),
-                                  const SizedBox(width: 4),
-                                  Icon(Icons.arrow_forward_rounded,
-                                      size: 12, color: c.accent),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── 10X Scanner Tab ───────────────────────────────────────────────────────────
-
-class _ScannerTab extends ConsumerStatefulWidget {
-  const _ScannerTab();
-
-  @override
-  ConsumerState<_ScannerTab> createState() => _ScannerTabState();
-}
-
-class _ScannerTabState extends ConsumerState<_ScannerTab> {
-  int _minSignals = 0;
-  String _sort = 'signals';
-  String _view = 'Assets';
-  String _version = 'v1';
-  Set<String> _signalFilter = {};
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final isStocks = _view == 'Stocks';
-    final isV2 = _version == 'v2';
-    final provider = isV2
-        ? (isStocks ? _tenXV2StockScannerProvider : _tenXV2AssetScannerProvider)
-        : (isStocks ? _tenXStockScannerProvider : _tenXAssetScannerProvider);
-    final async = ref.watch(provider);
-
-    return async.when(
-      loading: () => Column(
-        children: [
-          _ScannerFilterRow(
-            minSignals: _minSignals,
-            sort: _sort,
-            view: _view,
-            version: _version,
-            signalFilter: _signalFilter,
-            onFilter: (v) => setState(() => _minSignals = v),
-            onSort: (v) => setState(() => _sort = v),
-            onView: (v) => setState(() {
-              _view = v;
-              _minSignals = 0;
-              _signalFilter = {};
-            }),
-            onVersion: (v) => setState(() {
-              _version = v;
-              _minSignals = 0;
-              _signalFilter = {};
-            }),
-            onSignalToggle: (sig) => setState(() {
-              final next = Set<String>.from(_signalFilter);
-              next.contains(sig) ? next.remove(sig) : next.add(sig);
-              _signalFilter = next;
-            }),
-            onInfo: () => _showScannerInfo(context),
-            onBacktest: () => context.push(
-                '/trading/10x-backtest?version=$_version&type=${_view.toLowerCase()}'),
-          ),
-          const Expanded(child: _ScannerSkeleton()),
-        ],
-      ),
-      error: (e, _) => Column(
-        children: [
-          _ScannerFilterRow(
-            minSignals: _minSignals,
-            sort: _sort,
-            view: _view,
-            version: _version,
-            signalFilter: _signalFilter,
-            onFilter: (v) => setState(() => _minSignals = v),
-            onSort: (v) => setState(() => _sort = v),
-            onView: (v) => setState(() {
-              _view = v;
-              _minSignals = 0;
-              _signalFilter = {};
-            }),
-            onVersion: (v) => setState(() {
-              _version = v;
-              _minSignals = 0;
-              _signalFilter = {};
-            }),
-            onSignalToggle: (sig) => setState(() {
-              final next = Set<String>.from(_signalFilter);
-              next.contains(sig) ? next.remove(sig) : next.add(sig);
-              _signalFilter = next;
-            }),
-            onInfo: () => _showScannerInfo(context),
-            onBacktest: () => context.push(
-                '/trading/10x-backtest?version=$_version&type=${_view.toLowerCase()}'),
-          ),
-          Expanded(
-            child: ErrorView(
-              message: isStocks
-                  ? 'Stock scanner unavailable'
-                  : 'Scanner unavailable',
-              onRetry: () => ref.invalidate(provider),
-            ),
-          ),
-        ],
-      ),
-      data: (results) {
-        var filtered = results
-            .where((r) => r.signalsActive >= _minSignals)
-            .where((r) {
-              if (_signalFilter.isEmpty) return true;
-              for (final sig in _signalFilter) {
-                if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen)) {
-                  return false;
-                }
-                if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
-                if (sig == 'REC_QTR' && !r.recordQuarter) return false;
-                if (sig == 'TREND' && !r.trendUp) return false;
-              }
-              return true;
-            })
-            .toList();
-        if (_sort == 'volume') {
-          filtered.sort((a, b) => b.volumeRatio.compareTo(a.volumeRatio));
-        }
-
-        return Column(
-          children: [
-            _ScannerFilterRow(
-              minSignals: _minSignals,
-              sort: _sort,
-              view: _view,
-              version: _version,
-              signalFilter: _signalFilter,
-              onFilter: (v) => setState(() => _minSignals = v),
-              onSort: (v) => setState(() => _sort = v),
-              onView: (v) => setState(() {
-                _view = v;
-                _minSignals = 0;
-                _signalFilter = {};
-              }),
-              onVersion: (v) => setState(() {
-                _version = v;
-                _minSignals = 0;
-                _signalFilter = {};
-              }),
-              onSignalToggle: (sig) => setState(() {
-                final next = Set<String>.from(_signalFilter);
-                next.contains(sig) ? next.remove(sig) : next.add(sig);
-                _signalFilter = next;
-              }),
-              onInfo: () => _showScannerInfo(context),
-              onBacktest: () => context.push(
-                  '/trading/10x-backtest?version=$_version&type=${_view.toLowerCase()}'),
-            ),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: () => ref.refresh(provider.future),
-                child: filtered.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(AppSpacing.s8),
-                          child: Text(
-                            isStocks
-                                ? 'No stocks match the current filter.\nTry lowering the signal count.'
-                                : 'No assets match the current filter.',
-                            style: AppTypography.sm.copyWith(color: c.textMuted),
-                            textAlign: TextAlign.center,
-                          ),
+                    GestureDetector(
+                      onTap: () => _showBestSetupsInfo(context),
+                      child: Icon(Icons.info_outline_rounded,
+                          size: 16, color: c.textMuted),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.s2),
+                Text(
+                  'Signals firing today with ≥65% historical 1m win rate',
+                  style: AppTypography.xs.copyWith(color: c.textMuted),
+                ),
+                const SizedBox(height: AppSpacing.s4),
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () => setState(() =>
+                          _type = _type == 'assets' ? 'stocks' : 'assets'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: c.surfaceCard,
+                          borderRadius: BorderRadius.circular(AppRadius.full),
+                          border: Border.all(color: c.border),
                         ),
-                      )
-                    : ListView.builder(
-                        padding: EdgeInsets.only(
-                          top: AppSpacing.s3,
-                          bottom: AppSpacing.s3 +
-                              MediaQuery.of(context).padding.bottom,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _VersionDot(
+                                label: 'Assets',
+                                active: _type == 'assets',
+                                c: c),
+                            const SizedBox(width: 6),
+                            _VersionDot(
+                                label: 'Stocks',
+                                active: _type == 'stocks',
+                                c: c),
+                          ],
                         ),
-                        itemCount: filtered.length,
-                        itemBuilder: (_, i) =>
-                            _ScannerCard(item: filtered[i], version: _version),
                       ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// ── Scanner Filter Row ────────────────────────────────────────────────────────
-
-class _ScannerFilterRow extends StatelessWidget {
-  const _ScannerFilterRow({
-    required this.minSignals,
-    required this.sort,
-    required this.view,
-    required this.version,
-    required this.signalFilter,
-    required this.onFilter,
-    required this.onSort,
-    required this.onView,
-    required this.onVersion,
-    required this.onSignalToggle,
-    required this.onInfo,
-    required this.onBacktest,
-  });
-
-  final int minSignals;
-  final String sort;
-  final String view;
-  final String version;
-  final Set<String> signalFilter;
-  final ValueChanged<int> onFilter;
-  final ValueChanged<String> onSort;
-  final ValueChanged<String> onView;
-  final ValueChanged<String> onVersion;
-  final ValueChanged<String> onSignalToggle;
-  final VoidCallback onInfo;
-  final VoidCallback onBacktest;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      color: c.surface,
-      padding: const EdgeInsets.fromLTRB(
-          AppSpacing.s5, AppSpacing.s3, AppSpacing.s4, AppSpacing.s3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text('Filters',
-                  style: AppTypography.labelSm
-                      .copyWith(color: c.textMuted, letterSpacing: 0.5)),
-              const Spacer(),
-              GestureDetector(
-                onTap: onBacktest,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.history_rounded,
-                        size: 13, color: c.textSecondary),
-                    const SizedBox(width: 3),
-                    Text('Backtest',
-                        style: AppTypography.xs
-                            .copyWith(color: c.textSecondary)),
+                    ),
+                    const SizedBox(width: AppSpacing.s3),
+                    GestureDetector(
+                      onTap: () => setState(
+                          () => _version = _version == 'v1' ? 'v2' : 'v1'),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: c.surfaceCard,
+                          borderRadius: BorderRadius.circular(AppRadius.full),
+                          border: Border.all(color: c.border),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _VersionDot(
+                                label: 'v1', active: _version == 'v1', c: c),
+                            const SizedBox(width: 6),
+                            _VersionDot(
+                                label: 'v2', active: _version == 'v2', c: c),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: c.accentDim18,
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                      ),
+                      child: Text('Pro',
+                          style: AppTypography.xs.copyWith(
+                              color: c.accent, fontWeight: FontWeight.w700)),
+                    ),
                   ],
                 ),
-              ),
-              const SizedBox(width: AppSpacing.s4),
-              GestureDetector(
-                onTap: onInfo,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('How it works',
-                        style: AppTypography.xs.copyWith(color: c.accent)),
-                    const SizedBox(width: 4),
-                    Icon(Icons.info_outline_rounded,
-                        size: 15, color: c.accent),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s2),
-          Row(
-            children: [
-              Text('Type:',
-                  style: AppTypography.xs.copyWith(color: c.textMuted)),
-              const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
-                label: 'Assets',
-                active: view == 'Assets',
-                onTap: () => onView('Assets'),
-              ),
-              const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
-                label: 'Stocks',
-                active: view == 'Stocks',
-                onTap: () => onView('Stocks'),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s2),
-          Row(
-            children: [
-              Text('Ver:',
-                  style: AppTypography.xs.copyWith(color: c.textMuted)),
-              const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
-                label: 'v1 Original',
-                active: version == 'v1',
-                onTap: () => onVersion('v1'),
-              ),
-              const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
-                label: 'v2 Pine-Aligned',
-                active: version == 'v2',
-                onTap: () => onVersion('v2'),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _FilterChip(
-                  label: 'All',
-                  active: minSignals == 0,
-                  onTap: () => onFilter(0),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: '1+ Signal',
-                  active: minSignals == 1,
-                  onTap: () => onFilter(1),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: '2+ Signals',
-                  active: minSignals == 2,
-                  onTap: () => onFilter(2),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: '3 Signals',
-                  active: minSignals == 3,
-                  onTap: () => onFilter(3),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: '4 Signals',
-                  active: minSignals == 4,
-                  onTap: () => onFilter(4),
+                const SizedBox(height: AppSpacing.s4),
+                Container(
+                  decoration: BoxDecoration(
+                    color: c.surfaceCard,
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    border: Border.all(color: c.border),
+                  ),
+                  child: !isPro
+                      ? _BestSetupsLockedBody(c: c, context: context)
+                      : async.when(
+                          loading: () => _BestSetupsLoadingBody(c: c),
+                          error: (_, __) => Padding(
+                            padding: const EdgeInsets.all(AppSpacing.s4),
+                            child: Text('Unable to load setups',
+                                style: AppTypography.xs
+                                    .copyWith(color: c.textMuted)),
+                          ),
+                          data: (resp) {
+                            if (!resp.cacheWarm) {
+                              return Padding(
+                                padding: const EdgeInsets.all(AppSpacing.s4),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.hourglass_top_rounded,
+                                        size: 14, color: c.textMuted),
+                                    const SizedBox(width: 6),
+                                    Text('Warming up — check back in ~2 min',
+                                        style: AppTypography.xs
+                                            .copyWith(color: c.textMuted)),
+                                  ],
+                                ),
+                              );
+                            }
+                            if (resp.setups.isEmpty) {
+                              return Padding(
+                                padding: const EdgeInsets.all(AppSpacing.s4),
+                                child: Text(
+                                    'No setups above 65% win rate today',
+                                    style: AppTypography.xs
+                                        .copyWith(color: c.textMuted)),
+                              );
+                            }
+                            return Column(
+                              children: [
+                                ...resp.setups.map((s) => _SetupRow(
+                                      setup: s,
+                                      version: _version,
+                                      type: _type,
+                                    )),
+                                GestureDetector(
+                                  onTap: () => context.push(
+                                      '/trading/10x-backtest?version=$_version&type=$_type'),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: AppSpacing.s4,
+                                        vertical: AppSpacing.s3),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text('View Backtest History',
+                                            style: AppTypography.xs
+                                                .copyWith(color: c.accent)),
+                                        const SizedBox(width: 4),
+                                        Icon(Icons.arrow_forward_rounded,
+                                            size: 12, color: c.accent),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                Text('Signals:',
-                    style: AppTypography.xs.copyWith(color: c.textMuted)),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: 'VOL',
-                  active: signalFilter.contains('VOL'),
-                  onTap: () => onSignalToggle('VOL'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: 'HEARTBEAT',
-                  active: signalFilter.contains('HEARTBEAT'),
-                  onTap: () => onSignalToggle('HEARTBEAT'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: 'REC. QTR',
-                  active: signalFilter.contains('REC_QTR'),
-                  onTap: () => onSignalToggle('REC_QTR'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _FilterChip(
-                  label: 'TREND ↑',
-                  active: signalFilter.contains('TREND'),
-                  disabled: version == 'v1',
-                  onTap: () => onSignalToggle('TREND'),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSpacing.s2),
-          Row(
-            children: [
-              Text('Sort:',
-                  style: AppTypography.xs.copyWith(color: c.textMuted)),
-              const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
-                label: 'Signal Count',
-                active: sort == 'signals',
-                onTap: () => onSort('signals'),
-              ),
-              const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
-                label: 'Volume Ratio',
-                active: sort == 'volume',
-                onTap: () => onSort('volume'),
-              ),
-            ],
-          ),
+          const SizedBox(height: AppSpacing.s5),
+          _SectorBestSetupsCard(version: _version),
         ],
       ),
     );
@@ -732,45 +369,15 @@ class _FilterChip extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
-    this.disabled = false,
   });
 
   final String label;
   final bool active;
   final VoidCallback onTap;
-  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-
-    if (disabled) {
-      return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-        decoration: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: c.border.withAlpha(80)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.close_rounded, size: 9, color: c.textFaint),
-            const SizedBox(width: 3),
-            Text(
-              label,
-              style: AppTypography.xs.copyWith(
-                color: c.textFaint,
-                fontWeight: FontWeight.w500,
-                decoration: TextDecoration.lineThrough,
-                decorationColor: c.textFaint,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
 
     return GestureDetector(
       onTap: onTap,
@@ -790,253 +397,6 @@ class _FilterChip extends StatelessWidget {
             color: active ? c.accent : c.textSecondary,
             fontWeight: active ? FontWeight.w700 : FontWeight.w500,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Scanner Card ──────────────────────────────────────────────────────────────
-
-class _ScannerCard extends StatelessWidget {
-  const _ScannerCard({required this.item, required this.version});
-
-  final TenXScanResult item;
-  final String version;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final isUp = item.changePercent >= 0;
-    final pctColor = isUp ? c.positive : c.danger;
-
-    return GestureDetector(
-      onTap: () => context.push(
-        '/asset/${Uri.encodeComponent(item.symbol)}'
-        '?name=${Uri.encodeComponent(item.name)}',
-      ),
-      child: GlassCard(
-        margin: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.s5,
-          vertical: AppSpacing.s2,
-        ),
-        padding: const EdgeInsets.all(AppSpacing.s4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                if (item.category == 'Stocks') ...[
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: context.colors.surfaceCard,
-                      borderRadius: BorderRadius.circular(AppRadius.xs),
-                      border: Border.all(color: context.colors.border),
-                    ),
-                    child: Text(
-                      item.symbol,
-                      style: AppTypography.xs.copyWith(
-                          color: context.colors.textSecondary,
-                          fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.s2),
-                ] else if (item.flag.isNotEmpty) ...[
-                  Text(item.flag, style: const TextStyle(fontSize: 18)),
-                  const SizedBox(width: AppSpacing.s2),
-                ],
-                Expanded(
-                  child: Text(
-                    item.name,
-                    style: AppTypography.labelLg
-                        .copyWith(color: c.textPrimary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                Text(
-                  _fmtPrice(item.price),
-                  style: AppTypography.numericLg
-                      .copyWith(color: c.textPrimary),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PctChip(pct: item.changePercent, color: pctColor),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.s3),
-            Wrap(
-              spacing: AppSpacing.s2,
-              runSpacing: AppSpacing.s2,
-              children: [
-                _SignalPill(
-                  label: item.volumeRatio > 0
-                      ? 'VOL ${item.volumeRatio.toStringAsFixed(1)}x'
-                      : 'VOL —',
-                  active: item.volumeSpike && item.volumeGreen,
-                  activeColor: item.volumeSpike && !item.volumeGreen
-                      ? c.warning
-                      : c.positive,
-                ),
-                _SignalPill(
-                  label: 'HEARTBEAT',
-                  active: item.heartbeat,
-                  activeColor: c.accent,
-                ),
-                _SignalPill(
-                  label: 'REC. QTR',
-                  active: item.recordQuarter,
-                  activeColor: c.positive,
-                  locked: !item.epsApplicable,
-                ),
-                if (item.trendUp || item.signalsActive >= 4)
-                  _SignalPill(
-                    label: 'TREND ↑',
-                    active: item.trendUp,
-                    activeColor: c.accent,
-                  ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.s3),
-            _SignalDots(
-                count: item.signalsActive,
-                total: version == 'v2' ? 4 : 3),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _fmtPrice(double p) {
-    if (p > 1000) return p.toStringAsFixed(0);
-    if (p < 1) return p.toStringAsFixed(4);
-    return p.toStringAsFixed(2);
-  }
-}
-
-// ── Signal Pill ───────────────────────────────────────────────────────────────
-
-class _SignalPill extends StatelessWidget {
-  const _SignalPill({
-    required this.label,
-    required this.active,
-    required this.activeColor,
-    this.locked = false,
-  });
-
-  final String label;
-  final bool active;
-  final Color activeColor;
-  final bool locked;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final color = active ? activeColor : c.textFaint;
-    final bg = active ? activeColor.withAlpha(30) : Colors.transparent;
-    final border = active ? activeColor.withAlpha(80) : c.border;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        border: Border.all(color: border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (locked) ...[
-            Icon(Icons.lock_rounded, size: 9, color: c.textMuted),
-            const SizedBox(width: 3),
-          ],
-          Text(
-            label,
-            style: AppTypography.xs.copyWith(
-              color: color,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Signal Dots ───────────────────────────────────────────────────────────────
-
-class _SignalDots extends StatelessWidget {
-  const _SignalDots({required this.count, this.total = 3});
-
-  final int count;
-  final int total;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Row(
-      children: [
-        Text(
-          '$count of $total signals',
-          style: AppTypography.xs.copyWith(color: c.textMuted),
-        ),
-        const SizedBox(width: AppSpacing.s2),
-        ...List.generate(
-          total,
-          (i) => Container(
-            width: 8,
-            height: 8,
-            margin: const EdgeInsets.only(right: 4),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: i < count ? c.accent : c.border,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ── Pct Chip ──────────────────────────────────────────────────────────────────
-
-class _PctChip extends StatelessWidget {
-  const _PctChip({required this.pct, required this.color});
-
-  final double pct;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final sign = pct >= 0 ? '+' : '';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withAlpha(25),
-        borderRadius: BorderRadius.circular(AppRadius.xs),
-        border: Border.all(color: color.withAlpha(60)),
-      ),
-      child: RichText(
-        text: TextSpan(
-          children: [
-            TextSpan(
-              text: '$sign${pct.toStringAsFixed(2)}%',
-              style: AppTypography.xs.copyWith(
-                color: color,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            TextSpan(
-              text: ' 1D',
-              style: AppTypography.xs.copyWith(
-                color: color.withAlpha(160),
-                fontWeight: FontWeight.w500,
-                fontSize: 9,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -1253,30 +613,6 @@ class _SetupRow extends StatelessWidget {
               ],
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Scanner Skeleton ──────────────────────────────────────────────────────────
-
-class _ScannerSkeleton extends StatelessWidget {
-  const _ScannerSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return ListView.builder(
-      padding: const EdgeInsets.all(AppSpacing.s5),
-      itemCount: 6,
-      itemBuilder: (_, __) => Container(
-        height: 110,
-        margin: const EdgeInsets.only(bottom: AppSpacing.s3),
-        decoration: BoxDecoration(
-          color: c.surfaceCard,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: c.border),
         ),
       ),
     );
@@ -1619,11 +955,18 @@ class _CongressTradeCard extends StatelessWidget {
                 ),
                 const SizedBox(width: AppSpacing.s2),
                 Expanded(
-                  child: Text(
-                    trade.memberName,
-                    style: AppTypography.xs.copyWith(color: c.textSecondary),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  child: GestureDetector(
+                    onTap: () => context.push(
+                      '/politician?name=${Uri.encodeComponent(trade.memberName)}'
+                      '&chamber=${Uri.encodeComponent(trade.chamber)}',
+                    ),
+                    child: Text(
+                      trade.memberName,
+                      style: AppTypography.xs.copyWith(
+                          color: c.accent, fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
               ],
@@ -1859,6 +1202,21 @@ class _MetaPill extends StatelessWidget {
 }
 // ── Best Setups Info Sheet ────────────────────────────────────────────────────
 
+String _fmtRelative(String iso) {
+  try {
+    final dt = DateTime.parse(iso).toLocal();
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  } catch (_) {
+    return '';
+  }
+}
+
 void _showBestSetupsInfo(BuildContext context) {
   final c = context.colors;
   showModalBottomSheet(
@@ -2008,7 +1366,300 @@ class _BestSetupsInfoRow extends StatelessWidget {
   }
 }
 
-void _showScannerInfo(BuildContext context) {
+
+// ── Sector Best Setups Card ───────────────────────────────────────────────────
+
+class _SectorBestSetupsCard extends ConsumerWidget {
+  const _SectorBestSetupsCard({required this.version});
+  final String version;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final isPro = EntitlementService.can('best_setups');
+    final async = ref.watch(_sectorBestSetupsProvider(version));
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s4),
+      decoration: BoxDecoration(
+        color: c.surfaceElevated,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.donut_large_rounded, size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Best Setups by Sector',
+                    style: AppTypography.headingSm
+                        .copyWith(color: c.textPrimary)),
+              ),
+              GestureDetector(
+                onTap: () => _showSectorBestSetupsInfo(context),
+                child: Icon(Icons.info_outline_rounded,
+                    size: 16, color: c.textMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            'Top stocks per sector in Leading & Improving RRG quadrants',
+            style: AppTypography.xs.copyWith(color: c.textMuted),
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          Container(
+            decoration: BoxDecoration(
+              color: c.surfaceCard,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: c.border),
+            ),
+            child: !isPro
+                ? _BestSetupsLockedBody(c: c, context: context)
+                : async.when(
+                    loading: () => _BestSetupsLoadingBody(c: c),
+                    error: (_, __) => Padding(
+                      padding: const EdgeInsets.all(AppSpacing.s4),
+                      child: Text('Unable to load sector setups',
+                          style:
+                              AppTypography.xs.copyWith(color: c.textMuted)),
+                    ),
+                    data: (resp) {
+                      if (!resp.cacheWarm) {
+                        return Padding(
+                          padding: const EdgeInsets.all(AppSpacing.s4),
+                          child: Row(
+                            children: [
+                              Icon(Icons.hourglass_top_rounded,
+                                  size: 14, color: c.textMuted),
+                              const SizedBox(width: 6),
+                              Text('Warming up — check back in ~2 min',
+                                  style: AppTypography.xs
+                                      .copyWith(color: c.textMuted)),
+                            ],
+                          ),
+                        );
+                      }
+                      final hasLeading = resp.leading.isNotEmpty;
+                      final hasImproving = resp.improving.isNotEmpty;
+                      if (!hasLeading && !hasImproving) {
+                        return Padding(
+                          padding: const EdgeInsets.all(AppSpacing.s4),
+                          child: Text(
+                            'No leading or improving sectors with active setups right now.',
+                            style: AppTypography.xs
+                                .copyWith(color: c.textMuted),
+                          ),
+                        );
+                      }
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (hasLeading) ...[
+                            _QuadrantHeader(
+                                label: 'LEADING', color: c.positive, c: c),
+                            ...resp.leading.map(
+                                (g) => _SectorGroup(group: g, c: c)),
+                          ],
+                          if (hasImproving) ...[
+                            _QuadrantHeader(
+                                label: 'IMPROVING', color: c.warning, c: c),
+                            ...resp.improving.map(
+                                (g) => _SectorGroup(group: g, c: c)),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuadrantHeader extends StatelessWidget {
+  const _QuadrantHeader(
+      {required this.label, required this.color, required this.c});
+  final String label;
+  final Color color;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          const EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s4, AppSpacing.s4, AppSpacing.s2),
+      child: Row(
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 2),
+            decoration: BoxDecoration(
+              color: color.withAlpha(22),
+              borderRadius: BorderRadius.circular(AppRadius.xs),
+              border: Border.all(color: color.withAlpha(70)),
+            ),
+            child: Text(
+              label,
+              style: AppTypography.xs.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectorGroup extends StatelessWidget {
+  const _SectorGroup({required this.group, required this.c});
+  final SectorBestSetupsGroup group;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            border: Border(top: BorderSide(color: c.border)),
+          ),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, AppSpacing.s2),
+          child: Row(
+            children: [
+              Text(group.emoji, style: const TextStyle(fontSize: 14)),
+              const SizedBox(width: AppSpacing.s2),
+              Text(
+                group.sector,
+                style: AppTypography.labelSm
+                    .copyWith(color: c.textPrimary, fontWeight: FontWeight.w700),
+              ),
+              const Spacer(),
+              Text(
+                '${group.stocks.length}',
+                style: AppTypography.xs.copyWith(color: c.textMuted),
+              ),
+            ],
+          ),
+        ),
+        ...group.stocks.map((s) => _SectorStockRow(entry: s, c: c)),
+      ],
+    );
+  }
+}
+
+class _SectorStockRow extends StatelessWidget {
+  const _SectorStockRow({required this.entry, required this.c});
+  final SectorStockEntry entry;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUp = entry.changePercent >= 0;
+    final changeColor = isUp ? c.positive : c.danger;
+
+    return GestureDetector(
+      onTap: () => context.push(
+        '/asset/${Uri.encodeComponent(entry.symbol)}'
+        '?name=${Uri.encodeComponent(entry.name)}',
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.name,
+                    style: AppTypography.xs
+                        .copyWith(color: c.textPrimary, fontWeight: FontWeight.w600),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: c.surfaceCard,
+                          borderRadius: BorderRadius.circular(AppRadius.xs),
+                          border: Border.all(color: c.border),
+                        ),
+                        child: Text(
+                          entry.symbol,
+                          style: AppTypography.xs.copyWith(
+                              color: c.textMuted,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      ...List.generate(4, (i) => Padding(
+                            padding: const EdgeInsets.only(right: 2),
+                            child: Container(
+                              width: 5,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: i < entry.signalsActive
+                                    ? c.accent
+                                    : c.border,
+                              ),
+                            ),
+                          )),
+                      if (entry.winRate1m != null) ...[
+                        const SizedBox(width: 4),
+                        Text(
+                          '${entry.winRate1m!.toStringAsFixed(0)}% 1m',
+                          style: AppTypography.xs.copyWith(
+                              color: entry.winRate1m! >= 65
+                                  ? c.positive
+                                  : entry.winRate1m! >= 50
+                                      ? c.warning
+                                      : c.danger,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '\$${entry.price < 1 ? entry.price.toStringAsFixed(4) : entry.price.toStringAsFixed(2)}',
+                  style: AppTypography.xs
+                      .copyWith(color: c.textPrimary, fontWeight: FontWeight.w600),
+                ),
+                Text(
+                  '${isUp ? '+' : ''}${entry.changePercent.toStringAsFixed(2)}%',
+                  style: AppTypography.xs.copyWith(color: changeColor),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+void _showSectorBestSetupsInfo(BuildContext context) {
   final c = context.colors;
   showModalBottomSheet(
     context: context,
@@ -2019,9 +1670,9 @@ void _showScannerInfo(BuildContext context) {
     ),
     builder: (_) => DraggableScrollableSheet(
       expand: false,
-      initialChildSize: 0.85,
-      minChildSize: 0.5,
-      maxChildSize: 0.95,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.92,
       builder: (ctx, scrollController) => ListView(
         controller: scrollController,
         padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
@@ -2029,7 +1680,8 @@ void _showScannerInfo(BuildContext context) {
         children: [
           Center(
             child: Container(
-              width: 36, height: 4,
+              width: 36,
+              height: 4,
               decoration: BoxDecoration(
                   color: c.border, borderRadius: BorderRadius.circular(2)),
             ),
@@ -2037,10 +1689,10 @@ void _showScannerInfo(BuildContext context) {
           const SizedBox(height: AppSpacing.s5),
           Row(
             children: [
-              Icon(Icons.bolt_rounded, size: 20, color: c.warning),
-              const SizedBox(width: AppSpacing.s3),
+              Icon(Icons.donut_large_rounded, size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
               Expanded(
-                child: Text('How the 10X Scanner Works',
+                child: Text('Best Setups by Sector',
                     style: AppTypography.headingMd
                         .copyWith(color: c.textPrimary)),
               ),
@@ -2048,57 +1700,39 @@ void _showScannerInfo(BuildContext context) {
           ),
           const SizedBox(height: AppSpacing.s3),
           Text(
-            'The 10X Scanner identifies assets in a quiet accumulation phase — low volatility, tightening range, building volume — that historically precede explosive breakout moves.',
-            style: AppTypography.sm
-                .copyWith(color: c.textSecondary, height: 1.55),
+            'Shows stocks with at least one active 10X signal, grouped by sector — but only for sectors currently in the Leading or Improving RRG quadrant.',
+            style:
+                AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
           ),
           const SizedBox(height: AppSpacing.s5),
-          Text('The Four Signals',
+          Text('RRG Quadrants',
               style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
           const SizedBox(height: AppSpacing.s4),
-          _ScannerSignalRow(
-            icon: Icons.bar_chart_rounded,
-            color: c.positive,
-            label: 'VOL',
-            title: 'Volume Spike',
-            rule: 'Current volume ≥ 2× the 20-bar average, AND the candle closes green',
-            explanation: 'A surge in buying volume on an up-candle signals aggressive accumulation. Smart money is stepping in.',
-            examples: 'GC=F, BTC-USD, SPY — often triggers before earnings or macro catalysts.',
+          _BestSetupsInfoRow(
             c: c,
+            label: 'Leading',
+            body: 'Sector is outperforming the S&P 500 (RS Ratio > 100) AND gaining relative momentum (RS Momentum > 100). Strongest rotation zone.',
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          _BestSetupsInfoRow(
+            c: c,
+            label: 'Improving',
+            body: 'Sector is underperforming vs S&P 500 (RS Ratio < 100) but its momentum is rising (RS Momentum > 100). Early-rotation zone — setups here can be early-stage.',
           ),
           const SizedBox(height: AppSpacing.s5),
-          _ScannerSignalRow(
-            icon: Icons.favorite_rounded,
-            color: c.accent,
-            label: 'HEARTBEAT',
-            title: 'Heartbeat (Near Breakout)',
-            rule: 'Price is within 5% of the 52-week high, AND 20-day range is < 8% of price',
-            explanation: 'The asset is coiling just below a major resistance level with decreasing volatility — the classic pre-breakout setup.',
-            examples: 'Gold near ATH, AAPL in tight consolidation.',
+          Text('Within each sector',
+              style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s4),
+          _BestSetupsInfoRow(
             c: c,
+            label: 'Signal dots',
+            body: 'Filled dots = signals active right now (Volume Spike, Heartbeat, Record Quarter, Trend). More dots = stronger confluence.',
           ),
-          const SizedBox(height: AppSpacing.s5),
-          _ScannerSignalRow(
-            icon: Icons.emoji_events_rounded,
-            color: c.positive,
-            label: 'REC. QTR',
-            title: 'Record Quarter',
-            rule: 'Latest quarterly EPS or revenue is an all-time high for the company',
-            explanation: 'Fundamental momentum: the business is performing at peak. Combines well with technical signals.',
-            examples: 'Stock scanner only. N/A for indices, commodities, and forex.',
-            note: 'N/A shown as a lock icon — EPS data not available for this asset class.',
+          const SizedBox(height: AppSpacing.s4),
+          _BestSetupsInfoRow(
             c: c,
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          _ScannerSignalRow(
-            icon: Icons.trending_up_rounded,
-            color: c.accent,
-            label: 'TREND ↑',
-            title: 'Trend Confirmation (v2 only)',
-            rule: 'Price closed above the 50-bar high, confirming a breakout from the accumulation range',
-            explanation: 'v2 adds this 4th signal as a breakout confirmation gate — the asset has already started moving.',
-            examples: 'v2 scanner only. Not available in v1.',
-            c: c,
+            label: '% 1m',
+            body: 'Historical win rate over 1 month when this many signals were active. Green ≥ 65%, orange 50–64%, red below 50%.',
           ),
           const SizedBox(height: AppSpacing.s5),
           Container(
@@ -2109,9 +1743,9 @@ void _showScannerInfo(BuildContext context) {
               border: Border.all(color: c.warning.withAlpha(50)),
             ),
             child: Text(
-              'The scanner is a discovery tool, not a buy signal. Always confirm with your own analysis, check macro context, and apply proper risk management before entering any position.',
+              'Sector quadrants are computed from 1-week and 1-month ETF performance relative to the S&P 500. They update every 15 minutes.',
               style: AppTypography.xs
-                  .copyWith(color: c.textSecondary, height: 1.6),
+                  .copyWith(color: c.textSecondary, height: 1.55),
             ),
           ),
         ],
@@ -2191,6 +1825,23 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
                 'OGE Form 278-T · Transactions ≥ \$100K · Source: Office of Government Ethics',
                 style: AppTypography.xs.copyWith(color: c.textFaint, height: 1.4),
               ),
+              const SizedBox(height: AppSpacing.s1),
+              async.whenOrNull(
+                data: (r) {
+                  final ts = r.lastUpdated.isNotEmpty ? _fmtRelative(r.lastUpdated) : null;
+                  if (ts == null) return null;
+                  return Row(
+                    children: [
+                      Icon(Icons.update_rounded, size: 11, color: c.textFaint),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Updated $ts',
+                        style: AppTypography.xs.copyWith(color: c.textFaint, fontSize: 10),
+                      ),
+                    ],
+                  );
+                },
+              ) ?? const SizedBox.shrink(),
               const SizedBox(height: AppSpacing.s3),
               _SearchField(
                 controller: _searchCtrl,
@@ -2538,129 +2189,6 @@ class _PresidentialNoData extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-// ── Scanner Signal Row ─────────────────────────────────────────────────────────
-
-class _ScannerSignalRow extends StatelessWidget {
-  const _ScannerSignalRow({
-    required this.icon,
-    required this.color,
-    required this.label,
-    required this.title,
-    required this.rule,
-    required this.explanation,
-    required this.examples,
-    required this.c,
-    this.note,
-  });
-
-  final IconData icon;
-  final Color color;
-  final String label;
-  final String title;
-  final String rule;
-  final String explanation;
-  final String examples;
-  final String? note;
-  final AppPalette c;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: 36, height: 36,
-          decoration: BoxDecoration(
-            color: color.withAlpha(25),
-            borderRadius: BorderRadius.circular(AppRadius.sm),
-            border: Border.all(color: color.withAlpha(80)),
-          ),
-          child: Icon(icon, size: 18, color: color),
-        ),
-        const SizedBox(width: AppSpacing.s4),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: color.withAlpha(25),
-                      borderRadius: BorderRadius.circular(AppRadius.full),
-                      border: Border.all(color: color.withAlpha(80)),
-                    ),
-                    child: Text(label,
-                        style: AppTypography.xs.copyWith(
-                            color: color,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.3)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              Text(title,
-                  style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.s3),
-                decoration: BoxDecoration(
-                  color: color.withAlpha(12),
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  border: Border.all(color: color.withAlpha(40)),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.rule_rounded, size: 13, color: color),
-                    const SizedBox(width: AppSpacing.s2),
-                    Expanded(
-                      child: Text(
-                        rule,
-                        style: AppTypography.xs.copyWith(
-                            color: c.textPrimary,
-                            height: 1.5,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.s3),
-              Text(explanation,
-                  style: AppTypography.xs
-                      .copyWith(color: c.textSecondary, height: 1.6)),
-              const SizedBox(height: AppSpacing.s3),
-              Text('Examples: $examples',
-                  style: AppTypography.xs.copyWith(
-                      color: c.textMuted,
-                      height: 1.5,
-                      fontStyle: FontStyle.italic)),
-              if (note != null) ...[
-                const SizedBox(height: AppSpacing.s2),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline_rounded, size: 12, color: c.accent),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(note!,
-                          style: AppTypography.xs
-                              .copyWith(color: c.accent, height: 1.5)),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      ],
     );
   }
 }

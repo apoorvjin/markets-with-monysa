@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import { fetchYahooPrice, fetchRangeData } from "./shared";
+import { getDevicePlan, isPro } from "../plan-enforcement";
+import { INDEX_SYMBOLS } from "../data/index_constituents";
 
 const HEATMAP_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 let heatmapCache: { data: unknown; timestamp: number } | null = null;
@@ -235,4 +237,433 @@ export function registerHeatmapRoutes(app: Express): void {
       res.status(500).json({ error: "Failed to fetch assets heatmap" });
     }
   });
+
+  // ── Treemap (Pro): S&P 500 stocks weighted by market cap, colored by 1D %change ──
+  // GET /api/heatmap/treemap?index=sp500&limit=100
+  // Constituents from a public CSV (cached 24h), live marketCap + %change from
+  // Yahoo Finance quoteSummary (cached 5min).
+  app.get("/api/heatmap/treemap", async (req, res) => {
+    try {
+      if (!isPro(getDevicePlan(req))) {
+        return res.status(403).json({
+          error: "Treemap Heatmap requires Pro plan.",
+          code: "PLAN_REQUIRED",
+        });
+      }
+
+      const index = (req.query.index as string | undefined)?.toLowerCase() ?? "sp500";
+      const SUPPORTED_INDICES = new Set([
+        "sp500", "ndx", "dji", "ftse100", "nifty50",
+        "dax40", "hsi", "nikkei225", "russell2000",
+      ]);
+      if (!SUPPORTED_INDICES.has(index)) {
+        return res.status(400).json({
+          error: `Unsupported index: ${index}. Supported: ${[...SUPPORTED_INDICES].join(", ")}.`,
+        });
+      }
+
+      const ALLOWED_LIMITS = new Set([30, 50, 100, 150, 200, 500]);
+      const rawLimit = parseInt((req.query.limit as string | undefined) ?? "100", 10);
+      const limit = ALLOWED_LIMITS.has(rawLimit) ? rawLimit : 100;
+
+      const timeframe = (req.query.timeframe as string | undefined)?.toLowerCase() ?? "1d";
+      if (!SUPPORTED_TIMEFRAMES.has(timeframe)) {
+        return res.status(400).json({
+          error: `Unsupported timeframe: ${timeframe}. Supported: ${[...SUPPORTED_TIMEFRAMES].join(", ")}.`,
+        });
+      }
+
+      const cacheKey = `${index}:${timeframe}`;
+      await ensureTreemapCacheFresh(cacheKey, index, timeframe, limit);
+      const cached = treemapDataCache.get(cacheKey)!;
+      const top = cached.stocks.slice(0, limit);
+      return res.json({
+        index,
+        timeframe,
+        limit,
+        total: cached.stocks.length,
+        marketState: cached.marketState,
+        stocks: top,
+        lastUpdated: cached.lastUpdated,
+      });
+    } catch (e) {
+      console.error("Error fetching treemap data:", e);
+      res.status(500).json({ error: "Failed to fetch treemap data" });
+    }
+  });
+}
+
+// ── Treemap data pipeline ──────────────────────────────────────────────────────
+
+type TreemapStock = {
+  symbol: string;
+  name: string;
+  sector: string;
+  marketCap: number;
+  changePercent: number;
+  price: number;
+  dayHigh: number | null;
+  dayLow: number | null;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+  // Sparkline closes for the active timeframe. Present when timeframe !== "1d".
+  sparkline: number[] | null;
+  // Pre/post market data — only meaningful when marketState is PRE/POST.
+  preMarketPrice: number | null;
+  preMarketChangePercent: number | null;
+  postMarketPrice: number | null;
+  postMarketChangePercent: number | null;
+};
+
+const SUPPORTED_TIMEFRAMES = new Set(["1d", "1w", "1m", "ytd"]);
+// Yahoo /v8/finance/chart range values per timeframe.
+const TIMEFRAME_RANGE: Record<string, string> = {
+  "1w": "5d",
+  "1m": "1mo",
+  "ytd": "ytd",
+};
+
+// For S&P 500 we get name+sector from the public CSV up front. For other
+// indices we carry just the symbol and let Yahoo fill in name+sector at
+// quote time via assetProfile.
+export type Constituent = { symbol: string; name?: string; sector?: string };
+
+const CONSTITUENT_TTL = 24 * 60 * 60 * 1000;     // 24h
+const TREEMAP_TTL = 5 * 60 * 1000;               // 5m live quotes
+
+const constituentCache = new Map<string, { data: Constituent[]; timestamp: number }>();
+const treemapDataCache = new Map<string, {
+  stocks: TreemapStock[];
+  marketState: string | null;
+  lastUpdated: string;
+  timestamp: number;
+}>();
+const treemapInFlight = new Map<string, Promise<void>>();
+
+async function ensureTreemapCacheFresh(
+  cacheKey: string,
+  index: string,
+  timeframe: string,
+  limit: number,
+): Promise<void> {
+  const cached = treemapDataCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < TREEMAP_TTL && cached.stocks.length >= limit) return;
+
+  let inFlight = treemapInFlight.get(cacheKey);
+  if (!inFlight) {
+    inFlight = (async () => {
+      const constituents = await fetchConstituents(index);
+      const needsAssetProfile = constituents.some(c => !c.sector || !c.name);
+      const symbols = constituents.map(c => c.symbol);
+      const quotes = await fetchYahooQuoteSummaryBatch(
+        symbols,
+        { includeAssetProfile: needsAssetProfile },
+      );
+
+      // For non-1d timeframes we additionally fetch chart range data per symbol
+      // — it gives both the period %change and a daily-closes sparkline.
+      let rangeMap: Map<string, { changePercent: number; sparkline: number[] }> = new Map();
+      if (timeframe !== "1d") {
+        rangeMap = await fetchRangeBatch(symbols, TIMEFRAME_RANGE[timeframe]);
+      }
+
+      const stocks: TreemapStock[] = [];
+      for (const c of constituents) {
+        const q = quotes.get(c.symbol);
+        if (!q || q.marketCap == null || q.price == null) continue;
+        // 1d → realtime regularMarketChangePercent; otherwise the computed
+        // %change between closes[0] and closes[-1] of the range.
+        let changePercent: number | null;
+        let sparkline: number[] | null = null;
+        if (timeframe === "1d") {
+          changePercent = q.changePercent;
+        } else {
+          const r = rangeMap.get(c.symbol);
+          if (!r) continue;
+          changePercent = r.changePercent;
+          sparkline = r.sparkline;
+        }
+        if (changePercent == null) continue;
+        const name = c.name ?? q.longName ?? q.shortName ?? c.symbol;
+        const sector = c.sector ?? q.sector ?? "Unknown";
+        stocks.push({
+          symbol: c.symbol,
+          name,
+          sector,
+          marketCap: q.marketCap,
+          changePercent: +changePercent.toFixed(2),
+          price: +q.price.toFixed(2),
+          dayHigh: q.dayHigh,
+          dayLow: q.dayLow,
+          fiftyTwoWeekHigh: q.fiftyTwoWeekHigh,
+          fiftyTwoWeekLow: q.fiftyTwoWeekLow,
+          sparkline,
+          preMarketPrice: q.preMarketPrice,
+          preMarketChangePercent: q.preMarketChangePercent,
+          postMarketPrice: q.postMarketPrice,
+          postMarketChangePercent: q.postMarketChangePercent,
+        });
+      }
+      stocks.sort((a, b) => b.marketCap - a.marketCap);
+
+      let marketState: string | null = null;
+      {
+        const counts = new Map<string, number>();
+        for (const q of quotes.values()) {
+          if (q.marketState) counts.set(q.marketState, (counts.get(q.marketState) ?? 0) + 1);
+        }
+        let max = 0;
+        for (const [state, n] of counts) {
+          if (n > max) { max = n; marketState = state; }
+        }
+      }
+      treemapDataCache.set(cacheKey, {
+        stocks,
+        marketState,
+        lastUpdated: new Date().toISOString(),
+        timestamp: Date.now(),
+      });
+    })().finally(() => { treemapInFlight.delete(cacheKey); });
+    treemapInFlight.set(cacheKey, inFlight);
+  }
+  await inFlight;
+}
+
+// Bounded-concurrency fan-out of fetchRangeData. Mirrors the quoteSummary batch
+// fetcher so non-1d treemap refreshes have predictable latency.
+async function fetchRangeBatch(
+  symbols: string[],
+  range: string,
+): Promise<Map<string, { changePercent: number; sparkline: number[] }>> {
+  const out = new Map<string, { changePercent: number; sparkline: number[] }>();
+  const CONCURRENCY = 10;
+  let idx = 0;
+  async function worker() {
+    while (idx < symbols.length) {
+      const my = idx++;
+      const sym = symbols[my];
+      try {
+        const r = await fetchRangeData(sym, range);
+        if (r && typeof r.changePercent === "number" && Array.isArray(r.sparkline)) {
+          out.set(sym, { changePercent: r.changePercent, sparkline: r.sparkline });
+        }
+      } catch { /* swallow */ }
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  return out;
+}
+
+// Public, anonymous CSV of S&P 500 constituents with GICS sector labels.
+// Refreshed on every index rebalance by the dataset maintainers.
+const SP500_CSV_URL = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
+
+async function fetchConstituents(index: string): Promise<Constituent[]> {
+  const cached = constituentCache.get(index);
+  if (cached && Date.now() - cached.timestamp < CONSTITUENT_TTL) return cached.data;
+
+  let data: Constituent[];
+  if (index === "sp500") {
+    data = await fetchSp500Constituents();
+  } else {
+    const syms = INDEX_SYMBOLS[index];
+    if (!syms) throw new Error(`No constituent list for index: ${index}`);
+    data = syms.map(s => ({ symbol: s }));
+  }
+  constituentCache.set(index, { data, timestamp: Date.now() });
+  return data;
+}
+
+export async function fetchSp500Constituents(): Promise<Constituent[]> {
+  const resp = await fetch(SP500_CSV_URL, {
+    headers: { Accept: "text/csv" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!resp.ok) throw new Error(`SP500 CSV HTTP ${resp.status}`);
+  const text = await resp.text();
+  const lines = text.split(/\r?\n/).slice(1).filter(l => l.trim().length > 0);
+  const data: Constituent[] = [];
+  for (const line of lines) {
+    const parts = parseCsvLine(line);
+    if (parts.length < 3) continue;
+    const [symbol, name, sector] = parts;
+    if (!symbol || !name || !sector) continue;
+    // Yahoo uses dashes, not dots, for class-share suffixes (BRK.B → BRK-B).
+    data.push({ symbol: symbol.replace(".", "-"), name, sector });
+  }
+  return data;
+}
+
+// Minimal RFC-4180 CSV line parser — handles quoted fields with embedded commas.
+function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQ) {
+      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (ch === '"') inQ = false;
+      else cur += ch;
+    } else {
+      if (ch === ",") { out.push(cur); cur = ""; }
+      else if (ch === '"') inQ = true;
+      else cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+// ── Yahoo Finance quoteSummary with crumb auth ────────────────────────────────
+// Yahoo gates /v10/finance/quoteSummary behind a session crumb. We fetch it once,
+// hold it module-scope, and refresh on 401.
+
+type YahooQuote = {
+  marketCap: number | null;
+  price: number | null;
+  changePercent: number | null;
+  longName: string | null;
+  shortName: string | null;
+  sector: string | null;
+  marketState: string | null;
+  dayHigh: number | null;
+  dayLow: number | null;
+  fiftyTwoWeekHigh: number | null;
+  fiftyTwoWeekLow: number | null;
+  preMarketPrice: number | null;
+  preMarketChangePercent: number | null;
+  postMarketPrice: number | null;
+  postMarketChangePercent: number | null;
+};
+
+let yahooCrumb: string | null = null;
+let yahooCookies: string | null = null;
+let yahooCrumbRefresh: Promise<void> | null = null;
+
+const YF_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+
+async function refreshYahooCrumb(): Promise<void> {
+  if (yahooCrumbRefresh) return yahooCrumbRefresh;
+  yahooCrumbRefresh = (async () => {
+    await refreshYahooCrumbInner();
+  })().finally(() => { yahooCrumbRefresh = null; });
+  return yahooCrumbRefresh;
+}
+
+async function refreshYahooCrumbInner(): Promise<void> {
+  // Step 1: hit fc.yahoo.com to get A1/A3 cookies.
+  const cookieResp = await fetch("https://fc.yahoo.com", {
+    headers: { "User-Agent": YF_UA },
+    signal: AbortSignal.timeout(10_000),
+    redirect: "manual",
+  });
+  const setCookie = cookieResp.headers.get("set-cookie") ?? "";
+  yahooCookies = setCookie
+    .split(/,(?=\s*[A-Z0-9_-]+=)/)
+    .map(c => c.split(";")[0].trim())
+    .filter(Boolean)
+    .join("; ");
+
+  // Step 2: get crumb.
+  const crumbResp = await fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", {
+    headers: { "User-Agent": YF_UA, "Cookie": yahooCookies },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!crumbResp.ok) throw new Error(`Yahoo crumb fetch HTTP ${crumbResp.status}`);
+  yahooCrumb = (await crumbResp.text()).trim();
+  if (!yahooCrumb) throw new Error("Yahoo returned empty crumb");
+}
+
+async function fetchYahooQuoteSummary(
+  symbol: string,
+  opts: { includeAssetProfile?: boolean } = {},
+): Promise<YahooQuote | null> {
+  if (!yahooCrumb) await refreshYahooCrumb();
+  // summaryDetail carries 52-week high/low; price has marketCap + dayHigh/Low
+  // + pre/post-market fields; assetProfile carries sector + industry.
+  const modules = opts.includeAssetProfile
+      ? "price,summaryDetail,assetProfile"
+      : "price,summaryDetail";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=${modules}&crumb=${encodeURIComponent(yahooCrumb ?? "")}`;
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        headers: { "User-Agent": YF_UA, "Cookie": yahooCookies ?? "" },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      return null;
+    }
+    if ((resp.status === 401 || resp.status === 403) && attempt < 2) {
+      // Force a refresh on the next loop iteration. Concurrent callers share
+      // the same refresh promise via the yahooCrumbRefresh mutex.
+      yahooCrumb = null;
+      await refreshYahooCrumb();
+      continue;
+    }
+    if (resp.status === 429) {
+      await new Promise(r => setTimeout(r, 1_000 * (attempt + 1)));
+      continue;
+    }
+    if (!resp.ok) return null;
+    const body = await resp.json() as any;
+    const result = body?.quoteSummary?.result?.[0];
+    const price = result?.price;
+    const detail = result?.summaryDetail;
+    const profile = result?.assetProfile;
+    if (!price) return null;
+    const rawNum = (v: any): number | null =>
+      typeof v?.raw === "number" ? v.raw : null;
+    return {
+      marketCap: rawNum(price.marketCap),
+      price: rawNum(price.regularMarketPrice),
+      changePercent: rawNum(price.regularMarketChangePercent) != null
+        ? rawNum(price.regularMarketChangePercent)! * 100
+        : null,
+      longName: typeof price.longName === "string" ? price.longName : null,
+      shortName: typeof price.shortName === "string" ? price.shortName : null,
+      sector: typeof profile?.sector === "string" ? profile.sector : null,
+      marketState: typeof price.marketState === "string" ? price.marketState : null,
+      dayHigh: rawNum(price.regularMarketDayHigh) ?? rawNum(detail?.regularMarketDayHigh) ?? rawNum(detail?.dayHigh),
+      dayLow: rawNum(price.regularMarketDayLow) ?? rawNum(detail?.regularMarketDayLow) ?? rawNum(detail?.dayLow),
+      fiftyTwoWeekHigh: rawNum(detail?.fiftyTwoWeekHigh),
+      fiftyTwoWeekLow: rawNum(detail?.fiftyTwoWeekLow),
+      preMarketPrice: rawNum(price.preMarketPrice),
+      preMarketChangePercent: rawNum(price.preMarketChangePercent) != null
+        ? rawNum(price.preMarketChangePercent)! * 100
+        : null,
+      postMarketPrice: rawNum(price.postMarketPrice),
+      postMarketChangePercent: rawNum(price.postMarketChangePercent) != null
+        ? rawNum(price.postMarketChangePercent)! * 100
+        : null,
+    };
+  }
+  return null;
+}
+
+async function fetchYahooQuoteSummaryBatch(
+  symbols: string[],
+  opts: { includeAssetProfile?: boolean } = {},
+): Promise<Map<string, YahooQuote>> {
+  const out = new Map<string, YahooQuote>();
+  // Fan out with bounded concurrency. Yahoo tolerates ~10 concurrent for an
+  // authenticated client; matches the existing yfLimiter convention.
+  const CONCURRENCY = 10;
+  let idx = 0;
+  async function worker() {
+    while (idx < symbols.length) {
+      const my = idx++;
+      const sym = symbols[my];
+      try {
+        const q = await fetchYahooQuoteSummary(sym, opts);
+        if (q) out.set(sym, q);
+      } catch {
+        // swallow — best-effort batch.
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+  return out;
 }

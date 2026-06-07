@@ -42,11 +42,21 @@ abstract final class ApiEndpoints {
   static String get tenXEuronextStocks   => '$baseUrl/api/trading/scanner/10x/euronext';
   static String get tenXV2EuronextStocks => '$baseUrl/api/trading/scanner/10x-v2/euronext';
   static String get tenXV2Assets => '$baseUrl/api/trading/scanner/10x-v2/assets';
+  static String get tenXV3Assets => '$baseUrl/api/trading/scanner/10x-v3/assets';
+  static String get tenXV3CommoditiesAssets => '$baseUrl/api/trading/scanner/10x-v3/commodities';
+  static String get tenXV3ForexAssets => '$baseUrl/api/trading/scanner/10x-v3/forex';
+  static String get tenXV3CryptoAssets => '$baseUrl/api/trading/scanner/10x-v3/crypto';
   static String get tenXV2Stocks => '$baseUrl/api/trading/scanner/10x-v2/stocks';
+  static String tenXSingleScan({required String symbol, String? name}) =>
+      '$baseUrl/api/trading/scanner/10x/single?symbol=${Uri.encodeComponent(symbol)}'
+      '${(name != null && name.isNotEmpty) ? "&name=${Uri.encodeComponent(name)}" : ""}';
   static String tenXBacktest({required String type, required String version}) =>
       '$baseUrl/api/trading/scanner/backtest/$type?version=$version';
   static String bestSetups({required String version, required String type}) =>
       '$baseUrl/api/trading/scanner/best-setups?version=$version&type=$type';
+
+  static String bestSetupsSector({required String version}) =>
+      '$baseUrl/api/trading/best-setups-sector?version=$version';
 
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';
@@ -60,13 +70,30 @@ abstract final class ApiEndpoints {
   static String get crises => '$baseUrl/api/crises';
   static String get heatmap => '$baseUrl/api/heatmap';
   static String get heatmapAssets => '$baseUrl/api/heatmap/assets';
+  static String heatmapTreemap({
+    String index = 'sp500',
+    int limit = 100,
+    String timeframe = '1d',
+  }) =>
+      '$baseUrl/api/heatmap/treemap?index=$index&limit=$limit&timeframe=$timeframe';
 
   static String get quiverCongress         => '$baseUrl/api/quiver/congress';
   static String get quiverLobbying         => '$baseUrl/api/quiver/lobbying';
   static String get quiverInsider          => '$baseUrl/api/quiver/insider';
   static String get quiverCongressTrades   => '$baseUrl/api/quiver/congress-trades';
+  static String congressTradesByMember(String name) =>
+      '$baseUrl/api/quiver/congress-trades?memberName=${Uri.encodeComponent(name)}';
   static String get ogeTrumpTransactions   => '$baseUrl/api/oge/trump-transactions';
+  static String get houseTrades            => '$baseUrl/api/house-trades';
 
+  static String get regimeSummary    => '$baseUrl/api/trading/regime-summary';
+  static String get earningsCalendar => '$baseUrl/api/trading/earnings-calendar?days=15';
+  static String get correlation      => '$baseUrl/api/trading/correlation';
+  static String copyTrades(String memberName) =>
+      '$baseUrl/api/trading/copy-trades?memberName=${Uri.encodeComponent(memberName)}';
+  static String get yieldCurveHistory => '$baseUrl/api/economy/yield-curve-history';
+  static String get economyEvents     => '$baseUrl/api/economy/events';
+  static String get fearGreed         => '$baseUrl/api/volatility/fear-greed';
 
   static String exposureAnalysis({
     required String country,

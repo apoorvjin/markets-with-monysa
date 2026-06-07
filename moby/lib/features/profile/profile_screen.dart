@@ -6,7 +6,9 @@ import '../../core/theme/app_typography.dart';
 import '../../core/restart_widget.dart';
 import '../../providers/chart_provider_provider.dart';
 import '../../providers/font_size_provider.dart';
+import '../../providers/strategy_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../services/entitlement_service.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -39,6 +41,8 @@ class ProfileScreen extends ConsumerWidget {
           _FontSizeSection(),
           SizedBox(height: AppSpacing.s6),
           _ChartProviderSection(),
+          SizedBox(height: AppSpacing.s6),
+          _DevPlanSection(),
           SizedBox(height: AppSpacing.s6),
           _AboutSection(),
         ],
@@ -490,12 +494,200 @@ class _ChartProviderSection extends ConsumerWidget {
         ),
         const SizedBox(height: AppSpacing.s3),
         Text(
-          current == ChartDataProvider.tradingView
-              ? 'TradingView: full-featured live charts with 100+ indicators.'
-              : 'Yahoo Finance: fast candles with volume and VWAP overlay.',
+          switch (current) {
+            ChartDataProvider.tradingView =>
+              'TradingView: full-featured live charts with 100+ indicators.',
+            ChartDataProvider.inHouse =>
+              'In-House: native renderer with configurable SMAs, support/resistance levels, and 1D/1W intraday ranges.',
+            ChartDataProvider.yahoo =>
+              'Yahoo Finance: fast candles with volume and VWAP overlay.',
+          },
           style: AppTypography.sm.copyWith(color: c.textMuted),
         ),
       ],
+    );
+  }
+}
+
+// ── Dev Plan Simulator ────────────────────────────────────────────────────────
+
+Plan? _planFromPrefs(String? name) {
+  if (name == null) return null;
+  for (final p in Plan.values) {
+    if (p.name == name) return p;
+  }
+  return null;
+}
+
+Future<void> _switchSimulatedPlan(
+  BuildContext context,
+  WidgetRef ref,
+  Plan plan,
+) async {
+  final c = context.colors;
+  final prefs = ref.read(sharedPreferencesProvider);
+  final current = _planFromPrefs(prefs.getString('dev_simulated_plan')) ?? Plan.free;
+  if (plan == current) return;
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: c.surface,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md)),
+      title: Text('Switch to ${plan.name[0].toUpperCase()}${plan.name.substring(1)} Plan',
+          style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+      content: Text(
+        'Simulating the ${plan.name} tier requires a restart. Continue?',
+        style: AppTypography.md.copyWith(color: c.textSecondary),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text('No',
+              style: AppTypography.labelMd.copyWith(color: c.textMuted)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text('Restart',
+              style: AppTypography.labelMd.copyWith(color: c.warning)),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+  await prefs.setString('dev_simulated_plan', plan.name);
+  EntitlementService.setSimulatedPlan(plan);
+  if (context.mounted) RestartWidget.restartApp(context);
+}
+
+class _DevPlanSection extends ConsumerWidget {
+  const _DevPlanSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final prefs = ref.watch(sharedPreferencesProvider);
+    final current =
+        _planFromPrefs(prefs.getString('dev_simulated_plan')) ?? Plan.free;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'PLAN SIMULATOR',
+              style: AppTypography.labelSm.copyWith(
+                color: c.textMuted,
+                letterSpacing: 1.2,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.s2),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s2, vertical: 2),
+              decoration: BoxDecoration(
+                color: c.warning.withAlpha(30),
+                borderRadius: BorderRadius.circular(AppRadius.full),
+              ),
+              child: Text(
+                'DEV',
+                style: AppTypography.labelSm.copyWith(
+                  color: c.warning,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 9,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Container(
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: c.warning.withAlpha(60)),
+          ),
+          padding: const EdgeInsets.all(AppSpacing.s2),
+          child: Row(
+            children: [
+              _PlanChip(
+                  plan: Plan.free,
+                  label: 'Free',
+                  current: current),
+              _PlanChip(
+                  plan: Plan.pro,
+                  label: 'Pro',
+                  current: current),
+              _PlanChip(
+                  plan: Plan.insight,
+                  label: 'Insight',
+                  current: current),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Text(
+          'Temporarily simulates a subscription tier. Requires restart.',
+          style: AppTypography.sm.copyWith(color: c.textMuted),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlanChip extends ConsumerWidget {
+  const _PlanChip({
+    required this.plan,
+    required this.label,
+    required this.current,
+  });
+
+  final Plan plan;
+  final String label;
+  final Plan current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final selected = plan == current;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => _switchSimulatedPlan(context, ref, plan),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          margin: const EdgeInsets.all(2),
+          padding: const EdgeInsets.symmetric(
+              vertical: AppSpacing.s3, horizontal: AppSpacing.s2),
+          decoration: BoxDecoration(
+            color: selected ? c.warning : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                plan == Plan.free
+                    ? Icons.lock_open_rounded
+                    : plan == Plan.pro
+                        ? Icons.star_rounded
+                        : Icons.diamond_rounded,
+                size: 16,
+                color: selected ? c.background : c.textMuted,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: AppTypography.labelSm.copyWith(
+                  color: selected ? c.background : c.textMuted,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

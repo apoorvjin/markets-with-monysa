@@ -12,6 +12,7 @@
     "express": "^5.0.1",
     "express-rate-limit": "^8.5.2",
     "openai": "^6.32.0",
+    "p-limit": "^7.3.0",
     "pdf-parse": "^2.4.5",
     "tsx": "^4.20.6",
     "ws": "^8.18.0",

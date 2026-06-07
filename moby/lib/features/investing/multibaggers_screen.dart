@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +12,10 @@ import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/theme_toggle.dart';
 
+// Maps the (country, version) pair to the repository cache key used in
+// clearScannerCache() — must stay in sync with TradingRepository._cachedFetch keys.
+String _cacheKeyFor(String country, String version) => '$country-$version';
+
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 final _multibaggersProvider = FutureProvider.autoDispose
@@ -18,6 +23,10 @@ final _multibaggersProvider = FutureProvider.autoDispose
   (_, args) {
     final v2 = args.version == 'v2';
     switch (args.country) {
+      case 'us':
+        return v2
+            ? TradingRepository.instance.fetchTenXV2Stocks()
+            : TradingRepository.instance.fetchTenXStocks();
       case 'uk':
         return v2
             ? TradingRepository.instance.fetchTenXV2UKStocks()
@@ -46,7 +55,56 @@ final _multibaggersProvider = FutureProvider.autoDispose
   },
 );
 
+final _mbStockSearchProvider = FutureProvider.autoDispose
+    .family<List<StockSearchResult>, String>(
+  (_, query) => TradingRepository.instance.searchStocks(query),
+);
+
+final _mbSingleScanProvider = FutureProvider.autoDispose
+    .family<TenXSingleScanResult, ({String symbol, String name})>(
+  (_, args) => TradingRepository.instance.fetchTenXSingleScan(
+    symbol: args.symbol,
+    name: args.name,
+  ),
+);
+
+bool _isStockForCountry(StockSearchResult r, String country) {
+  final sym = r.symbol.toUpperCase();
+  final exc = r.exchange.toUpperCase();
+  switch (country) {
+    case 'india':
+      return sym.endsWith('.NS') || sym.endsWith('.BO') ||
+          exc == 'NSI' || exc == 'BSE';
+    case 'uk':
+      return sym.endsWith('.L') || exc == 'LSE' || exc == 'IOB';
+    case 'japan':
+      return sym.endsWith('.T') || sym.endsWith('.OS') ||
+          exc == 'JPX' || exc == 'TSE' || exc == 'OSA';
+    case 'hongkong':
+      return sym.endsWith('.HK') || exc == 'HKG';
+    case 'china':
+      return sym.endsWith('.SS') || sym.endsWith('.SZ') ||
+          exc == 'SHH' || exc == 'SHZ';
+    case 'euronext':
+      return sym.endsWith('.PA') || sym.endsWith('.AS') ||
+          sym.endsWith('.BR') || sym.endsWith('.MI') ||
+          sym.endsWith('.OL') || sym.endsWith('.LS') ||
+          exc == 'EPA' || exc == 'AMS' || exc == 'BRU' ||
+          exc == 'MIL' || exc == 'OSL';
+    case 'us':
+    default:
+      // Exclude known international suffixes; class suffixes like .A/.B are fine
+      return !sym.endsWith('.NS') && !sym.endsWith('.BO') &&
+          !sym.endsWith('.L') && !sym.endsWith('.T') &&
+          !sym.endsWith('.HK') && !sym.endsWith('.SS') &&
+          !sym.endsWith('.SZ') && !sym.endsWith('.PA') &&
+          !sym.endsWith('.AS') && !sym.endsWith('.BR') &&
+          !sym.endsWith('.MI') && !sym.endsWith('.OL');
+  }
+}
+
 String _countryLabel(String country) => const {
+  'us': 'US',
   'india': 'India',
   'uk': 'UK',
   'japan': 'Japan',
@@ -82,7 +140,7 @@ class MultibaggersScreen extends StatelessWidget {
 // ── Body — used both as a tab and inside the standalone screen ────────────────
 
 class MultibaggersBody extends ConsumerStatefulWidget {
-  const MultibaggersBody({super.key, this.initialCountry = 'india'});
+  const MultibaggersBody({super.key, this.initialCountry = 'us'});
 
   final String initialCountry;
 
@@ -97,14 +155,44 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
   String _sort = 'signals';
   Set<String> _signalFilter = {};
 
-  static const _validCountries = {'india', 'uk', 'japan', 'hongkong', 'china', 'euronext'};
+  // Stock search state
+  final _stockSearchCtrl = TextEditingController();
+  StockSearchResult? _selectedStock;
+  String _debouncedQuery = '';
+  Timer? _searchDebounce;
+
+  static const _validCountries = {'us', 'india', 'uk', 'japan', 'hongkong', 'china', 'euronext'};
 
   @override
   void initState() {
     super.initState();
     _country = _validCountries.contains(widget.initialCountry)
         ? widget.initialCountry
-        : 'india';
+        : 'us';
+    _stockSearchCtrl.addListener(_onSearchChanged);
+    // Pre-warm the two most common markets in the background.
+    // The dedup logic in TradingRepository means this is a no-op if the
+    // same request is already in-flight from the active provider.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      TradingRepository.instance.fetchTenXStocks().ignore();
+      TradingRepository.instance.fetchTenXIndiaStocks().ignore();
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchDebounce?.cancel();
+    _stockSearchCtrl.removeListener(_onSearchChanged);
+    _stockSearchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _onSearchChanged() {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(const Duration(milliseconds: 400), () {
+      if (mounted) setState(() => _debouncedQuery = _stockSearchCtrl.text.trim());
+    });
   }
 
   ({String country, String version}) get _args =>
@@ -113,43 +201,225 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
   void _reset() {
     _minSignals = 0;
     _signalFilter = {};
+    _selectedStock = null;
+    _stockSearchCtrl.clear();
+    _debouncedQuery = '';
+    _searchDebounce?.cancel();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Always watch to keep autoDispose tracking correct.
     final async = ref.watch(_multibaggersProvider(_args));
+    final c = context.colors;
 
+    final controlRow = _ControlRow(
+      country: _country,
+      version: _version,
+      onCountry: (v) => setState(() {
+        _country = v;
+        _reset();
+      }),
+      onVersion: (v) => setState(() {
+        _version = v;
+        _reset();
+      }),
+      onBacktest: () {
+        // Mirror the data source used by _multibaggersProvider:
+        // 'us' fetches /scanner/10x/stocks, so its backtest type is 'stocks'.
+        // All other countries (india/uk/japan/hongkong/china/euronext) match
+        // the server backtest route's type name directly.
+        final btType = _country == 'us' ? 'stocks' : _country;
+        context.push('/trading/10x-backtest?version=$_version&type=$btType');
+      },
+      onInfo: () => _showMultibaggersInfo(context),
+    );
+
+    final filterRow = _FilterRow(
+      minSignals: _minSignals,
+      sort: _sort,
+      version: _version,
+      signalFilter: _signalFilter,
+      onFilter: (v) => setState(() => _minSignals = v),
+      onSort: (v) => setState(() => _sort = v),
+      onSignalToggle: (sig) => setState(() {
+        final next = Set<String>.from(_signalFilter);
+        next.contains(sig) ? next.remove(sig) : next.add(sig);
+        _signalFilter = next;
+      }),
+    );
+
+    final searchBar = _MBSearchBar(
+      controller: _stockSearchCtrl,
+      selectedStock: _selectedStock,
+      c: c,
+      onClearSelection: () => setState(() {
+        _selectedStock = null;
+        _debouncedQuery = '';
+      }),
+    );
+
+    // ── Single-stock scan mode ──────────────────────────────────────────────
+    if (_selectedStock != null) {
+      final scanArgs =
+          (symbol: _selectedStock!.symbol, name: _selectedStock!.name);
+      final scanAsync = ref.watch(_mbSingleScanProvider(scanArgs));
+      return MaxWidthLayout(
+        child: Column(
+          children: [
+            controlRow,
+            filterRow,
+            searchBar,
+            Expanded(
+              child: scanAsync.when(
+                loading: () =>
+                    Center(child: CircularProgressIndicator(color: c.accent)),
+                error: (_, __) => ErrorView(
+                  message: 'Could not scan ${_selectedStock!.symbol}',
+                  onRetry: () =>
+                      ref.invalidate(_mbSingleScanProvider(scanArgs)),
+                ),
+                data: (result) {
+                  final item = _version == 'v2' ? result.v2 : result.v1;
+                  return ListView(
+                    padding: EdgeInsets.only(
+                      top: AppSpacing.s3,
+                      bottom:
+                          AppSpacing.s3 + MediaQuery.of(context).padding.bottom,
+                    ),
+                    children: [_StockCard(item: item, version: _version)],
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Search suggestions mode ─────────────────────────────────────────────
+    if (_debouncedQuery.isNotEmpty) {
+      final suggestAsync =
+          ref.watch(_mbStockSearchProvider(_debouncedQuery));
+      return MaxWidthLayout(
+        child: Column(
+          children: [
+            controlRow,
+            filterRow,
+            searchBar,
+            Expanded(
+              child: suggestAsync.when(
+                loading: () => Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 1.5, color: c.accent),
+                  ),
+                ),
+                error: (_, __) => Center(
+                  child: Text('Search failed',
+                      style: AppTypography.xs.copyWith(color: c.textMuted)),
+                ),
+                data: (results) {
+                  final filtered = results
+                      .where((r) => _isStockForCountry(r, _country))
+                      .toList();
+                  if (filtered.isEmpty) {
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(AppSpacing.s8),
+                        child: Text(
+                          'No ${_countryLabel(_country)} results for "$_debouncedQuery".',
+                          style:
+                              AppTypography.xs.copyWith(color: c.textMuted),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }
+                  return ListView.builder(
+                    padding: EdgeInsets.only(
+                      top: AppSpacing.s2,
+                      bottom: MediaQuery.of(context).padding.bottom +
+                          AppSpacing.s3,
+                    ),
+                    itemCount: filtered.length,
+                    itemBuilder: (_, i) {
+                      final r = filtered[i];
+                      return InkWell(
+                        onTap: () => setState(() {
+                          _selectedStock = r;
+                          _stockSearchCtrl.clear();
+                          _debouncedQuery = '';
+                        }),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.s5,
+                              vertical: AppSpacing.s3),
+                          decoration: BoxDecoration(
+                            border: Border(
+                                bottom:
+                                    BorderSide(color: c.border, width: 0.5)),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: c.surfaceCard,
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadius.xs),
+                                  border: Border.all(color: c.border),
+                                ),
+                                child: Text(r.symbol,
+                                    style: AppTypography.xs.copyWith(
+                                        color: c.textSecondary,
+                                        fontWeight: FontWeight.w700)),
+                              ),
+                              const SizedBox(width: AppSpacing.s3),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Text(r.name,
+                                        style: AppTypography.xs
+                                            .copyWith(color: c.textPrimary),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
+                                    if (r.exchange.isNotEmpty)
+                                      Text(r.exchange,
+                                          style: AppTypography.xs.copyWith(
+                                              color: c.textFaint,
+                                              fontSize: 10)),
+                                  ],
+                                ),
+                              ),
+                              Icon(Icons.bolt_rounded,
+                                  size: 14, color: c.textFaint),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ── Normal list mode ────────────────────────────────────────────────────
     return MaxWidthLayout(
       child: Column(
         children: [
-          _ControlRow(
-            country: _country,
-            version: _version,
-            onCountry: (v) => setState(() {
-              _country = v;
-              _reset();
-            }),
-            onVersion: (v) => setState(() {
-              _version = v;
-              _reset();
-            }),
-            onBacktest: () => context.push(
-                '/trading/10x-backtest?version=$_version&type=$_country'),
-            onInfo: () => _showMultibaggersInfo(context),
-          ),
-          _FilterRow(
-            minSignals: _minSignals,
-            sort: _sort,
-            version: _version,
-            signalFilter: _signalFilter,
-            onFilter: (v) => setState(() => _minSignals = v),
-            onSort: (v) => setState(() => _sort = v),
-            onSignalToggle: (sig) => setState(() {
-              final next = Set<String>.from(_signalFilter);
-              next.contains(sig) ? next.remove(sig) : next.add(sig);
-              _signalFilter = next;
-            }),
-          ),
+          controlRow,
+          filterRow,
+          searchBar,
           Expanded(
             child: async.when(
               loading: () => const _ScannerSkeleton(),
@@ -163,9 +433,11 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                     .where((r) {
                       if (_signalFilter.isEmpty) return true;
                       for (final sig in _signalFilter) {
-                        if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen)) return false;
+                        if (sig == 'VOL' &&
+                            !(r.volumeSpike && r.volumeGreen)) return false;
                         if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
-                        if (sig == 'REC_QTR' && !r.recordQuarter) return false;
+                        if (sig == 'REC_QTR' && !r.recordQuarter)
+                          return false;
                         if (sig == 'TREND' && !r.trendUp) return false;
                       }
                       return true;
@@ -178,8 +450,11 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                 }
 
                 return RefreshIndicator(
-                  onRefresh: () =>
-                      ref.refresh(_multibaggersProvider(_args).future),
+                  onRefresh: () {
+                    TradingRepository.instance
+                        .clearScannerCache(_cacheKeyFor(_country, _version));
+                    return ref.refresh(_multibaggersProvider(_args).future);
+                  },
                   child: filtered.isEmpty
                       ? Center(
                           child: Padding(
@@ -187,7 +462,7 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                             child: Text(
                               'No stocks match the current filter.\nTry lowering the signal count.',
                               style: AppTypography.sm
-                                  .copyWith(color: context.colors.textMuted),
+                                  .copyWith(color: c.textMuted),
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -278,56 +553,56 @@ class _ControlRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          Row(
-            children: [
-              Text('Country:',
-                  style: AppTypography.xs.copyWith(color: c.textMuted)),
-              const SizedBox(width: AppSpacing.s2),
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      _Chip(
-                        label: '🇮🇳 India',
-                        active: country == 'india',
-                        onTap: () => onCountry('india'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _Chip(
-                        label: '🇬🇧 UK',
-                        active: country == 'uk',
-                        onTap: () => onCountry('uk'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _Chip(
-                        label: '🇯🇵 Japan',
-                        active: country == 'japan',
-                        onTap: () => onCountry('japan'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _Chip(
-                        label: '🇭🇰 HK',
-                        active: country == 'hongkong',
-                        onTap: () => onCountry('hongkong'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _Chip(
-                        label: '🇨🇳 China',
-                        active: country == 'china',
-                        onTap: () => onCountry('china'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _Chip(
-                        label: '🇪🇺 Euronext',
-                        active: country == 'euronext',
-                        onTap: () => onCountry('euronext'),
-                      ),
-                    ],
-                  ),
+          Text('Country:',
+              style: AppTypography.xs.copyWith(color: c.textMuted)),
+          const SizedBox(height: AppSpacing.s2),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _Chip(
+                  label: '🇺🇸 US',
+                  active: country == 'us',
+                  onTap: () => onCountry('us'),
                 ),
-              ),
-            ],
+                const SizedBox(width: AppSpacing.s2),
+                _Chip(
+                  label: '🇮🇳 India',
+                  active: country == 'india',
+                  onTap: () => onCountry('india'),
+                ),
+                const SizedBox(width: AppSpacing.s2),
+                _Chip(
+                  label: '🇬🇧 UK',
+                  active: country == 'uk',
+                  onTap: () => onCountry('uk'),
+                ),
+                const SizedBox(width: AppSpacing.s2),
+                _Chip(
+                  label: '🇯🇵 Japan',
+                  active: country == 'japan',
+                  onTap: () => onCountry('japan'),
+                ),
+                const SizedBox(width: AppSpacing.s2),
+                _Chip(
+                  label: '🇭🇰 HK',
+                  active: country == 'hongkong',
+                  onTap: () => onCountry('hongkong'),
+                ),
+                const SizedBox(width: AppSpacing.s2),
+                _Chip(
+                  label: '🇨🇳 China',
+                  active: country == 'china',
+                  onTap: () => onCountry('china'),
+                ),
+                const SizedBox(width: AppSpacing.s2),
+                _Chip(
+                  label: '🇪🇺 Euronext',
+                  active: country == 'euronext',
+                  onTap: () => onCountry('euronext'),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: AppSpacing.s2),
           Row(
@@ -771,6 +1046,95 @@ class _ScannerSkeleton extends StatelessWidget {
           color: c.surface,
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(color: c.border),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Search Bar ────────────────────────────────────────────────────────────────
+
+class _MBSearchBar extends StatelessWidget {
+  const _MBSearchBar({
+    required this.controller,
+    required this.selectedStock,
+    required this.c,
+    required this.onClearSelection,
+  });
+
+  final TextEditingController controller;
+  final StockSearchResult? selectedStock;
+  final AppPalette c;
+  final VoidCallback onClearSelection;
+
+  @override
+  Widget build(BuildContext context) {
+    if (selectedStock != null) {
+      return Container(
+        color: c.surface,
+        padding: const EdgeInsets.fromLTRB(
+            AppSpacing.s5, AppSpacing.s2, AppSpacing.s5, AppSpacing.s3),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+          decoration: BoxDecoration(
+            color: c.accent.withAlpha(15),
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(color: c.accent.withAlpha(40)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.biotech_rounded, size: 13, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text(
+                  '${selectedStock!.name}  ·  ${selectedStock!.symbol}',
+                  style: AppTypography.xs.copyWith(
+                      color: c.accent, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              GestureDetector(
+                onTap: onClearSelection,
+                child: Icon(Icons.close_rounded, size: 14, color: c.accent),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return Container(
+      color: c.surface,
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.s5, AppSpacing.s2, AppSpacing.s5, AppSpacing.s3),
+      child: Container(
+        height: 36,
+        decoration: BoxDecoration(
+          color: c.surfaceCard,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          border: Border.all(color: c.border),
+        ),
+        child: TextField(
+          controller: controller,
+          style: AppTypography.xs.copyWith(color: c.textPrimary),
+          decoration: InputDecoration(
+            hintText: 'Search a stock by symbol or name…',
+            hintStyle: AppTypography.xs.copyWith(color: c.textFaint),
+            prefixIcon:
+                Icon(Icons.search_rounded, size: 16, color: c.textMuted),
+            suffixIcon: controller.text.isNotEmpty
+                ? GestureDetector(
+                    onTap: controller.clear,
+                    child:
+                        Icon(Icons.close_rounded, size: 14, color: c.textMuted),
+                  )
+                : null,
+            border: InputBorder.none,
+            isDense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(vertical: 10, horizontal: 0),
+          ),
         ),
       ),
     );

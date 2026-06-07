@@ -6,6 +6,7 @@ import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app.dart';
+import 'core/network/chart_renderer_interceptor.dart';
 import 'core/network/device_id.dart';
 import 'core/restart_widget.dart';
 import 'providers/strategy_provider.dart';
@@ -23,6 +24,24 @@ void main() async {
     systemNavigationBarColor: Colors.black,
   ));
   final prefs = await SharedPreferences.getInstance();
+
+  // Seed the chart renderer so the Dio interceptor stamps the correct
+  // X-Chart-Renderer header on the very first request, before any widget
+  // mounts ChartProviderNotifier.
+  final savedRenderer = prefs.getString('chart_provider');
+  if (savedRenderer == 'tradingview' || savedRenderer == 'inhouse') {
+    currentChartRenderer = savedRenderer!;
+  }
+
+  // Load dev plan simulator override (set via Profile screen).
+  final savedSimPlan = prefs.getString('dev_simulated_plan');
+  if (savedSimPlan != null) {
+    final plan = Plan.values.firstWhere(
+      (p) => p.name == savedSimPlan,
+      orElse: () => Plan.free,
+    );
+    EntitlementService.setSimulatedPlan(plan);
+  }
 
   // Configure RevenueCat when platform API keys are provided.
   // Pass --dart-define=REVENUECAT_IOS_KEY=... and REVENUECAT_ANDROID_KEY=...

@@ -10,7 +10,13 @@ abstract final class EntitlementService {
   static Plan _runtimePlan = Plan.free;
   static bool _rcConfigured = false;
 
+  // Temporary in-app plan simulator — set via Profile screen dev section.
+  // Persisted to SharedPreferences under 'dev_simulated_plan'.
+  static Plan? _simulatedPlan;
+  static void setSimulatedPlan(Plan? plan) => _simulatedPlan = plan;
+
   static Plan get current {
+    if (_simulatedPlan != null) return _simulatedPlan!;
     switch (_devPlan) {
       case 'pro':
         return Plan.pro;
@@ -55,6 +61,7 @@ abstract final class EntitlementService {
     'api_access': {Plan.insight, Plan.enterprise},
     'best_setups': {Plan.pro, Plan.insight, Plan.enterprise},
     'backtest_filter': {Plan.insight, Plan.enterprise},
+    'treemap_heatmap': {Plan.pro, Plan.insight, Plan.enterprise},
   };
 
   static String get requiredPlanLabel {

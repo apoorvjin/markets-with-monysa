@@ -254,6 +254,11 @@ class TenXScanResult {
     required this.epsApplicable,
     required this.trendUp,
     required this.signalsActive,
+    this.thrust = false,
+    this.base = false,
+    this.uptrend = false,
+    this.newHighReclaim = false,
+    this.regimeBreakout = false,
   });
 
   final String symbol;
@@ -273,6 +278,13 @@ class TenXScanResult {
   final bool epsApplicable;
   final bool trendUp;
   final int signalsActive;
+
+  // V3 "Super Pine" — Indices only; absent on v1/v2 responses
+  final bool thrust;
+  final bool base;
+  final bool uptrend;
+  final bool newHighReclaim;
+  final bool regimeBreakout;
 
   factory TenXScanResult.fromJson(Map<String, dynamic> j) => TenXScanResult(
         symbol: j['symbol'] as String,
@@ -294,6 +306,29 @@ class TenXScanResult {
         epsApplicable: j['epsApplicable'] as bool? ?? false,
         trendUp: j['trendUp'] as bool? ?? false,
         signalsActive: (j['signalsActive'] as num).toInt(),
+        thrust: j['thrust'] as bool? ?? false,
+        base: j['base'] as bool? ?? false,
+        uptrend: j['uptrend'] as bool? ?? false,
+        newHighReclaim: j['newHighReclaim'] as bool? ?? false,
+        regimeBreakout: j['regimeBreakout'] as bool? ?? false,
+      );
+}
+
+class TenXSingleScanResult {
+  const TenXSingleScanResult({
+    required this.v1,
+    required this.v2,
+    required this.lastUpdated,
+  });
+  final TenXScanResult v1;
+  final TenXScanResult v2;
+  final String lastUpdated;
+
+  factory TenXSingleScanResult.fromJson(Map<String, dynamic> j) =>
+      TenXSingleScanResult(
+        v1: TenXScanResult.fromJson(j['v1'] as Map<String, dynamic>),
+        v2: TenXScanResult.fromJson(j['v2'] as Map<String, dynamic>),
+        lastUpdated: j['lastUpdated'] as String? ?? '',
       );
 }
 
@@ -549,6 +584,85 @@ class BestSetupsResponse {
       BestSetupsResponse(
         setups: (j['setups'] as List? ?? [])
             .map((e) => BestSetup.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        cacheWarm: j['cacheWarm'] as bool? ?? false,
+        lastUpdated: j['lastUpdated'] as String?,
+      );
+}
+
+// ── Sector Best Setups models ─────────────────────────────────────────────────
+
+class SectorStockEntry {
+  const SectorStockEntry({
+    required this.symbol,
+    required this.name,
+    required this.price,
+    required this.changePercent,
+    required this.volumeRatio,
+    required this.signalsActive,
+    this.winRate1m,
+  });
+
+  final String symbol;
+  final String name;
+  final double price;
+  final double changePercent;
+  final double volumeRatio;
+  final int signalsActive;
+  final double? winRate1m;
+
+  factory SectorStockEntry.fromJson(Map<String, dynamic> j) => SectorStockEntry(
+        symbol: j['symbol'] as String,
+        name: j['name'] as String,
+        price: (j['price'] as num).toDouble(),
+        changePercent: (j['changePercent'] as num).toDouble(),
+        volumeRatio: (j['volumeRatio'] as num? ?? 0).toDouble(),
+        signalsActive: (j['signalsActive'] as num).toInt(),
+        winRate1m: (j['winRate1m'] as num?)?.toDouble(),
+      );
+}
+
+class SectorBestSetupsGroup {
+  const SectorBestSetupsGroup({
+    required this.sector,
+    required this.emoji,
+    required this.stocks,
+  });
+
+  final String sector;
+  final String emoji;
+  final List<SectorStockEntry> stocks;
+
+  factory SectorBestSetupsGroup.fromJson(Map<String, dynamic> j) =>
+      SectorBestSetupsGroup(
+        sector: j['sector'] as String,
+        emoji: j['emoji'] as String? ?? '',
+        stocks: (j['stocks'] as List? ?? [])
+            .map((e) => SectorStockEntry.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
+class SectorBestSetupsResponse {
+  const SectorBestSetupsResponse({
+    required this.leading,
+    required this.improving,
+    required this.cacheWarm,
+    this.lastUpdated,
+  });
+
+  final List<SectorBestSetupsGroup> leading;
+  final List<SectorBestSetupsGroup> improving;
+  final bool cacheWarm;
+  final String? lastUpdated;
+
+  factory SectorBestSetupsResponse.fromJson(Map<String, dynamic> j) =>
+      SectorBestSetupsResponse(
+        leading: (j['leading'] as List? ?? [])
+            .map((e) => SectorBestSetupsGroup.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        improving: (j['improving'] as List? ?? [])
+            .map((e) => SectorBestSetupsGroup.fromJson(e as Map<String, dynamic>))
             .toList(),
         cacheWarm: j['cacheWarm'] as bool? ?? false,
         lastUpdated: j['lastUpdated'] as String?,

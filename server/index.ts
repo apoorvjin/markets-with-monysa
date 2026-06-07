@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { registerRoutes } from "./routes";
+import { parseChartRenderer } from "./lib/chart-renderer";
 
 const app = express();
 const log = console.log;
@@ -223,11 +224,19 @@ function setupErrorHandler(app: express.Application) {
 }
 
 (async () => {
+  // OGE worker mode: spawned by triggerPipeline() as an ephemeral 512 MB Fly.io machine.
+  // Runs the PDF pipeline, writes to Redis, then exits — no HTTP server started.
+  if (process.env.OGE_WORKER_MODE === "1") {
+    const { runOgePipelineAndExit } = await import("./routes/oge");
+    return runOgePipelineAndExit();
+  }
+
   setupCors(app);
   setupBodyParsing(app);
   setupRequestLogging(app);
   setupRateLimiting(app);
   setupRequestSigning(app);
+  app.use(parseChartRenderer);
 
   app.get("/", (_req: Request, res: Response) => {
     res.json({ status: "ok", name: "Markets API", version: "1.0.0" });

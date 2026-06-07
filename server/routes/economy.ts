@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { fetchYahooPrice, fetchRangeData } from "./shared";
+import { yahooProvider } from "../providers";
 
 let debtCache: { data: any; timestamp: number } | null = null;
 const DEBT_CACHE_DURATION = 12 * 60 * 60 * 1000;
@@ -52,7 +53,7 @@ const BONDS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 let sectorsCache: { data: unknown; timestamp: number } | null = null;
 const SECTORS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
-const SECTOR_ETFS = [
+export const SECTOR_ETFS = [
   { symbol: "XLF",  name: "Financials",      emoji: "🏦" },
   { symbol: "XLK",  name: "Technology",       emoji: "💻" },
   { symbol: "XLE",  name: "Energy",           emoji: "⚡" },
@@ -65,6 +66,99 @@ const SECTOR_ETFS = [
   { symbol: "XLV",  name: "Healthcare",       emoji: "💊" },
   { symbol: "XLC",  name: "Comm. Services",   emoji: "📡" },
 ] as const;
+
+// GICS sector names returned by the S&P 500 CSV → SECTOR_ETFS.name mapping.
+// Used by the sector-based Best Setups endpoint to align stock sectors with
+// the RRG quadrants computed for the sector ETFs.
+export const GICS_TO_ETF_SECTOR: Record<string, string> = {
+  "Financials":             "Financials",
+  "Information Technology": "Technology",
+  "Energy":                 "Energy",
+  "Industrials":            "Industrials",
+  "Utilities":              "Utilities",
+  "Real Estate":            "Real Estate",
+  "Consumer Staples":       "Cons. Staples",
+  "Materials":              "Materials",
+  "Consumer Discretionary": "Cons. Disc.",
+  "Health Care":            "Healthcare",
+  "Communication Services": "Comm. Services",
+};
+
+export type RrgQuadrant = "Leading" | "Improving" | "Weakening" | "Lagging";
+
+export interface SectorRrg {
+  name: string;
+  emoji: string;
+  rsRatio: number | null;
+  rsMomentum: number | null;
+  quadrant: RrgQuadrant | null;
+}
+
+function quadrantOf(rsRatio: number | null, rsMomentum: number | null): RrgQuadrant | null {
+  if (rsRatio == null || rsMomentum == null) return null;
+  if (rsRatio >= 100 && rsMomentum >= 100) return "Leading";
+  if (rsRatio < 100  && rsMomentum >= 100) return "Improving";
+  if (rsRatio >= 100 && rsMomentum < 100)  return "Weakening";
+  return "Lagging";
+}
+
+// Returns the 11 SECTOR_ETFS keyed by their `name`, each tagged with its
+// current RRG quadrant. Uses the same SPX-relative rsRatio/rsMomentum formulas
+// as /api/sectors and shares the 15-minute sectorsCache when warm.
+export async function getSectorQuadrants(): Promise<Map<string, SectorRrg>> {
+  // Reuse the cached /api/sectors payload when fresh — the route stores its
+  // result in sectorsCache below as { sectors: [...], lastUpdated }.
+  if (sectorsCache && Date.now() - sectorsCache.timestamp < SECTORS_CACHE_DURATION) {
+    const cached = sectorsCache.data as { sectors: Array<{ name: string; emoji?: string; rsRatio: number | null; rsMomentum: number | null }> };
+    const map = new Map<string, SectorRrg>();
+    for (const s of cached.sectors) {
+      map.set(s.name, {
+        name: s.name,
+        emoji: s.emoji ?? "",
+        rsRatio: s.rsRatio,
+        rsMomentum: s.rsMomentum,
+        quadrant: quadrantOf(s.rsRatio, s.rsMomentum),
+      });
+    }
+    return map;
+  }
+
+  // Cold cache → compute directly.
+  const [spxPerf1W, spxPerf1M, ...rows] = await Promise.all([
+    fetchRangeData("^GSPC", "5d"),
+    fetchRangeData("^GSPC", "1mo"),
+    ...SECTOR_ETFS.map(async (etf) => {
+      const [perf1W, perf1M] = await Promise.all([
+        fetchRangeData(etf.symbol, "5d"),
+        fetchRangeData(etf.symbol, "1mo"),
+      ]);
+      return { name: etf.name, emoji: etf.emoji, perf1W, perf1M };
+    }),
+  ]);
+  const spx1M = spxPerf1M?.changePercent ?? null;
+  const spx1W = spxPerf1W?.changePercent ?? null;
+  const map = new Map<string, SectorRrg>();
+  for (const r of rows) {
+    const p1M = r.perf1M?.changePercent ?? null;
+    const p1W = r.perf1W?.changePercent ?? null;
+    const rsRatio = p1M != null && spx1M != null ? 100 + (p1M - spx1M) : null;
+    const rsMomentumRaw =
+      p1W != null && p1M != null
+        ? 100 + (p1W - p1M / 4) * 1.5
+        : p1W != null && spx1W != null
+        ? 100 + (p1W - spx1W) * 1.5
+        : null;
+    const rsMomentum = rsMomentumRaw != null ? +rsMomentumRaw.toFixed(4) : null;
+    map.set(r.name, {
+      name: r.name,
+      emoji: r.emoji,
+      rsRatio,
+      rsMomentum,
+      quadrant: quadrantOf(rsRatio, rsMomentum),
+    });
+  }
+  return map;
+}
 
 // Historical Crisis Playbook — edit this array to add/update events; no Flutter changes needed
 const CRISIS_DATA = [
@@ -385,8 +479,11 @@ export function registerEconomyRoutes(app: Express): void {
         return res.json(sectorsCache.data);
       }
 
-      const sectorData = await Promise.all(
-        SECTOR_ETFS.map(async (etf) => {
+      // Fetch SPX reference data alongside sector ETFs for RS calculations
+      const [spxPerf1W, spxPerf1M, ...sectorData] = await Promise.all([
+        fetchRangeData("^GSPC", "5d"),
+        fetchRangeData("^GSPC", "1mo"),
+        ...SECTOR_ETFS.map(async (etf) => {
           const [quote, perf1W, perf1M, perf3M, perf6M, perf1Y, perf3Y, perf5Y] = await Promise.all([
             fetchYahooPrice(etf.symbol),
             fetchRangeData(etf.symbol, "5d"),
@@ -411,11 +508,33 @@ export function registerEconomyRoutes(app: Express): void {
             perf3Y: perf3Y?.changePercent ?? null,
             perf5Y: perf5Y?.changePercent ?? null,
           };
-        })
-      );
+        }),
+      ]);
+
+      const spx1M = spxPerf1M?.changePercent ?? null;
+      const spx1W = spxPerf1W?.changePercent ?? null;
+
+      const enrichedSectors = sectorData.map((s) => {
+        const p1M = s.perf1M;
+        const p1W = s.perf1W;
+        // RS-Ratio: sector 1M perf vs SPX 1M perf, centered at 100
+        const rsRatio = p1M != null && spx1M != null ? 100 + (p1M - spx1M) : null;
+        // RS-Momentum: additive form — avoids blowup when p1M is near zero.
+        // Scale factor 1.5 maps typical ±5% weekly swings to roughly [85, 115].
+        const rsMomentumRaw =
+          p1W != null && p1M != null
+            ? 100 + (p1W - p1M / 4) * 1.5
+            : p1W != null && spx1W != null
+            ? 100 + (p1W - spx1W) * 1.5
+            : null;
+        const rsMomentum = rsMomentumRaw != null
+          ? +rsMomentumRaw.toFixed(4)
+          : null;
+        return { ...s, rsRatio, rsMomentum };
+      });
 
       const result = {
-        sectors: sectorData,
+        sectors: enrichedSectors,
         lastUpdated: new Date().toISOString(),
       };
 
@@ -429,5 +548,121 @@ export function registerEconomyRoutes(app: Express): void {
 
   app.get("/api/crises", (_req, res) => {
     res.json({ crises: CRISIS_DATA, dataAsOf: "May 2026" });
+  });
+
+  // GET /api/economy/yield-curve-history
+  let yieldHistoryCache: { data: unknown; ts: number } | null = null;
+  const YIELD_HISTORY_TTL = 6 * 60 * 60 * 1000;
+
+  app.get("/api/economy/yield-curve-history", async (_req, res) => {
+    if (yieldHistoryCache && Date.now() - yieldHistoryCache.ts < YIELD_HISTORY_TTL) {
+      return res.json(yieldHistoryCache.data);
+    }
+    try {
+      const [us3mCandles, us5yCandles, us10yCandles, us30yCandles] = await Promise.all([
+        yahooProvider.fetchHistoryCandles("^IRX", "1d", "1y"),
+        yahooProvider.fetchHistoryCandles("^FVX", "1d", "1y"),
+        yahooProvider.fetchHistoryCandles("^TNX", "1d", "1y"),
+        yahooProvider.fetchHistoryCandles("^TYX", "1d", "1y"),
+      ]);
+
+      // Build a map of date → yield for each series
+      const toDateMap = (candles: typeof us3mCandles): Map<string, number> => {
+        const m = new Map<string, number>();
+        for (const c of candles) {
+          const date = new Date((c.time as number) * 1000).toISOString().slice(0, 10);
+          m.set(date, c.close);
+        }
+        return m;
+      };
+
+      const m3m = toDateMap(us3mCandles);
+      const m5y = toDateMap(us5yCandles);
+      const m10y = toDateMap(us10yCandles);
+      const m30y = toDateMap(us30yCandles);
+
+      // Use 10Y dates as anchor and join all series
+      const series = [...m10y.entries()]
+        .map(([date, us10y]) => ({
+          date,
+          us3m: m3m.get(date) ?? null,
+          us5y: m5y.get(date) ?? null,
+          us10y,
+          us30y: m30y.get(date) ?? null,
+        }))
+        .filter((d) => d.us3m !== null)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      const result = { series, lastUpdated: new Date().toISOString() };
+      yieldHistoryCache = { data: result, ts: Date.now() };
+      return res.json(result);
+    } catch (err) {
+      console.error("[Yield Curve History]", err);
+      return res.status(503).json({ error: "Yield curve history temporarily unavailable" });
+    }
+  });
+
+  // GET /api/economy/events
+  let eventsCache: { data: unknown; ts: number } | null = null;
+  const EVENTS_TTL = 12 * 60 * 60 * 1000;
+
+  // Static fallback for 2026 high-impact events
+  const STATIC_EVENTS = [
+    { date: "2026-01-29", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "4.50%", forecast: "4.50%" },
+    { date: "2026-03-19", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "4.50%", forecast: "4.25%" },
+    { date: "2026-05-07", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "4.25%", forecast: "4.25%" },
+    { date: "2026-06-17", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "4.25%", forecast: "4.00%" },
+    { date: "2026-07-30", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "4.00%", forecast: "4.00%" },
+    { date: "2026-09-17", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "4.00%", forecast: "3.75%" },
+    { date: "2026-11-05", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "3.75%", forecast: "3.75%" },
+    { date: "2026-12-17", time: "14:00", country: "USD", event: "FOMC Rate Decision", impact: "High", previous: "3.75%", forecast: "3.50%" },
+  ];
+
+  app.get("/api/economy/events", async (_req, res) => {
+    if (eventsCache && Date.now() - eventsCache.ts < EVENTS_TTL) {
+      return res.json(eventsCache.data);
+    }
+    try {
+      const [thisWeek, nextWeek] = await Promise.allSettled([
+        fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
+          headers: { "User-Agent": "markets-api/1.0", "Accept": "application/json" },
+          signal: AbortSignal.timeout(8_000),
+        }).then(r => r.ok ? r.json() : []),
+        fetch("https://nfs.faireconomy.media/ff_calendar_nextweek.json", {
+          headers: { "User-Agent": "markets-api/1.0", "Accept": "application/json" },
+          signal: AbortSignal.timeout(8_000),
+        }).then(r => r.ok ? r.json() : []),
+      ]);
+
+      type FFEvent = { date: string; time: string; country: string; title: string; impact: string; previous?: string; forecast?: string };
+      const raw: FFEvent[] = [
+        ...(thisWeek.status === "fulfilled" ? (thisWeek.value as FFEvent[]) : []),
+        ...(nextWeek.status === "fulfilled" ? (nextWeek.value as FFEvent[]) : []),
+      ];
+
+      const highImpact = raw.filter(
+        (e) => e.impact === "High" && (e.country === "USD" || e.country === "")
+      );
+
+      const events = highImpact.length > 0
+        ? highImpact.map((e) => ({
+            date: e.date?.slice(0, 10) ?? "",
+            time: e.time ?? "",
+            country: e.country ?? "USD",
+            event: e.title ?? "",
+            impact: "High",
+            previous: e.previous ?? null,
+            forecast: e.forecast ?? null,
+          }))
+        : STATIC_EVENTS;
+
+      const result = { events, lastUpdated: new Date().toISOString() };
+      eventsCache = { data: result, ts: Date.now() };
+      return res.json(result);
+    } catch (err) {
+      console.error("[Economy Events]", err);
+      const result = { events: STATIC_EVENTS, lastUpdated: new Date().toISOString() };
+      return res.json(result);
+    }
   });
 }

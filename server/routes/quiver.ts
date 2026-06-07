@@ -631,6 +631,91 @@ function reply(
   res.json({ items, meta, lastUpdated: new Date().toISOString() });
 }
 
+// ── House Trades (FMP house-trading, all available history) ──────────────────
+
+interface HouseTradeRow {
+  disclosure_year:        number;
+  disclosure_date:        string;
+  transaction_date:       string;
+  owner:                  string;
+  ticker:                 string;
+  asset_description:      string;
+  type:                   string;
+  amount:                 string;
+  representative:         string;
+  district:               string;
+  state:                  string;
+  ptr_link:               string;
+  cap_gains_over_200_usd: boolean;
+}
+
+/** Normalise FMP amount strings to the canonical STOCK Act format. */
+function normalizeAmountStr(raw: string): string {
+  if (!raw) return raw;
+  if (AMOUNT_MAP[raw] !== undefined) return raw;
+  const norm = raw.replace(/\s*[–—to]+\s*/g, " - ").replace(/\s+/g, " ").trim();
+  return AMOUNT_MAP[norm] !== undefined ? norm : raw;
+}
+
+let _houseTrades: HouseTradeRow[] | null = null;
+let _houseTradesTs = 0;
+const HOUSE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+async function getHouseTrades(): Promise<HouseTradeRow[]> {
+  if (_houseTrades && Date.now() - _houseTradesTs < HOUSE_TTL_MS) return _houseTrades;
+
+  const key = process.env.FMP_API_KEY;
+  if (!key) throw new Error("FMP_API_KEY not set — House Trades requires a Financial Modeling Prep API key");
+
+  const trades: HouseTradeRow[] = [];
+
+  for (let page = 0; page < 50; page++) {
+    const rows = await fmpPage("house-trading", page, key);
+    if (!rows || rows.length === 0) break;
+
+    for (const row of rows) {
+      const ticker = (row.ticker ?? "").toUpperCase().replace(/[^A-Z0-9.]/g, "").trim();
+      if (!ticker || ticker.length > 6) continue;
+
+      const disclosureDateStr = (row.dateRecieved ?? row.filingDate ?? "").slice(0, 10);
+      const txDate            = (row.transactionDate ?? "").slice(0, 10);
+      const year              = disclosureDateStr ? parseInt(disclosureDateStr.slice(0, 4)) || 0 : 0;
+      const amtRaw            = row.amount ?? "";
+      const amtNorm           = normalizeAmountStr(amtRaw);
+      const txType            = row.transactionType ?? "";
+
+      trades.push({
+        disclosure_year:        year,
+        disclosure_date:        disclosureDateStr,
+        transaction_date:       txDate,
+        owner:                  "self",
+        ticker,
+        asset_description:      row.assetDescription ?? row.asset ?? "",
+        type:                   txType,
+        amount:                 amtNorm,
+        representative:         fmpMemberName(row),
+        district:               row.district ?? "",
+        state:                  row.state ?? "",
+        ptr_link:               "",
+        cap_gains_over_200_usd: false,
+      });
+    }
+
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  if (trades.length === 0) {
+    // Don't cache empty result — let the next request try FMP again
+    throw new Error("FMP house-trading returned no data — may require a paid FMP plan");
+  }
+
+  trades.sort((a, b) => b.transaction_date.localeCompare(a.transaction_date));
+  _houseTrades   = trades;
+  _houseTradesTs = Date.now();
+  console.log(`[house-trades] fetched ${trades.length} FMP rows`);
+  return trades;
+}
+
 // ── Route registration ────────────────────────────────────────────────────────
 
 export function registerQuiverRoutes(app: Express) {
@@ -649,12 +734,13 @@ export function registerQuiverRoutes(app: Express) {
   app.get("/api/quiver/congress-trades", async (req, res) => {
     try {
       const trades = await getCongressTrades();
-      const { ticker, chamber, type } = req.query as Record<string, string>;
+      const { ticker, chamber, type, memberName } = req.query as Record<string, string>;
 
       let filtered = trades;
-      if (ticker) filtered = filtered.filter(t => t.ticker === ticker.toUpperCase());
-      if (chamber) filtered = filtered.filter(t => t.chamber.toLowerCase() === chamber.toLowerCase());
-      if (type)    filtered = filtered.filter(t => t.type === type.toLowerCase());
+      if (ticker)     filtered = filtered.filter(t => t.ticker === ticker.toUpperCase());
+      if (chamber)    filtered = filtered.filter(t => t.chamber.toLowerCase() === chamber.toLowerCase());
+      if (type)       filtered = filtered.filter(t => t.type === type.toLowerCase());
+      if (memberName) filtered = filtered.filter(t => t.memberName.toLowerCase().includes(memberName.toLowerCase()));
 
       res.json({
         trades: filtered,
@@ -678,6 +764,42 @@ export function registerQuiverRoutes(app: Express) {
     }
   });
 
+  // House PTR trades — all history via FMP house-trading (requires FMP_API_KEY)
+  app.get("/api/house-trades", async (_req, res) => {
+    try {
+      const trades = await getHouseTrades();
+      res.json({ trades, total: trades.length, lastUpdated: new Date().toISOString() });
+    } catch (e) {
+      console.error("[house-trades] primary failed, falling back to congress-trades cache:", (e as Error).message);
+      // FMP house-trading may require a paid plan. Fall back to the congress-trades
+      // cache (which fetches senate+house together) filtered to House chamber.
+      try {
+        const congressTrades = await getCongressTrades();
+        const houseTrades: HouseTradeRow[] = congressTrades
+          .filter((t) => t.chamber === "House")
+          .map((t) => ({
+            disclosure_year:        parseInt(t.transactionDate.slice(0, 4)) || 0,
+            disclosure_date:        t.filingDate,
+            transaction_date:       t.transactionDate,
+            owner:                  "self",
+            ticker:                 t.ticker,
+            asset_description:      t.assetDescription,
+            type:                   t.type === "buy" ? "purchase" : "sale",
+            amount:                 t.amount,
+            representative:         t.memberName,
+            district:               "",
+            state:                  t.state ?? "",
+            ptr_link:               "",
+            cap_gains_over_200_usd: false,
+          }));
+        res.json({ trades: houseTrades, total: houseTrades.length, lastUpdated: new Date().toISOString() });
+      } catch (e2) {
+        console.error("[house-trades] fallback also failed:", (e2 as Error).message);
+        res.status(503).json({ error: (e as Error).message });
+      }
+    }
+  });
+
   // S3 — Insider Buys
   app.get("/api/quiver/insider", async (_req, res) => {
     try {
@@ -686,6 +808,78 @@ export function registerQuiverRoutes(app: Express) {
     } catch (e) {
       console.error("[quiver/insider]", e);
       res.status(500).json({ error: "Failed to load insider data" });
+    }
+  });
+
+  // GET /api/trading/copy-trades?memberName=
+  const _copyTradesCache = new Map<string, { data: unknown; ts: number }>();
+  const COPY_TRADES_TTL = 60 * 60 * 1000; // 1 hour
+
+  app.get("/api/trading/copy-trades", async (req, res) => {
+    const memberName = (req.query.memberName as string ?? "").trim();
+    if (!memberName) return res.status(400).json({ error: "memberName is required" });
+
+    const cacheKey = memberName.toLowerCase();
+    const cached = _copyTradesCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < COPY_TRADES_TTL) return res.json(cached.data);
+
+    try {
+      const allTrades = await getCongressTrades();
+      const memberBuys = allTrades.filter(
+        (t) =>
+          t.memberName.toLowerCase().includes(memberName.toLowerCase()) &&
+          t.type === "buy" &&
+          t.ticker &&
+          t.ticker !== "N/A"
+      );
+
+      // Deduplicate by ticker (keep latest buy per ticker)
+      const byTicker = new Map<string, typeof memberBuys[number]>();
+      for (const t of memberBuys) {
+        const existing = byTicker.get(t.ticker);
+        if (!existing || t.transactionDate > existing.transactionDate) {
+          byTicker.set(t.ticker, t);
+        }
+      }
+
+      const uniqueTrades = [...byTicker.values()];
+      const tickers = uniqueTrades.map((t) => t.ticker);
+
+      // Fetch current prices in batch
+      const priceMap = await fetchBatch(tickers);
+
+      const holdings: Array<{
+        ticker: string; entryDate: string; currentPrice: number | null;
+        amountMidpoint: number; pnlPct: number | null;
+      }> = [];
+      let totalPnlPct = 0;
+      let pnlCount = 0;
+
+      for (const trade of uniqueTrades) {
+        const current = priceMap.get(trade.ticker)?.price ?? null;
+        const entryMid = parseMidpoint(trade.amount ?? "");
+        // We don't have a precise entry price, so we use current price as "unknown"
+        // and report pnlPct only when current price is available
+        holdings.push({
+          ticker: trade.ticker,
+          entryDate: trade.transactionDate,
+          currentPrice: current,
+          amountMidpoint: entryMid,
+          pnlPct: null, // precise entry price unavailable without historical bar
+        });
+      }
+
+      const data = {
+        holdings,
+        totalPnlPct: pnlCount > 0 ? totalPnlPct / pnlCount : null,
+        memberName,
+        lastUpdated: new Date().toISOString(),
+      };
+      _copyTradesCache.set(cacheKey, { data, ts: Date.now() });
+      return res.json(data);
+    } catch (e) {
+      console.error("[copy-trades]", e);
+      return res.status(503).json({ error: "Copy trades temporarily unavailable" });
     }
   });
 }

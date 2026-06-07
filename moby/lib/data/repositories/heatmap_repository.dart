@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import '../models/heatmap_data.dart';
+import '../models/treemap_stock.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
 
@@ -47,9 +48,39 @@ class HeatmapRepository {
     return tiles;
   }
 
+  final Map<String, TreemapHeatmapData> _treemapCache = {};
+  final Map<String, DateTime> _treemapFetchedAt = {};
+  static const _treemapTtl = Duration(minutes: 5);
+
+  Future<TreemapHeatmapData> fetchTreemap({
+    String index = 'sp500',
+    int limit = 100,
+    String timeframe = '1d',
+  }) async {
+    final cacheKey = '$index:$timeframe:$limit';
+    final cached = _treemapCache[cacheKey];
+    final fetchedAt = _treemapFetchedAt[cacheKey];
+    if (cached != null &&
+        fetchedAt != null &&
+        DateTime.now().difference(fetchedAt) < _treemapTtl) {
+      return cached;
+    }
+    final data = await ApiClient.instance.get(
+      ApiEndpoints.heatmapTreemap(
+          index: index, limit: limit, timeframe: timeframe),
+      options: Options(receiveTimeout: const Duration(seconds: 120)),
+    ) as Map<String, dynamic>;
+    final parsed = TreemapHeatmapData.fromJson(data);
+    _treemapCache[cacheKey] = parsed;
+    _treemapFetchedAt[cacheKey] = DateTime.now();
+    return parsed;
+  }
+
   void invalidateCache() {
     _heatmapFetchedAt = null;
     _assetsCache.clear();
     _assetsFetchedAt.clear();
+    _treemapCache.clear();
+    _treemapFetchedAt.clear();
   }
 }

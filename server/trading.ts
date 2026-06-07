@@ -3,7 +3,7 @@
  * AI Trading Signals module — integrated into Monysa Express backend.
  *
  * Endpoints (all prefixed /api/trading/):
- *   GET  /quotes              — live prices for all 39 assets (refreshed every 10 s)
+ *   GET  /quotes              — live prices for all 39 assets (refreshed every 20 s)
  *   GET  /signals/:symbol     — BUY/HOLD/SELL signal with confidence, Entry/SL/TP, indicators
  *   GET  /history/:symbol     — OHLCV candles for 5 timeframes
  *   GET  /backtest/:symbol    — walk-forward backtest results across 3 strategies
@@ -13,8 +13,16 @@
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import pLimit from "p-limit";
 import { yahooProvider } from "./providers";
 import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
+import { fetchSp500Constituents } from "./routes/heatmap";
+import {
+  getSectorQuadrants,
+  GICS_TO_ETF_SECTOR,
+  SECTOR_ETFS,
+  type RrgQuadrant,
+} from "./routes/economy";
 
 // Single source of truth for symbol validation across all routes.
 // Character set covers Yahoo Finance (= ^ . - _), TradingView/Polygon (:),
@@ -215,13 +223,37 @@ const YF_HEADERS = {
   "Accept": "application/json",
 };
 
+// Shared concurrency limiter — prevents burst overload of Yahoo Finance.
+const _yfLimiter = pLimit(10);
+const _yfInFlight = new Map<string, Promise<unknown>>();
+
 async function yfFetch<T>(url: string, timeoutMs = 10_000): Promise<T> {
-  const res = await fetch(url, {
-    headers: YF_HEADERS,
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) throw new Error(`YF fetch failed: ${res.status} ${url}`);
-  return res.json() as Promise<T>;
+  const existing = _yfInFlight.get(url);
+  if (existing) return existing as Promise<T>;
+
+  const promise = _yfLimiter(async () => {
+    const MAX_RETRIES = 3;
+    let delay = 1_000;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      const res = await fetch(url, {
+        headers: YF_HEADERS,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.status === 429) {
+        if (attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, delay));
+          delay = Math.min(delay * 2, 30_000);
+          continue;
+        }
+        throw new Error(`YF rate limited after ${MAX_RETRIES} retries: ${url}`);
+      }
+      if (!res.ok) throw new Error(`YF fetch failed: ${res.status} ${url}`);
+      return res.json() as T;
+    }
+  }).finally(() => _yfInFlight.delete(url));
+
+  _yfInFlight.set(url, promise as Promise<unknown>);
+  return promise as Promise<T>;
 }
 
 // ─── Yahoo Finance Crumb Management (for quoteSummary) ────────────────────────
@@ -232,6 +264,8 @@ const YF_CRUMB_TTL = 2 * 60 * 60_000; // 2 hours
 let _yfCrumb: string | null = null;
 let _yfCookie: string | null = null;
 let _yfCrumbTs = 0;
+let _yfCrumbPending: Promise<{ crumb: string; cookie: string } | null> | null = null;
+let _yfCrumbBackoffUntil = 0;
 
 // Yahoo Finance uses a 307 → guce.yahoo.com/consent redirect that sets the GUCS session
 // cookie on the intermediate response. Node.js fetch with redirect:"follow" doesn't accumulate
@@ -304,13 +338,23 @@ async function getYFCrumb(): Promise<{ crumb: string; cookie: string } | null> {
   if (_yfCrumb && _yfCookie && Date.now() - _yfCrumbTs < YF_CRUMB_TTL) {
     return { crumb: _yfCrumb, cookie: _yfCookie };
   }
-  const result = await fetchYFCrumb();
-  if (result) {
-    _yfCrumb = result.crumb;
-    _yfCookie = result.cookie;
-    _yfCrumbTs = Date.now();
-  }
-  return result;
+  // Don't hammer Yahoo while in backoff after a failed fetch
+  if (Date.now() < _yfCrumbBackoffUntil) return null;
+  // Deduplicate concurrent crumb fetches — only one flight at a time
+  if (_yfCrumbPending) return _yfCrumbPending;
+  _yfCrumbPending = fetchYFCrumb().then(result => {
+    _yfCrumbPending = null;
+    if (result) {
+      _yfCrumb = result.crumb;
+      _yfCookie = result.cookie;
+      _yfCrumbTs = Date.now();
+    } else {
+      // Back off 15 min before retrying to avoid 429 storm
+      _yfCrumbBackoffUntil = Date.now() + 15 * 60_000;
+    }
+    return result;
+  });
+  return _yfCrumbPending;
 }
 
 interface YFEarningsHistoryItem {
@@ -419,21 +463,34 @@ async function fetchCurrentPrice(symbol: string): Promise<PriceEntry | null> {
 async function pollAllPrices() {
   const symbols = TRADING_ASSETS.map(a => a.symbol);
   const BATCH = 10;
+  let nullCount = 0;
   for (let i = 0; i < symbols.length; i += BATCH) {
     const batch = symbols.slice(i, i + BATCH);
     const results = await Promise.allSettled(batch.map(s => fetchCurrentPrice(s)));
     results.forEach((r, idx) => {
       if (r.status === "fulfilled" && r.value) {
         latestPrices.set(batch[idx], r.value);
+      } else {
+        nullCount++;
       }
     });
   }
   _lastPollAt = Date.now();
+  // Back-pressure: if >20% of symbols failed (likely rate-limited), skip next cycle.
+  if (nullCount / symbols.length > 0.2) {
+    console.warn(`[poll] ${nullCount}/${symbols.length} price fetches failed — skipping next cycle`);
+    _skipNextPoll = true;
+  }
 }
 
-// Boot: immediate poll, then every 10 s
+let _skipNextPoll = false;
+
+// Boot: immediate poll, then every 20 s (halves Yahoo Finance polling load vs. 10 s).
 pollAllPrices().catch(() => {});
-setInterval(() => pollAllPrices().catch(() => {}), 10_000);
+setInterval(() => {
+  if (_skipNextPoll) { _skipNextPoll = false; return; }
+  pollAllPrices().catch(() => {});
+}, 20_000);
 
 // ─── Optional Finnhub WebSocket for Crypto ───────────────────────────────────
 
@@ -834,6 +891,8 @@ interface FundamentalsResult {
   currency: string | null;
   week52High: number | null;
   week52Low: number | null;
+  epsHistory: number[];
+  epsApplicable: boolean;
 }
 const _fundCache = new Map<string, { data: FundamentalsResult; ts: number }>();
 const FUND_TTL = 4 * 60 * 60 * 1000;
@@ -2573,6 +2632,8 @@ setInterval(() => {
   if (_tenXCache && now - _tenXCache.ts > TENX_TTL) _tenXCache = null;
   if (_stockScanCache && now - _stockScanCache.ts > STOCK_SCAN_TTL) _stockScanCache = null;
   if (_tenXV2Cache && now - _tenXV2Cache.ts > TENX_TTL) _tenXV2Cache = null;
+  if (_tenXV3ForexCache && now - _tenXV3ForexCache.ts > TENX_TTL) _tenXV3ForexCache = null;
+  if (_tenXV3CryptoCache && now - _tenXV3CryptoCache.ts > TENX_TTL) _tenXV3CryptoCache = null;
   if (_stockV2ScanCache && now - _stockV2ScanCache.ts > STOCK_SCAN_TTL) _stockV2ScanCache = null;
   if (_screenerCache && now - _screenerCache.ts > SCREENER_TTL) _screenerCache = null;
   if (_indianScreenerCache && now - _indianScreenerCache.ts > SCREENER_TTL) _indianScreenerCache = null;
@@ -2724,6 +2785,12 @@ interface TenXScanEntry {
   epsHistory: number[];
   epsApplicable: boolean;
   trendUp: boolean;
+  // V3 "Super Pine" — index-specific signals (Indices only; absent on v1/v2 entries)
+  thrust?: boolean;
+  base?: boolean;
+  uptrend?: boolean;
+  newHighReclaim?: boolean;
+  regimeBreakout?: boolean;
   signalsActive: number;
 }
 
@@ -2769,6 +2836,11 @@ const STOCK_SCAN_TTL = 30 * 60_000;
 
 let _tenXV2Cache: { data: TenXScanResponse; ts: number } | null = null;
 let _stockV2ScanCache: { data: TenXScanResponse; ts: number } | null = null;
+
+let _tenXV3Cache: { data: TenXScanResponse; ts: number } | null = null;
+let _tenXV3CommoditiesCache: { data: TenXScanResponse; ts: number } | null = null;
+let _tenXV3ForexCache: { data: TenXScanResponse; ts: number } | null = null;
+let _tenXV3CryptoCache: { data: TenXScanResponse; ts: number } | null = null;
 
 let _screenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
 let _indianScreenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
@@ -3208,6 +3280,545 @@ async function computeTrend(symbol: string): Promise<{ trendUp: boolean }> {
   } catch {
     return { trendUp: false };
   }
+}
+
+// ─── V3 "Super Pine" — Index Regime Breakout ─────────────────────────────────
+// Port of user-supplied Pine "10X Power Moves — Indexes" (Felix Prehn adaptation).
+// Index-tuned: lower volume threshold (2×) with thrust fallback for vol-less
+// indexes, 120-bar base ≤ 20%, SMA200 uptrend, 252-bar new-high reclaim,
+// composite breakout = baseRecently + newHighReclaim + (volSpike||thrust) + uptrend.
+
+interface V3Signals {
+  thrust: boolean;
+  base: boolean;
+  uptrend: boolean;
+  newHighReclaim: boolean;
+  regimeBreakout: boolean;
+  volumeRatio: number;
+  volumeSpike: boolean;
+  volumeGreen: boolean;
+  consolidationRangePct: number;
+}
+
+async function computeV3Signals(symbol: string): Promise<V3Signals> {
+  const empty: V3Signals = {
+    thrust: false, base: false, uptrend: false,
+    newHighReclaim: false, regimeBreakout: false,
+    volumeRatio: 0, volumeSpike: false, volumeGreen: false,
+    consolidationRangePct: 999,
+  };
+  try {
+    // Need ~14 months of daily bars for the 252-bar prior-high lookback + 200-bar MA.
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "2y")) as OHLCV[];
+    if (candles.length < 210) return empty;
+
+    const n = candles.length;
+    const last = candles[n - 1];
+    const upDay = last.close >= last.open;
+
+    // Pine inputs
+    const VOL_MULT = 2.0, VOL_LEN = 20;
+    const BASE_LEN = 120, BASE_RANGE_PCT = 20;
+    const HI_LOOK = 252, MA_LEN = 200;
+
+    // Move #1 — Volume spike or price thrust
+    const volWindow = candles.slice(-VOL_LEN);
+    const hasVolume = volWindow.some(c => c.volume > 0);
+    const volAvg = volWindow.reduce((a, c) => a + c.volume, 0) / VOL_LEN;
+    const volumeRatio = volAvg > 0
+      ? Math.round((last.volume / volAvg) * 10) / 10
+      : 0;
+    const volumeSpike = hasVolume && last.volume >= volAvg * VOL_MULT;
+    const volumeGreen = upDay;
+
+    // Price thrust fallback (Pine: trueRange ≥ trAvg*1.5 && strongClose && upDay)
+    const trueRange = last.high - last.low;
+    const trAvg = volWindow.reduce((a, c) => a + (c.high - c.low), 0) / VOL_LEN;
+    const strongClose = trueRange > 0
+      ? (last.close - last.low) / trueRange > 0.7
+      : false;
+    const priceThrust = trueRange >= trAvg * 1.5 && strongClose && upDay;
+    const thrust = volumeSpike || (!hasVolume && priceThrust);
+
+    // Move #2 — Base zone (120-bar range ≤ 20%)
+    const baseWindow = candles.slice(-BASE_LEN);
+    const baseHi = Math.max(...baseWindow.map(c => c.high));
+    const baseLo = Math.min(...baseWindow.map(c => c.low));
+    const consolidationRangePct = baseLo > 0
+      ? Math.round(((baseHi - baseLo) / baseLo) * 1000) / 10
+      : 999;
+    const base = consolidationRangePct <= BASE_RANGE_PCT;
+
+    // baseRecently: any of the last 15 bars had isBase active (Pine: barssince(isBase) < 15)
+    let baseRecently = false;
+    for (let look = 1; look <= 15 && n - look - BASE_LEN >= 0; look++) {
+      const win = candles.slice(n - look - BASE_LEN, n - look);
+      const hi = Math.max(...win.map(c => c.high));
+      const lo = Math.min(...win.map(c => c.low));
+      const pct = lo > 0 ? ((hi - lo) / lo) * 100 : 999;
+      if (pct <= BASE_RANGE_PCT) { baseRecently = true; break; }
+    }
+    if (base) baseRecently = true;
+
+    // Trend — close > SMA200
+    const maWindow = candles.slice(-MA_LEN);
+    const sma200 = maWindow.reduce((a, c) => a + c.close, 0) / maWindow.length;
+    const uptrend = last.close > sma200;
+
+    // New-high reclaim — close > prior 252-bar high (excluding current bar)
+    const priorWindow = candles.slice(Math.max(0, n - 1 - HI_LOOK), n - 1);
+    const priorHigh = priorWindow.length > 0
+      ? Math.max(...priorWindow.map(c => c.high))
+      : Infinity;
+    const newHighReclaim = last.close > priorHigh && uptrend;
+
+    const greenSignal = (volumeSpike && upDay) || (!hasVolume && priceThrust);
+    const regimeBreakout = baseRecently && newHighReclaim && greenSignal;
+
+    return {
+      thrust, base, uptrend, newHighReclaim, regimeBreakout,
+      volumeRatio, volumeSpike, volumeGreen, consolidationRangePct,
+    };
+  } catch {
+    return empty;
+  }
+}
+
+async function scanAssetV3(asset: TradingAsset): Promise<TenXScanEntry | null> {
+  if (asset.category !== "Indices") return null;
+  try {
+    const priceEntry = latestPrices.get(asset.symbol);
+    if (!priceEntry) return null;
+
+    const sig = await computeV3Signals(asset.symbol);
+
+    const signalsActive =
+      (sig.thrust ? 1 : 0) +
+      (sig.base ? 1 : 0) +
+      (sig.uptrend ? 1 : 0) +
+      (sig.newHighReclaim ? 1 : 0) +
+      (sig.regimeBreakout ? 1 : 0);
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      flag: asset.flag,
+      category: asset.category,
+      price: priceEntry.price,
+      changePercent: priceEntry.changePercent,
+      volumeRatio: sig.volumeRatio,
+      volumeSpike: sig.volumeSpike,
+      volumeGreen: sig.volumeGreen,
+      heartbeat: false,
+      consolidationRangePct: sig.consolidationRangePct,
+      nearBreakout: false,
+      recordQuarter: false,
+      epsHistory: [],
+      epsApplicable: false,
+      trendUp: false,
+      thrust: sig.thrust,
+      base: sig.base,
+      uptrend: sig.uptrend,
+      newHighReclaim: sig.newHighReclaim,
+      regimeBreakout: sig.regimeBreakout,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── 10X v3 Commodities ("Pine Power Moves — Commodities") ───────────────────
+// 3 signals faithfully ported from the Pine Script:
+//   #1 Green Volume Spike — volume >= 3× 20-bar avg on an up day
+//   #2 Heartbeat          — multi-year consolidation (≤ 35% range over 400 bars,
+//                           recent lows not collapsing vs older lows)
+//   #3 Catalyst           — close > prior 100-bar high AND green spike on breakout
+
+interface V3CommoditiesSignals {
+  volumeRatio: number;
+  volumeSpike: boolean;
+  volumeGreen: boolean;
+  heartbeat: boolean;
+  consolidationRangePct: number;
+  catalyst: boolean;
+}
+
+async function computeV3CommoditiesSignals(symbol: string): Promise<V3CommoditiesSignals> {
+  const empty: V3CommoditiesSignals = {
+    volumeRatio: 0, volumeSpike: false, volumeGreen: false,
+    heartbeat: false, consolidationRangePct: 999, catalyst: false,
+  };
+  try {
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "2y")) as OHLCV[];
+    if (candles.length < 110) return empty;
+
+    const n = candles.length;
+    const last = candles[n - 1];
+    const upDay = last.close >= last.open;
+
+    // Pine inputs
+    const VOL_MULT = 3.0, VOL_LEN = 20;
+    const HB_LEN = Math.min(400, n - 10); // cap to available data
+    const HB_RANGE_PCT = 35.0;
+    const BO_LOOK = Math.min(100, n - 2);
+
+    // Signal #1: Volume spike
+    const volWindow = candles.slice(-VOL_LEN);
+    const volAvg = volWindow.reduce((a, c) => a + c.volume, 0) / VOL_LEN;
+    const volumeRatio = volAvg > 0 ? Math.round((last.volume / volAvg) * 10) / 10 : 0;
+    const volumeSpike = volAvg > 0 && last.volume >= volAvg * VOL_MULT;
+    const volumeGreen = upDay;
+    const greenSpike = volumeSpike && upDay;
+
+    // Signal #2: Heartbeat (consolidation)
+    const hbWindow = candles.slice(-HB_LEN);
+    const hbHigh = Math.max(...hbWindow.map(c => c.high));
+    const hbLow = Math.min(...hbWindow.map(c => c.low));
+    const consolidationRangePct = hbLow > 0
+      ? Math.round(((hbHigh - hbLow) / hbLow) * 1000) / 10
+      : 999;
+    const isFlat = consolidationRangePct <= HB_RANGE_PCT;
+
+    // "not dying": recent half-window lows >= older lows * 0.98
+    const halfLen = Math.max(2, Math.floor(HB_LEN / 2));
+    const recentLow = Math.min(...candles.slice(-halfLen).map(c => c.low));
+    const olderLow = hbLow;
+    const notDying = recentLow >= olderLow * 0.98;
+    const heartbeat = isFlat && notDying;
+
+    // Signal #3: Catalyst — close > prior 100-bar high AND green spike on breakout
+    const boRef = Math.max(...candles.slice(n - 1 - BO_LOOK, n - 1).map(c => c.high));
+    const brokeOut = last.close > boRef;
+    const catalyst = brokeOut && greenSpike;
+
+    return { volumeRatio, volumeSpike, volumeGreen, heartbeat, consolidationRangePct, catalyst };
+  } catch {
+    return empty;
+  }
+}
+
+async function scanAssetV3Commodities(asset: TradingAsset): Promise<TenXScanEntry | null> {
+  if (asset.category !== "Commodities") return null;
+  try {
+    const priceEntry = latestPrices.get(asset.symbol);
+    if (!priceEntry) return null;
+
+    const sig = await computeV3CommoditiesSignals(asset.symbol);
+    const signalsActive =
+      (sig.volumeSpike && sig.volumeGreen ? 1 : 0) +
+      (sig.heartbeat ? 1 : 0) +
+      (sig.catalyst ? 1 : 0);
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      flag: asset.flag,
+      category: asset.category,
+      price: priceEntry.price,
+      changePercent: priceEntry.changePercent,
+      volumeRatio: sig.volumeRatio,
+      volumeSpike: sig.volumeSpike,
+      volumeGreen: sig.volumeGreen,
+      heartbeat: sig.heartbeat,
+      consolidationRangePct: sig.consolidationRangePct,
+      nearBreakout: sig.catalyst,
+      recordQuarter: false,
+      epsHistory: [],
+      epsApplicable: false,
+      trendUp: false,
+      thrust: false,
+      base: false,
+      uptrend: false,
+      newHighReclaim: false,
+      regimeBreakout: sig.catalyst,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runAssetScannerV3Commodities(): Promise<TenXScanResponse> {
+  if (_tenXV3CommoditiesCache && Date.now() - _tenXV3CommoditiesCache.ts < TENX_TTL) return _tenXV3CommoditiesCache.data;
+  const commodities = TRADING_ASSETS.filter(a => a.category === "Commodities");
+  const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(commodities, scanAssetV3Commodities, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: TENX_TTL / 1000,
+  };
+  _tenXV3CommoditiesCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── 10X v3 Forex ("Pine Power Moves — Forex Range Breakout") ────────────────
+// 3 signals ported from the Pine Script:
+//   #1 VOL      — tick-volume spike ≥ 2× 20-bar avg on a green day
+//   #2 RANGE    — price range over 100 bars ≤ 8% (consolidation zone)
+//   #3 BREAKOUT — rangeRecently + close > prior 100-bar high + close > SMA100 + greenSpike
+// Session filter omitted: server runs on daily bars so kill-zone concept n/a.
+// Only LONG (bullish) breakout is scored; short setups require separate scan.
+
+interface V3ForexSignals {
+  volumeRatio: number;
+  volumeSpike: boolean;
+  volumeGreen: boolean;
+  rangeConsolidation: boolean;   // stored in heartbeat field
+  consolidationRangePct: number;
+  breakout: boolean;             // stored in regimeBreakout field
+}
+
+async function computeV3ForexSignals(symbol: string): Promise<V3ForexSignals> {
+  const empty: V3ForexSignals = {
+    volumeRatio: 0, volumeSpike: false, volumeGreen: false,
+    rangeConsolidation: false, consolidationRangePct: 999, breakout: false,
+  };
+  try {
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "1y")) as OHLCV[];
+    if (candles.length < 110) return empty;
+
+    const n = candles.length;
+    const last = candles[n - 1];
+    const upDay = last.close >= last.open;
+
+    // Pine inputs
+    const VOL_MULT = 2.0, VOL_LEN = 20;
+    const RANGE_LEN = Math.min(100, n - 5);
+    const RANGE_MAX_PCT = 8.0;
+    const MA_LEN = Math.min(100, n - 2);
+
+    // Signal #1: tick-volume spike
+    const volWindow = candles.slice(-VOL_LEN);
+    const volAvg = volWindow.reduce((a, c) => a + c.volume, 0) / VOL_LEN;
+    const volumeRatio = volAvg > 0 ? Math.round((last.volume / volAvg) * 10) / 10 : 0;
+    const volumeSpike = volAvg > 0 && last.volume >= volAvg * VOL_MULT;
+    const volumeGreen = upDay;
+    const greenSpike = volumeSpike && upDay;
+
+    // Signal #2: range consolidation
+    const rangeWindow = candles.slice(-RANGE_LEN);
+    const rHigh = Math.max(...rangeWindow.map(c => c.high));
+    const rLow = Math.min(...rangeWindow.map(c => c.low));
+    const consolidationRangePct = rLow > 0
+      ? Math.round(((rHigh - rLow) / rLow) * 1000) / 10
+      : 999;
+    const rangeConsolidation = consolidationRangePct <= RANGE_MAX_PCT;
+
+    // rangeRecently: any of the last 15 bars was in consolidation
+    let rangeRecently = rangeConsolidation;
+    if (!rangeRecently) {
+      for (let look = 1; look <= 15 && n - look - RANGE_LEN >= 0; look++) {
+        const win = candles.slice(n - look - RANGE_LEN, n - look);
+        const hi = Math.max(...win.map(c => c.high));
+        const lo = Math.min(...win.map(c => c.low));
+        const pct = lo > 0 ? ((hi - lo) / lo) * 100 : 999;
+        if (pct <= RANGE_MAX_PCT) { rangeRecently = true; break; }
+      }
+    }
+
+    // Trend MA
+    const maWindow = candles.slice(-MA_LEN);
+    const trendMA = maWindow.reduce((a, c) => a + c.close, 0) / maWindow.length;
+    const aboveTrend = last.close > trendMA;
+
+    // Signal #3: long breakout (close > prior RANGE_LEN high[1], above trend MA, green spike)
+    const refHigh = Math.max(...candles.slice(n - 1 - RANGE_LEN, n - 1).map(c => c.high));
+    const breakout = rangeRecently && last.close > refHigh && aboveTrend && greenSpike;
+
+    return { volumeRatio, volumeSpike, volumeGreen, rangeConsolidation, consolidationRangePct, breakout };
+  } catch {
+    return empty;
+  }
+}
+
+async function scanAssetV3Forex(asset: TradingAsset): Promise<TenXScanEntry | null> {
+  if (asset.category !== "Forex") return null;
+  try {
+    const priceEntry = latestPrices.get(asset.symbol);
+    if (!priceEntry) return null;
+
+    const sig = await computeV3ForexSignals(asset.symbol);
+    const signalsActive =
+      (sig.volumeSpike && sig.volumeGreen ? 1 : 0) +
+      (sig.rangeConsolidation ? 1 : 0) +
+      (sig.breakout ? 1 : 0);
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      flag: asset.flag,
+      category: asset.category,
+      price: priceEntry.price,
+      changePercent: priceEntry.changePercent,
+      volumeRatio: sig.volumeRatio,
+      volumeSpike: sig.volumeSpike,
+      volumeGreen: sig.volumeGreen,
+      heartbeat: sig.rangeConsolidation,
+      consolidationRangePct: sig.consolidationRangePct,
+      nearBreakout: sig.breakout,
+      recordQuarter: false,
+      epsHistory: [],
+      epsApplicable: false,
+      trendUp: false,
+      thrust: false,
+      base: false,
+      uptrend: false,
+      newHighReclaim: false,
+      regimeBreakout: sig.breakout,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runAssetScannerV3Forex(): Promise<TenXScanResponse> {
+  if (_tenXV3ForexCache && Date.now() - _tenXV3ForexCache.ts < TENX_TTL) return _tenXV3ForexCache.data;
+  const forexAssets = TRADING_ASSETS.filter(a => a.category === "Forex");
+  const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(forexAssets, scanAssetV3Forex, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: TENX_TTL / 1000 };
+  _tenXV3ForexCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── 10X v3 Crypto ("Pine Power Moves — Crypto") ─────────────────────────────
+// 3 signals ported from the Pine Script:
+//   #1 VOL      — volume spike ≥ 3× 20-bar avg on a green day
+//   #2 HEARTBEAT — base consolidation ≤ 40% range over 180 bars, lows not collapsing (0.97)
+//   #3 CATALYST  — close > prior 90-bar high AND green spike (baseRecently required)
+
+interface V3CryptoSignals {
+  volumeRatio: number;
+  volumeSpike: boolean;
+  volumeGreen: boolean;
+  heartbeat: boolean;
+  consolidationRangePct: number;
+  catalyst: boolean;
+}
+
+async function computeV3CryptoSignals(symbol: string): Promise<V3CryptoSignals> {
+  const empty: V3CryptoSignals = {
+    volumeRatio: 0, volumeSpike: false, volumeGreen: false,
+    heartbeat: false, consolidationRangePct: 999, catalyst: false,
+  };
+  try {
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "2y")) as OHLCV[];
+    if (candles.length < 95) return empty;
+
+    const n = candles.length;
+    const last = candles[n - 1];
+    const upDay = last.close >= last.open;
+
+    const VOL_MULT = 3.0, VOL_LEN = 20;
+    const HB_LEN = Math.min(180, n - 10);
+    const HB_RANGE_PCT = 40.0;
+    const BO_LOOK = Math.min(90, n - 2);
+
+    // Signal #1: volume spike
+    const volWindow = candles.slice(-VOL_LEN);
+    const volAvg = volWindow.reduce((a, c) => a + c.volume, 0) / VOL_LEN;
+    const volumeRatio = volAvg > 0 ? Math.round((last.volume / volAvg) * 10) / 10 : 0;
+    const volumeSpike = volAvg > 0 && last.volume >= volAvg * VOL_MULT;
+    const volumeGreen = upDay;
+    const greenSpike = volumeSpike && upDay;
+
+    // Signal #2: heartbeat base
+    const hbWindow = candles.slice(-HB_LEN);
+    const hbHigh = Math.max(...hbWindow.map(c => c.high));
+    const hbLow = Math.min(...hbWindow.map(c => c.low));
+    const consolidationRangePct = hbLow > 0
+      ? Math.round(((hbHigh - hbLow) / hbLow) * 1000) / 10
+      : 999;
+    const isFlat = consolidationRangePct <= HB_RANGE_PCT;
+
+    const halfLen = Math.max(2, Math.floor(HB_LEN / 2));
+    const recentLow = Math.min(...candles.slice(-halfLen).map(c => c.low));
+    const notDying = recentLow >= hbLow * 0.97;
+    const heartbeat = isFlat && notDying;
+
+    // baseRecently: any of the last 10 bars was in a base
+    let baseRecently = heartbeat;
+    if (!baseRecently) {
+      for (let look = 1; look <= 10 && n - look - HB_LEN >= 0; look++) {
+        const win = candles.slice(n - look - HB_LEN, n - look);
+        const hi = Math.max(...win.map(c => c.high));
+        const lo = Math.min(...win.map(c => c.low));
+        const pct = lo > 0 ? ((hi - lo) / lo) * 100 : 999;
+        const rLow = Math.min(...win.map(c => c.low));
+        const rHalfLow = Math.min(...win.slice(-Math.floor(win.length / 2)).map(c => c.low));
+        if (pct <= HB_RANGE_PCT && rHalfLow >= rLow * 0.97) { baseRecently = true; break; }
+      }
+    }
+
+    // Signal #3: catalyst — close > prior 90-bar high + green spike
+    const boRef = Math.max(...candles.slice(n - 1 - BO_LOOK, n - 1).map(c => c.high));
+    const brokeOut = last.close > boRef;
+    const catalyst = baseRecently && brokeOut && greenSpike;
+
+    return { volumeRatio, volumeSpike, volumeGreen, heartbeat, consolidationRangePct, catalyst };
+  } catch {
+    return empty;
+  }
+}
+
+async function scanAssetV3Crypto(asset: TradingAsset): Promise<TenXScanEntry | null> {
+  if (asset.category !== "Crypto") return null;
+  try {
+    const priceEntry = latestPrices.get(asset.symbol);
+    if (!priceEntry) return null;
+
+    const sig = await computeV3CryptoSignals(asset.symbol);
+    const signalsActive =
+      (sig.volumeSpike && sig.volumeGreen ? 1 : 0) +
+      (sig.heartbeat ? 1 : 0) +
+      (sig.catalyst ? 1 : 0);
+
+    return {
+      symbol: asset.symbol,
+      name: asset.name,
+      flag: asset.flag,
+      category: asset.category,
+      price: priceEntry.price,
+      changePercent: priceEntry.changePercent,
+      volumeRatio: sig.volumeRatio,
+      volumeSpike: sig.volumeSpike,
+      volumeGreen: sig.volumeGreen,
+      heartbeat: sig.heartbeat,
+      consolidationRangePct: sig.consolidationRangePct,
+      nearBreakout: sig.catalyst,
+      recordQuarter: false,
+      epsHistory: [],
+      epsApplicable: false,
+      trendUp: false,
+      thrust: false,
+      base: false,
+      uptrend: false,
+      newHighReclaim: false,
+      regimeBreakout: sig.catalyst,
+      signalsActive,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runAssetScannerV3Crypto(): Promise<TenXScanResponse> {
+  if (_tenXV3CryptoCache && Date.now() - _tenXV3CryptoCache.ts < TENX_TTL) return _tenXV3CryptoCache.data;
+  const cryptoAssets = TRADING_ASSETS.filter(a => a.category === "Crypto");
+  const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(cryptoAssets, scanAssetV3Crypto, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: TENX_TTL / 1000 };
+  _tenXV3CryptoCache = { data, ts: Date.now() };
+  return data;
 }
 
 async function scanAssetV2(asset: TradingAsset): Promise<TenXScanEntry | null> {
@@ -3727,6 +4338,22 @@ async function runAssetScannerV2(): Promise<TenXScanResponse> {
   return data;
 }
 
+async function runAssetScannerV3(): Promise<TenXScanResponse> {
+  if (_tenXV3Cache && Date.now() - _tenXV3Cache.ts < TENX_TTL) return _tenXV3Cache.data;
+  const indices = TRADING_ASSETS.filter(a => a.category === "Indices");
+  const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(indices, scanAssetV3, 5);
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = {
+    assets,
+    lastUpdated: new Date().toISOString(),
+    cacheTtlSeconds: TENX_TTL / 1000,
+  };
+  _tenXV3Cache = { data, ts: Date.now() };
+  return data;
+}
+
 async function runStockScannerV2(): Promise<TenXScanResponse> {
   if (_stockV2ScanCache && Date.now() - _stockV2ScanCache.ts < STOCK_SCAN_TTL) return _stockV2ScanCache.data;
   const universe = await fetchStockUniverse();
@@ -3741,6 +4368,65 @@ async function runStockScannerV2(): Promise<TenXScanResponse> {
   };
   _stockV2ScanCache = { data, ts: Date.now() };
   return data;
+}
+
+// ─── 10X Scanner Single-Symbol ───────────────────────────────────────────────
+// On-demand scan for any symbol — runs v1 and v2 computations in parallel.
+// No caching: each call is user-triggered, live data only.
+
+async function scanSingleSymbol(symbol: string, displayName?: string): Promise<{
+  v1: TenXScanEntry;
+  v2: TenXScanEntry;
+  lastUpdated: string;
+} | null> {
+  const knownAsset = ASSET_MAP.get(symbol);
+  const category = knownAsset?.category ?? "Stocks";
+  const name = displayName?.trim() || knownAsset?.name || symbol;
+  const flag = knownAsset?.flag ?? "";
+
+  let priceEntry = latestPrices.get(symbol);
+  if (!priceEntry) {
+    priceEntry = (await fetchCurrentPrice(symbol)) ?? undefined;
+  }
+  if (!priceEntry) return null;
+
+  const { price, changePercent } = priceEntry;
+
+  const [vsResult, hbV1Result, hbV2Result, eqResult, trResult] = await Promise.allSettled([
+    computeVolumeSpike(symbol),
+    computeHeartbeat(symbol),
+    computeHeartbeatV2(symbol),
+    computeRecordQuarter(symbol, category),
+    computeTrend(symbol),
+  ]);
+
+  const vs  = vsResult.status    === "fulfilled" ? vsResult.value    : { volumeRatio: 0, volumeSpike: false, volumeGreen: false };
+  const hb1 = hbV1Result.status  === "fulfilled" ? hbV1Result.value  : { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+  const hb2 = hbV2Result.status  === "fulfilled" ? hbV2Result.value  : { heartbeat: false, consolidationRangePct: 999, nearBreakout: false };
+  const eq  = eqResult.status    === "fulfilled" ? eqResult.value    : { recordQuarter: false, epsHistory: [], epsApplicable: false };
+  const tr  = trResult.status    === "fulfilled" ? trResult.value    : { trendUp: false };
+
+  const base = {
+    symbol, name, flag, category, price, changePercent,
+    volumeRatio: vs.volumeRatio, volumeSpike: vs.volumeSpike, volumeGreen: vs.volumeGreen,
+    recordQuarter: eq.recordQuarter, epsHistory: eq.epsHistory, epsApplicable: eq.epsApplicable,
+  };
+
+  const v1: TenXScanEntry = {
+    ...base,
+    heartbeat: hb1.heartbeat, consolidationRangePct: hb1.consolidationRangePct, nearBreakout: hb1.nearBreakout,
+    trendUp: false,
+    signalsActive: (vs.volumeSpike && vs.volumeGreen ? 1 : 0) + (hb1.heartbeat ? 1 : 0) + (eq.recordQuarter ? 1 : 0),
+  };
+
+  const v2: TenXScanEntry = {
+    ...base,
+    heartbeat: hb2.heartbeat, consolidationRangePct: hb2.consolidationRangePct, nearBreakout: hb2.nearBreakout,
+    trendUp: tr.trendUp,
+    signalsActive: (vs.volumeSpike && vs.volumeGreen ? 1 : 0) + (hb2.heartbeat ? 1 : 0) + (eq.recordQuarter ? 1 : 0) + (tr.trendUp ? 1 : 0),
+  };
+
+  return { v1, v2, lastUpdated: new Date().toISOString() };
 }
 
 // ─── 10X Scanner Backtest ────────────────────────────────────────────────────
@@ -4270,6 +4956,23 @@ export function createTradingRouter(): Router {
     return res.json(result);
   });
 
+  // GET /api/trading/scanner/10x/single?symbol=AAPL&name=Apple+Inc. — v1+v2 on-demand scan
+  router.get("/scanner/10x/single", async (req: Request, res: Response) => {
+    const raw = ((req.query.symbol as string) ?? "").trim();
+    if (!raw) return res.status(400).json({ error: "symbol is required." });
+    const validation = symbolSchema.safeParse(raw);
+    if (!validation.success) return res.status(400).json({ error: "Invalid symbol format." });
+    const displayName = ((req.query.name as string) ?? "").trim();
+    try {
+      const result = await scanSingleSymbol(raw, displayName || undefined);
+      if (!result) return res.status(404).json({ error: "Could not fetch price data for symbol." });
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Single Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable." });
+    }
+  });
+
   // GET /api/trading/scanner/10x/assets  — 49 base assets (Commodities/Indices/Crypto/Forex)
   router.get("/scanner/10x/assets", async (_req: Request, res: Response) => {
     try {
@@ -4314,6 +5017,54 @@ export function createTradingRouter(): Router {
       return res.json(result);
     } catch (err) {
       console.error("[10X v2 Asset Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v3/assets  — v3 "Super Pine" (Indices only): index regime breakout
+  router.get("/scanner/10x-v3/assets", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAssetScannerV3();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v3 Asset Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v3/commodities  — v3 Pine Commodities: heartbeat + catalyst
+  router.get("/scanner/10x-v3/commodities", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAssetScannerV3Commodities();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v3 Commodities Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v3/forex  — v3 Pine Forex: range consolidation + long breakout
+  router.get("/scanner/10x-v3/forex", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAssetScannerV3Forex();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v3 Forex Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x-v3/crypto  — v3 Pine Crypto: base + breakout on volume
+  router.get("/scanner/10x-v3/crypto", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAssetScannerV3Crypto();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v3 Crypto Scanner]", err);
       return res.status(503).json({ error: "Scanner temporarily unavailable" });
     }
   });
@@ -4544,6 +5295,146 @@ export function createTradingRouter(): Router {
     }
   });
 
+  // GET /api/trading/best-setups-sector?version=v1|v2
+  // Groups stock-scanner output by RRG sector quadrant + GICS sector, returning
+  // the top 7 stocks per sector inside the Leading and Improving quadrants.
+  // Reuses the existing _stockScanCache (dynamic Yahoo most-actives universe)
+  // and joins against the S&P 500 sector CSV plus a small NDX-only override map.
+  const _bestSetupsSectorCache = new Map<string, { data: unknown; ts: number }>();
+  const BEST_SETUPS_SECTOR_TTL = 30 * 60_000;
+
+  let _symbolSectorCache: { map: Map<string, string>; ts: number } | null = null;
+  const SYMBOL_SECTOR_TTL = 7 * 24 * 60 * 60_000;
+
+  // NDX 100 names not reliably in S&P 500 (foreign listings, recent IPOs).
+  // GICS strings here are passed through GICS_TO_ETF_SECTOR for the join.
+  const NDX_ONLY_SECTORS: Record<string, string> = {
+    "ASML":   "Information Technology",
+    "ARM":    "Information Technology",
+    "AZN":    "Health Care",
+    "CCEP":   "Consumer Staples",
+    "DASH":   "Consumer Discretionary",
+    "DDOG":   "Information Technology",
+    "GFS":    "Information Technology",
+    "MELI":   "Consumer Discretionary",
+    "MSTR":   "Information Technology",
+    "PDD":    "Consumer Discretionary",
+    "TEAM":   "Information Technology",
+    "BIIB":   "Health Care",
+  };
+
+  async function getStockToSectorMap(): Promise<Map<string, string>> {
+    if (_symbolSectorCache && Date.now() - _symbolSectorCache.ts < SYMBOL_SECTOR_TTL) {
+      return _symbolSectorCache.map;
+    }
+    const map = new Map<string, string>();
+    try {
+      const sp = await fetchSp500Constituents();
+      for (const c of sp) {
+        if (c.symbol && c.sector) map.set(c.symbol, c.sector);
+      }
+    } catch (e) {
+      console.error("[Sector Map] S&P 500 fetch failed:", e);
+    }
+    for (const [sym, sector] of Object.entries(NDX_ONLY_SECTORS)) {
+      if (!map.has(sym)) map.set(sym, sector);
+    }
+    _symbolSectorCache = { map, ts: Date.now() };
+    return map;
+  }
+
+  router.get("/best-setups-sector", async (req: Request, res: Response) => {
+    const version = (req.query.version === "v2" ? "v2" : "v1") as "v1" | "v2";
+
+    const cached = _bestSetupsSectorCache.get(version);
+    if (cached && Date.now() - cached.ts < BEST_SETUPS_SECTOR_TTL) {
+      return res.setHeader("Cache-Control", "public, max-age=1800").json(cached.data);
+    }
+
+    try {
+      const [scanData, sectorQuadrants, stockToSector] = await Promise.all([
+        version === "v2" ? runStockScannerV2() : runStockScanner(),
+        getSectorQuadrants(),
+        getStockToSectorMap(),
+      ]);
+
+      const btCached = _backtestCache.get(`${version}-stocks`);
+      const btBySymbol = new Map(
+        (btCached?.data.assets ?? []).map((a) => [a.symbol, a]),
+      );
+
+      type Row = {
+        symbol: string; name: string; price: number; changePercent: number;
+        volumeRatio: number; signalsActive: number;
+        winRate1m: number | null;
+      };
+      const groups = new Map<string, { sector: string; emoji: string; quadrant: RrgQuadrant; rows: Row[] }>();
+
+      for (const entry of scanData.assets) {
+        if (entry.signalsActive < 1) continue;
+        const gics = stockToSector.get(entry.symbol);
+        if (!gics) continue;
+        const etfSectorName = GICS_TO_ETF_SECTOR[gics];
+        if (!etfSectorName) continue;
+        const sectorRrg = sectorQuadrants.get(etfSectorName);
+        if (!sectorRrg || (sectorRrg.quadrant !== "Leading" && sectorRrg.quadrant !== "Improving")) continue;
+
+        const bt = btBySymbol.get(entry.symbol);
+        const stats = bt?.bySignalCount[String(entry.signalsActive)];
+        const row: Row = {
+          symbol: entry.symbol,
+          name: entry.name,
+          price: entry.price,
+          changePercent: entry.changePercent,
+          volumeRatio: entry.volumeRatio,
+          signalsActive: entry.signalsActive,
+          winRate1m: stats?.winRate1m ?? null,
+        };
+
+        const key = `${sectorRrg.quadrant}::${etfSectorName}`;
+        let g = groups.get(key);
+        if (!g) {
+          g = { sector: etfSectorName, emoji: sectorRrg.emoji, quadrant: sectorRrg.quadrant, rows: [] };
+          groups.set(key, g);
+        }
+        g.rows.push(row);
+      }
+
+      const sortRows = (rows: Row[]) =>
+        rows.sort((a, b) => {
+          if (b.signalsActive !== a.signalsActive) return b.signalsActive - a.signalsActive;
+          const aw = a.winRate1m ?? -1;
+          const bw = b.winRate1m ?? -1;
+          if (bw !== aw) return bw - aw;
+          return b.changePercent - a.changePercent;
+        });
+
+      // Preserve SECTOR_ETFS declaration order so sectors render predictably.
+      const sectorOrder = SECTOR_ETFS.map((e) => e.name);
+      const buildList = (quadrant: RrgQuadrant) =>
+        sectorOrder
+          .map((name) => groups.get(`${quadrant}::${name}`))
+          .filter((g): g is { sector: string; emoji: string; quadrant: RrgQuadrant; rows: Row[] } => !!g && g.rows.length > 0)
+          .map((g) => ({
+            sector: g.sector,
+            emoji: g.emoji,
+            stocks: sortRows(g.rows).slice(0, 7),
+          }));
+
+      const payload = {
+        leading: buildList("Leading"),
+        improving: buildList("Improving"),
+        cacheWarm: true,
+        lastUpdated: scanData.lastUpdated,
+      };
+      _bestSetupsSectorCache.set(version, { data: payload, ts: Date.now() });
+      return res.setHeader("Cache-Control", "public, max-age=1800").json(payload);
+    } catch (err) {
+      console.error("[Best Setups Sector]", err);
+      return res.status(503).json({ error: "Sector setups temporarily unavailable" });
+    }
+  });
+
   // GET /api/trading/fundamentals/:symbol
   router.get("/fundamentals/:symbol", async (req: Request, res: Response) => {
     const symbol = paramStr(req.params.symbol);
@@ -4572,19 +5463,310 @@ export function createTradingRouter(): Router {
         ? (searchData.value?.quotes?.[0] ?? null)
         : null) as Record<string, any> | null;
 
+      const quoteType: string | null = searchQuote?.quoteType ?? null;
+      const epsApplicable = quoteType === "EQUITY";
+
+      let epsHistory: number[] = [];
+      if (epsApplicable) {
+        epsHistory = await fetchYFEarningsHistory(symbol);
+        if (epsHistory.length === 0) {
+          epsHistory = await fetchTwelveDataEarnings(symbol);
+        }
+      }
+
       const result: FundamentalsResult = {
         symbol,
         sector: searchQuote?.sector ?? null,
         industry: searchQuote?.industry ?? null,
-        quoteType: searchQuote?.quoteType ?? null,
+        quoteType,
         currency: meta.currency ?? null,
         week52High: meta.fiftyTwoWeekHigh ?? null,
         week52Low: meta.fiftyTwoWeekLow ?? null,
+        epsHistory,
+        epsApplicable,
       };
       _fundCache.set(symbol, { data: result, ts: Date.now() });
       return res.json(result);
     } catch {
       return res.status(503).json({ error: "Failed to fetch fundamentals" });
+    }
+  });
+
+  // GET /api/trading/earnings-calendar?days=15
+  const EARNINGS_SYMBOLS = [
+    { symbol: "AAPL", name: "Apple", sector: "Technology" },
+    { symbol: "MSFT", name: "Microsoft", sector: "Technology" },
+    { symbol: "NVDA", name: "NVIDIA", sector: "Technology" },
+    { symbol: "GOOGL", name: "Alphabet", sector: "Technology" },
+    { symbol: "AMZN", name: "Amazon", sector: "Consumer Disc." },
+    { symbol: "META", name: "Meta", sector: "Technology" },
+    { symbol: "TSLA", name: "Tesla", sector: "Consumer Disc." },
+    { symbol: "JPM", name: "JPMorgan Chase", sector: "Financials" },
+    { symbol: "V", name: "Visa", sector: "Financials" },
+    { symbol: "XOM", name: "ExxonMobil", sector: "Energy" },
+    { symbol: "JNJ", name: "Johnson & Johnson", sector: "Healthcare" },
+    { symbol: "WMT", name: "Walmart", sector: "Consumer Staples" },
+    { symbol: "PG", name: "Procter & Gamble", sector: "Consumer Staples" },
+    { symbol: "MA", name: "Mastercard", sector: "Financials" },
+    { symbol: "UNH", name: "UnitedHealth", sector: "Healthcare" },
+    { symbol: "HD", name: "Home Depot", sector: "Consumer Disc." },
+    { symbol: "CVX", name: "Chevron", sector: "Energy" },
+    { symbol: "LLY", name: "Eli Lilly", sector: "Healthcare" },
+    { symbol: "ABBV", name: "AbbVie", sector: "Healthcare" },
+    { symbol: "MRK", name: "Merck", sector: "Healthcare" },
+    { symbol: "BAC", name: "Bank of America", sector: "Financials" },
+    { symbol: "PFE", name: "Pfizer", sector: "Healthcare" },
+    { symbol: "KO", name: "Coca-Cola", sector: "Consumer Staples" },
+    { symbol: "AVGO", name: "Broadcom", sector: "Technology" },
+    { symbol: "COST", name: "Costco", sector: "Consumer Staples" },
+    { symbol: "DIS", name: "Disney", sector: "Comm. Services" },
+    { symbol: "NFLX", name: "Netflix", sector: "Comm. Services" },
+    { symbol: "AMD", name: "AMD", sector: "Technology" },
+    { symbol: "INTC", name: "Intel", sector: "Technology" },
+    { symbol: "CSCO", name: "Cisco", sector: "Technology" },
+    { symbol: "ORCL", name: "Oracle", sector: "Technology" },
+    { symbol: "IBM", name: "IBM", sector: "Technology" },
+    { symbol: "CRM", name: "Salesforce", sector: "Technology" },
+    { symbol: "ADBE", name: "Adobe", sector: "Technology" },
+    { symbol: "PYPL", name: "PayPal", sector: "Financials" },
+    { symbol: "UBER", name: "Uber", sector: "Technology" },
+    { symbol: "ABNB", name: "Airbnb", sector: "Consumer Disc." },
+    { symbol: "SPOT", name: "Spotify", sector: "Comm. Services" },
+    { symbol: "GS", name: "Goldman Sachs", sector: "Financials" },
+    { symbol: "MS", name: "Morgan Stanley", sector: "Financials" },
+    { symbol: "C", name: "Citigroup", sector: "Financials" },
+    { symbol: "WFC", name: "Wells Fargo", sector: "Financials" },
+    { symbol: "RTX", name: "RTX Corp", sector: "Industrials" },
+    { symbol: "BA", name: "Boeing", sector: "Industrials" },
+    { symbol: "CAT", name: "Caterpillar", sector: "Industrials" },
+    { symbol: "GE", name: "GE Aerospace", sector: "Industrials" },
+    { symbol: "F", name: "Ford", sector: "Consumer Disc." },
+    { symbol: "GM", name: "General Motors", sector: "Consumer Disc." },
+    { symbol: "SBUX", name: "Starbucks", sector: "Consumer Disc." },
+    { symbol: "MCD", name: "McDonald's", sector: "Consumer Disc." },
+    { symbol: "NKE", name: "Nike", sector: "Consumer Disc." },
+    { symbol: "TGT", name: "Target", sector: "Consumer Disc." },
+    { symbol: "T", name: "AT&T", sector: "Comm. Services" },
+    { symbol: "VZ", name: "Verizon", sector: "Comm. Services" },
+    { symbol: "CMCSA", name: "Comcast", sector: "Comm. Services" },
+  ];
+  const _earningsCache = new Map<string, { data: unknown; ts: number }>();
+  const EARNINGS_TTL = 6 * 60 * 60 * 1000;
+
+  router.get("/earnings-calendar", async (req: Request, res: Response) => {
+    const days = Math.min(parseInt((req.query.days as string) ?? "15", 10), 30);
+    const cacheKey = `earnings-${days}`;
+    const cached = _earningsCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < EARNINGS_TTL) return res.json(cached.data);
+
+    const auth = await getYFCrumb();
+    if (!auth) return res.json({ items: [], lastUpdated: new Date().toISOString() });
+
+    const now = Date.now();
+    const cutoff = now + days * 24 * 60 * 60 * 1000;
+
+    const results: Array<{ symbol: string; name: string; earningsDate: string; sector: string }> = [];
+    const CONCURRENCY = 8;
+
+    for (let i = 0; i < EARNINGS_SYMBOLS.length; i += CONCURRENCY) {
+      const batch = EARNINGS_SYMBOLS.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (s) => {
+          try {
+            const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(s.symbol)}?modules=calendarEvents&formatted=false&crumb=${encodeURIComponent(auth.crumb)}`;
+            const r = await fetch(url, {
+              headers: { "User-Agent": YF_CRUMB_UA, "Cookie": auth.cookie, "Accept": "application/json" },
+              signal: AbortSignal.timeout(8_000),
+            });
+            if (!r.ok) return;
+            const data = await r.json() as { quoteSummary?: { result?: Array<{ calendarEvents?: { earnings?: { earningsDate?: Array<{ raw: number }> } } }> } };
+            const dates = data?.quoteSummary?.result?.[0]?.calendarEvents?.earnings?.earningsDate;
+            if (!dates || dates.length === 0) return;
+            const ts = (dates[0].raw ?? 0) * 1000;
+            if (ts >= now && ts <= cutoff) {
+              results.push({
+                symbol: s.symbol,
+                name: s.name,
+                earningsDate: new Date(ts).toISOString().slice(0, 10),
+                sector: s.sector,
+              });
+            }
+          } catch { /* skip */ }
+        })
+      );
+    }
+
+    results.sort((a, b) => a.earningsDate.localeCompare(b.earningsDate));
+    const data = { items: results, lastUpdated: new Date().toISOString() };
+    _earningsCache.set(cacheKey, { data, ts: Date.now() });
+    return res.json(data);
+  });
+
+  // GET /api/trading/regime-summary
+  const REGIME_SUMMARY_TTL = 5 * 60 * 1000;
+  let _regimeSummaryCache: { data: unknown; ts: number } | null = null;
+
+  router.get("/regime-summary", async (_req: Request, res: Response) => {
+    if (_regimeSummaryCache && Date.now() - _regimeSummaryCache.ts < REGIME_SUMMARY_TTL) {
+      return res.json(_regimeSummaryCache.data);
+    }
+
+    try {
+      // Use cached signals or generate on demand for each TRADING_ASSET (strategy 4, 1d tf)
+      const results: Array<{
+        symbol: string; name: string; flag: string;
+        direction: SignalDirection; confidence: number;
+        regime: string;
+      }> = [];
+
+      await Promise.allSettled(
+        TRADING_ASSETS.map(async (asset) => {
+          const cacheKey = `${asset.symbol}|1d|4`;
+          let sig = signalCache.get(cacheKey)?.data ?? null;
+          if (!sig) {
+            sig = await generateSignal(asset.symbol, "1d", "4");
+          }
+          if (!sig) return;
+          const ind = sig.indicators;
+          const price = sig.entry;
+          const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
+          const regime = classifyRegimeS5(atrPct, ind.adx ?? null);
+          results.push({
+            symbol: asset.symbol,
+            name: asset.name,
+            flag: asset.flag,
+            direction: sig.direction,
+            confidence: sig.confidence,
+            regime,
+          });
+        })
+      );
+
+      const bullish = results.filter((r) => r.direction === "BUY").length;
+      const neutral = results.filter((r) => r.direction === "HOLD").length;
+      const bearish = results.filter((r) => r.direction === "SELL").length;
+
+      const regimeBreakdown = {
+        quiet_trend: results.filter((r) => r.regime === "quiet_trend").length,
+        quiet_range: results.filter((r) => r.regime === "quiet_range").length,
+        volatile_trend: results.filter((r) => r.regime === "volatile_trend").length,
+        chaotic: results.filter((r) => r.regime === "chaotic").length,
+      };
+
+      const topBullish = results
+        .filter((r) => r.direction === "BUY")
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 3)
+        .map(({ symbol, name, flag, confidence }) => ({ symbol, name, flag, confidence }));
+
+      const topBearish = results
+        .filter((r) => r.direction === "SELL")
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 3)
+        .map(({ symbol, name, flag, confidence }) => ({ symbol, name, flag, confidence }));
+
+      const data = {
+        bullish, neutral, bearish,
+        total: results.length,
+        regimeBreakdown,
+        topBullish,
+        topBearish,
+        lastUpdated: new Date().toISOString(),
+      };
+      _regimeSummaryCache = { data, ts: Date.now() };
+      return res.json(data);
+    } catch (err) {
+      console.error("[Regime Summary]", err);
+      return res.status(503).json({ error: "Regime summary temporarily unavailable" });
+    }
+  });
+
+  // ── GET /api/trading/correlation ───────────────────────────────────────────
+  let _correlationCache: { data: unknown; ts: number } | null = null;
+  const CORRELATION_TTL = 4 * 60 * 60 * 1000; // 4h
+
+  router.get("/correlation", async (_req: Request, res: Response) => {
+    if (_correlationCache && Date.now() - _correlationCache.ts < CORRELATION_TTL) {
+      return res.json(_correlationCache.data);
+    }
+    try {
+      const assets = TRADING_ASSETS.map(a => ({
+        symbol: a.symbol,
+        name: a.name,
+        flag: a.flag,
+        category: a.category,
+      }));
+
+      // Fetch ~60 days of daily closes for all assets in parallel
+      const closesBySymbol = new Map<string, Map<string, number>>();
+      await Promise.allSettled(
+        TRADING_ASSETS.map(async (asset) => {
+          try {
+            const candles = (await yahooProvider.fetchHistoryCandles(
+              asset.symbol, "1d", "3mo"
+            )) as OHLCV[];
+            const byDate = new Map<string, number>();
+            for (const c of candles) {
+              if (c.time && c.close) {
+                const d = new Date(c.time * 1000).toISOString().slice(0, 10);
+                byDate.set(d, c.close);
+              }
+            }
+            closesBySymbol.set(asset.symbol, byDate);
+          } catch (_) {
+            closesBySymbol.set(asset.symbol, new Map());
+          }
+        })
+      );
+
+      // Compute Pearson correlation for every pair using overlapping dates
+      const n = assets.length;
+      const matrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+
+      for (let i = 0; i < n; i++) {
+        matrix[i][i] = 1;
+        for (let j = i + 1; j < n; j++) {
+          const si = assets[i].symbol;
+          const sj = assets[j].symbol;
+          const mapI = closesBySymbol.get(si)!;
+          const mapJ = closesBySymbol.get(sj)!;
+
+          // Overlapping dates
+          const dates = [...mapI.keys()].filter(d => mapJ.has(d)).sort();
+          if (dates.length < 5) {
+            matrix[i][j] = 0;
+            matrix[j][i] = 0;
+            continue;
+          }
+
+          const xs = dates.map(d => mapI.get(d)!);
+          const ys = dates.map(d => mapJ.get(d)!);
+          const k = dates.length;
+          const meanX = xs.reduce((a, b) => a + b, 0) / k;
+          const meanY = ys.reduce((a, b) => a + b, 0) / k;
+
+          let num = 0, denX = 0, denY = 0;
+          for (let t = 0; t < k; t++) {
+            const dx = xs[t] - meanX;
+            const dy = ys[t] - meanY;
+            num  += dx * dy;
+            denX += dx * dx;
+            denY += dy * dy;
+          }
+          const denom = Math.sqrt(denX * denY);
+          const r = denom > 0 ? Math.max(-1, Math.min(1, num / denom)) : 0;
+          const rr = Math.round(r * 100) / 100;
+          matrix[i][j] = rr;
+          matrix[j][i] = rr;
+        }
+      }
+
+      const data = { symbols: assets, matrix, lastUpdated: new Date().toISOString() };
+      _correlationCache = { data, ts: Date.now() };
+      return res.json(data);
+    } catch (err) {
+      console.error("[Correlation]", err);
+      return res.status(503).json({ error: "Correlation temporarily unavailable" });
     }
   });
 

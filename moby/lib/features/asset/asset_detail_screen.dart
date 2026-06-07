@@ -1,11 +1,8 @@
-import 'dart:async';
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
@@ -17,9 +14,9 @@ import '../../providers/strategy_provider.dart';
 import '../../shared/widgets/signal_badge.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/chart_host.dart';
 import '../../shared/widgets/chart_modal.dart';
 import '../../utils/tv_symbol.dart';
-import '../../providers/chart_provider_provider.dart';
 import '../../providers/watchlist_provider.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
@@ -29,6 +26,8 @@ import '../../shared/widgets/upgrade_sheet.dart';
 final _signalProvider = FutureProvider.autoDispose
     .family<TradingSignal, ({String symbol, String tf, String strategy})>(
   (ref, args) {
+    // Keep alive across tab switches within the same asset detail session.
+    ref.keepAlive();
     final cancelToken = CancelToken();
     ref.onDispose(cancelToken.cancel);
     return TradingRepository.instance.fetchSignal(
@@ -42,27 +41,37 @@ final _signalProvider = FutureProvider.autoDispose
 
 final _backtestProvider = FutureProvider.autoDispose
     .family<List<BacktestResult>, String>(
-  (ref, symbol) => TradingRepository.instance.fetchBacktest(symbol),
+  (ref, symbol) {
+    ref.keepAlive();
+    return TradingRepository.instance.fetchBacktest(symbol);
+  },
 );
 
 final _newsProvider = FutureProvider.autoDispose
     .family<List<NewsArticle>, String>(
-  (ref, symbol) => TradingRepository.instance.fetchNews(symbol),
+  (ref, symbol) {
+    ref.keepAlive();
+    return TradingRepository.instance.fetchNews(symbol);
+  },
 );
 
 final _noteProvider = FutureProvider.autoDispose
     .family<String?, ({String symbol, String strategy, String direction, double confidence})>(
-  (ref, args) => TradingRepository.instance.fetchAnalystNote(
-    args.symbol,
-    strategy: args.strategy,
-    direction: args.direction,
-    confidence: args.confidence,
-  ),
+  (ref, args) {
+    ref.keepAlive();
+    return TradingRepository.instance.fetchAnalystNote(
+      args.symbol,
+      strategy: args.strategy,
+      direction: args.direction,
+      confidence: args.confidence,
+    );
+  },
 );
 
 final _fundamentalsProvider = FutureProvider.autoDispose
     .family<Map<String, dynamic>?, String>(
   (ref, symbol) async {
+    ref.keepAlive();
     try {
       final data = await ApiClient.instance.get(
         ApiEndpoints.tradingFundamentals(symbol),
@@ -203,251 +212,21 @@ class _AssetDetailScreenState extends State<AssetDetailScreen>
 
 // ── Chart Tab ─────────────────────────────────────────────────────────────────
 
-class _ChartTab extends ConsumerStatefulWidget {
+class _ChartTab extends StatelessWidget {
   const _ChartTab({required this.symbol, required this.name});
   final String symbol;
   final String name;
 
   @override
-  ConsumerState<_ChartTab> createState() => _ChartTabState();
-}
-
-class _ChartTabState extends ConsumerState<_ChartTab> {
-  String _range = '1M';
-  late final WebViewController _controller;
-  bool _loading = true;
-  String? _error;
-  Timer? _timeoutTimer;
-  bool? _isDark;
-
-  static const _ranges = ['1M', '3M', '6M', '1Y', '5Y'];
-  static const _rangeMap = {
-    '1M': '1mo',
-    '3M': '3mo',
-    '6M': '6mo',
-    '1Y': '1y',
-    '5Y': '5y',
-  };
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted);
-    // _loadChart() is deferred to didChangeDependencies so theme is available
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    if (_isDark != isDark) {
-      _isDark = isDark;
-      _controller.setBackgroundColor(
-          isDark ? const Color(0xFF0A0A0A) : Colors.white);
-      _loadChart();
-    }
-  }
-
-  @override
-  void dispose() {
-    _timeoutTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _loadChart() async {
-    _timeoutTimer?.cancel();
-    if (mounted) setState(() { _loading = true; _error = null; });
-    _timeoutTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted && _loading) {
-        setState(() {
-          _loading = false;
-          _error = 'Chart timed out — tap to retry';
-        });
-      }
-    });
-    try {
-      final range = _rangeMap[_range] ?? '1mo';
-      // Resolve TV symbol for watermark label when TradingView provider is active
-      final provider = ref.read(chartProviderProvider);
-      final tvLabel = provider == ChartDataProvider.tradingView
-          ? TvSymbol.resolveForTv(widget.symbol)
-          : null;
-      final data = await ApiClient.instance.get(
-        ApiEndpoints.chart(widget.symbol),
-        params: {'range': range},
-      ) as Map<String, dynamic>;
-      final candles = data['candles'] as List? ?? [];
-      if (!mounted) return;
-      _timeoutTimer?.cancel();
-      await _controller.loadHtmlString(
-          _buildHtml(jsonEncode(candles), _isDark ?? false, tvLabel: tvLabel));
-    } catch (e) {
-      _timeoutTimer?.cancel();
-      if (mounted) setState(() => _error = 'Failed to load chart data');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  String _buildHtml(String candleJson, bool isDark, {String? tvLabel}) {
-    final bg          = isDark ? '#0a0a0a' : '#ffffff';
-    final textColor   = isDark ? '#adb5bd'  : '#374151';
-    final gridColor   = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-    final borderColor = isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.12)';
-    final upColor     = isDark ? '#00D4AA' : '#00C49A';
-    final downColor   = isDark ? '#FF4D6A' : '#E8384F';
-    final upVol       = isDark ? 'rgba(0,212,170,0.3)'  : 'rgba(0,196,154,0.3)';
-    final downVol     = isDark ? 'rgba(255,77,106,0.3)' : 'rgba(232,56,79,0.3)';
-    final vwapColor   = isDark ? '#FFB84D' : '#E6952A';
-    final wmColor     = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
-    // Watermark: shows TV symbol identifier (e.g. FX:EURUSD) when TV provider is active
-    final watermarkJs = tvLabel != null
-        ? "chart.applyOptions({ watermark: { color: '$wmColor', visible: true, text: '$tvLabel', fontSize: 18, horzAlign: 'center', vertAlign: 'center' } });"
-        : '';
-
-    return '''
-<!DOCTYPE html>
-<html>
-<head>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:$bg; color:$textColor; font-family:sans-serif; }
-  #chart { width:100%; height:100vh; }
-</style>
-</head>
-<body>
-<div id="chart"></div>
-<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
-<script>
-const chart = LightweightCharts.createChart(document.getElementById('chart'), {
-  layout: { background: { color: '$bg' }, textColor: '$textColor' },
-  grid: { vertLines: { color: '$gridColor' }, horzLines: { color: '$gridColor' } },
-  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-  rightPriceScale: { borderColor: '$borderColor' },
-  timeScale: { borderColor: '$borderColor', timeVisible: true },
-  handleScroll: true,
-  handleScale: true,
-});
-
-const candleSeries = chart.addCandlestickSeries({
-  upColor: '$upColor', downColor: '$downColor',
-  borderUpColor: '$upColor', borderDownColor: '$downColor',
-  wickUpColor: '$upColor', wickDownColor: '$downColor',
-});
-
-const volumeSeries = chart.addHistogramSeries({
-  color: '$upVol',
-  priceFormat: { type: 'volume' },
-  priceScaleId: '',
-});
-
-chart.priceScale('').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
-
-const raw = $candleJson;
-candleSeries.setData(raw.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-volumeSeries.setData(raw.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? '$upVol' : '$downVol' })));
-
-// VWAP (Volume Weighted Average Price)
-const vwapData = [];
-let cumPV = 0, cumVol = 0;
-for (const candle of raw) {
-  const typical = (candle.high + candle.low + candle.close) / 3;
-  cumPV += typical * (candle.volume || 0);
-  cumVol += candle.volume || 0;
-  if (cumVol > 0) vwapData.push({ time: candle.time, value: cumPV / cumVol });
-}
-if (vwapData.length > 0) {
-  const vwapSeries = chart.addLineSeries({ color: '$vwapColor', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
-  vwapSeries.setData(vwapData);
-}
-
-$watermarkJs
-chart.timeScale().fitContent();
-
-window.addEventListener('resize', () => chart.resize(window.innerWidth, window.innerHeight));
-</script>
-</body>
-</html>
-''';
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final c = context.colors;
-
-    return Column(
-      children: [
-        // Toolbar row: range chips + fullscreen button (always visible)
-        Row(
-          children: [
-            Expanded(
-              child: SizedBox(
-                height: 40,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: _ranges.map((r) {
-                    final isActive = r == _range;
-                    return GestureDetector(
-                      onTap: () {
-                        setState(() => _range = r);
-                        _loadChart();
-                      },
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: isActive ? c.accent : Colors.transparent,
-                          borderRadius: BorderRadius.circular(AppRadius.full),
-                        ),
-                        child: Text(
-                          r,
-                          style: AppTypography.sm.copyWith(
-                            color: isActive ? c.background : c.textMuted,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-            IconButton(
-              icon: Icon(Icons.open_in_full, color: c.textMuted, size: 18),
-              tooltip: 'Open fullscreen',
-              onPressed: () =>
-                  ChartModal.show(context, symbol: widget.symbol, name: widget.name),
-            ),
-          ],
-        ),
-        Divider(height: 1, color: c.border),
-        Expanded(
-          child: _loading
-              ? Center(child: CircularProgressIndicator(color: c.accent))
-              : _error != null
-                  ? Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(_error!,
-                              style: AppTypography.md.copyWith(color: c.textMuted)),
-                          const SizedBox(height: AppSpacing.s4),
-                          FilledButton(
-                            onPressed: _loadChart,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: c.accent,
-                              foregroundColor: c.background,
-                            ),
-                            child: const Text('Retry'),
-                          ),
-                        ],
-                      ),
-                    )
-                  : WebViewWidget(controller: _controller),
-        ),
-      ],
+    return ChartHost(
+      symbol: symbol,
+      name: name,
+      initialRange: '1M',
+      withVwap: true,
+      showFullscreenButton: true,
+      onFullscreen: () =>
+          ChartModal.show(context, symbol: symbol, name: name),
     );
   }
 }
@@ -1542,6 +1321,7 @@ class _IndicatorsTab extends ConsumerWidget {
     final strategy = ref.watch(strategyProvider);
     final args = (symbol: symbol, tf: timeframe, strategy: strategy.serverParam);
     final async = ref.watch(_signalProvider(args));
+    final fundamentalsAsync = ref.watch(_fundamentalsProvider(symbol));
 
     return async.when(
       loading: () => Center(
@@ -1550,6 +1330,12 @@ class _IndicatorsTab extends ConsumerWidget {
           const ErrorView(message: 'Failed to load indicators'),
       data: (signal) {
         final inds = signal.indicators;
+        final fundData = fundamentalsAsync.valueOrNull;
+        final epsHistory = (fundData?['epsHistory'] as List?)
+            ?.map((e) => (e as num).toDouble())
+            .toList() ?? [];
+        final epsApplicable = fundData?['epsApplicable'] == true;
+
         return ListView(
           padding: EdgeInsets.fromLTRB(
             AppSpacing.s5,
@@ -1581,6 +1367,10 @@ class _IndicatorsTab extends ConsumerWidget {
               _IndRow('ADX-14', inds['adx'], _adxInterp),
               _IndRow('BB Width', inds['bbWidth'], _bbWidthInterp),
             ]),
+            if (epsApplicable && epsHistory.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.s4),
+              _EpsSection(epsHistory: epsHistory),
+            ],
           ],
         );
       },
@@ -1618,6 +1408,103 @@ class _IndicatorsTab extends ConsumerWidget {
     if (v > 0.07) return 'Expanding';
     if (v < 0.04) return 'Contracting';
     return 'Neutral';
+  }
+}
+
+class _EpsSection extends StatelessWidget {
+  const _EpsSection({required this.epsHistory});
+  final List<double> epsHistory;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final reversed = epsHistory.reversed.toList();
+    final labels = ['Q-3', 'Q-2', 'Q-1', 'Q0'];
+    final quarters = labels.length < reversed.length
+        ? labels
+        : labels.sublist(labels.length - reversed.length);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('EPS HISTORY',
+            style: AppTypography.labelSm.copyWith(
+                color: c.textMuted, letterSpacing: 1.2)),
+        const SizedBox(height: AppSpacing.s2),
+        Container(
+          height: 120,
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s4, AppSpacing.s4, AppSpacing.s4, AppSpacing.s2),
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: c.border),
+          ),
+          child: BarChart(
+            BarChartData(
+              alignment: BarChartAlignment.spaceAround,
+              maxY: reversed
+                  .map((v) => v > 0 ? v * 1.3 : 0.0)
+                  .reduce((a, b) => a > b ? a : b)
+                  .clamp(0.1, double.infinity),
+              minY: reversed
+                  .map((v) => v < 0 ? v * 1.3 : 0.0)
+                  .reduce((a, b) => a < b ? a : b),
+              barTouchData: BarTouchData(
+                touchTooltipData: BarTouchTooltipData(
+                  getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                    final val = reversed[groupIndex];
+                    return BarTooltipItem(
+                      '\$${val.toStringAsFixed(2)}',
+                      AppTypography.xs.copyWith(color: c.textPrimary),
+                    );
+                  },
+                ),
+              ),
+              titlesData: FlTitlesData(
+                leftTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    getTitlesWidget: (value, meta) {
+                      final idx = value.toInt();
+                      if (idx < 0 || idx >= quarters.length) {
+                        return const SizedBox.shrink();
+                      }
+                      return Text(
+                        quarters[idx],
+                        style: AppTypography.xs.copyWith(color: c.textMuted),
+                      );
+                    },
+                  ),
+                ),
+              ),
+              gridData: const FlGridData(show: false),
+              borderData: FlBorderData(show: false),
+              barGroups: List.generate(reversed.length, (i) {
+                final val = reversed[i];
+                return BarChartGroupData(
+                  x: i,
+                  barRods: [
+                    BarChartRodData(
+                      toY: val,
+                      color: val >= 0 ? c.positive : c.danger,
+                      width: 20,
+                      borderRadius: BorderRadius.circular(AppRadius.xs),
+                    ),
+                  ],
+                );
+              }),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

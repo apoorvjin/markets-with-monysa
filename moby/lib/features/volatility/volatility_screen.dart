@@ -1,6 +1,9 @@
 import 'dart:math';
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/network/api_client.dart';
+import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
@@ -20,6 +23,7 @@ import '../../shared/widgets/performance_heatmap.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 import '../../shared/widgets/theme_toggle.dart';
 import '../usa_debt/usa_debt_screen.dart';
+import 'correlation_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -79,6 +83,27 @@ final _sectorsHeatmapProvider =
       .toList();
 });
 
+final _sectorRotationProvider =
+    FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final raw = await MarketsRepository.instance.fetchSectors();
+  return raw
+      .where((s) => s['rsRatio'] != null && s['rsMomentum'] != null)
+      .toList()
+      .cast<Map<String, dynamic>>();
+});
+
+final _fearGreedProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final data = await ApiClient.instance.get(ApiEndpoints.fearGreed);
+  return data as Map<String, dynamic>;
+});
+
+final _regimeSummaryProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final data = await ApiClient.instance.get(ApiEndpoints.regimeSummary);
+  return data as Map<String, dynamic>;
+});
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class MacroScreen extends ConsumerStatefulWidget {
@@ -95,7 +120,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 4, vsync: this);
+    _tab = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -132,6 +157,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
             Tab(text: 'Crisis'),
             Tab(text: 'Debt'),
             Tab(text: 'Calendar'),
+            Tab(text: 'Correlation'),
           ],
         ),
       ),
@@ -140,8 +166,9 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
         children: const [
           _MacroDashboardTab(),
           _MacroCrisisTab(),
-          UsaDebtBody(),
+          _MacroDebtTab(),
           _MacroCalendarTab(),
+          CorrelationTab(),
         ],
       ),
     );
@@ -191,6 +218,8 @@ class _MacroDashboardTab extends ConsumerWidget {
               children: [
                 _MacroRegimePanel(vixPrice: vix),
                 const SizedBox(height: AppSpacing.s3),
+                const _RegimeSummarySection(),
+                const SizedBox(height: AppSpacing.s3),
                 // VIX gauge and Stress Meter side by side
                 IntrinsicHeight(
                   child: Row(
@@ -202,10 +231,16 @@ class _MacroDashboardTab extends ConsumerWidget {
                     ],
                   ),
                 ),
+                const SizedBox(height: AppSpacing.s3),
+                const _FearGreedGauge(),
                 const SizedBox(height: AppSpacing.s5),
                 const _MarketHeatmapSection(),
                 const SizedBox(height: AppSpacing.s5),
                 const _BondYieldsSection(),
+                const SizedBox(height: AppSpacing.s5),
+                const _YieldCurveHistorySection(),
+                const SizedBox(height: AppSpacing.s5),
+                const _SectorRotationSection(),
                 const SizedBox(height: AppSpacing.s5),
                 const _AiBriefingCard(),
               ],
@@ -348,23 +383,344 @@ class _CrisisAssetsTab extends ConsumerWidget {
   }
 }
 
-// ── Calendar Tab ──────────────────────────────────────────────────────────────
+// ── Debt Tab ──────────────────────────────────────────────────────────────────
 
-class _MacroCalendarTab extends StatelessWidget {
-  const _MacroCalendarTab();
+class _MacroDebtTab extends ConsumerWidget {
+  const _MacroDebtTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return const UsaDebtBody();
+  }
+}
+
+final _yieldHistoryProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  final data = await ApiClient.instance.get(ApiEndpoints.yieldCurveHistory);
+  return data as Map<String, dynamic>;
+});
+
+class _YieldCurveHistorySection extends ConsumerWidget {
+  const _YieldCurveHistorySection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_yieldHistoryProvider);
+
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (data) {
+        final rawSeries = (data['series'] as List?)
+            ?.cast<Map<String, dynamic>>() ?? [];
+        if (rawSeries.isEmpty) return const SizedBox.shrink();
+
+        // Sample max 120 points to keep chart performant
+        final step = (rawSeries.length / 120).ceil().clamp(1, 999);
+        final series = [
+          for (int i = 0; i < rawSeries.length; i += step) rawSeries[i],
+        ];
+
+        return Container(
+          color: c.surface,
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Yield Curve History (1Y)',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s3),
+              ClipRect(
+                child: SizedBox(
+                  height: 160,
+                  child: _YieldCurveChart(series: series, palette: c),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.s2),
+              Row(
+                children: [
+                  _LegendDot(color: c.warning, label: '3M'),
+                  const SizedBox(width: AppSpacing.s4),
+                  _LegendDot(color: c.accent, label: '10Y'),
+                  const SizedBox(width: AppSpacing.s4),
+                  _LegendDot(color: Colors.teal.shade300, label: '30Y'),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _YieldCurveChart extends StatelessWidget {
+  const _YieldCurveChart({required this.series, required this.palette});
+  final List<Map<String, dynamic>> series;
+  final AppPalette palette;
 
   @override
   Widget build(BuildContext context) {
-    return MaxWidthLayout(
-      child: ListView(
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.s5,
-          AppSpacing.s5,
-          AppSpacing.s5,
-          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+    final c = palette;
+
+    List<FlSpot> toSpots(String key) {
+      return series.asMap().entries
+          .where((e) => e.value[key] != null)
+          .map((e) => FlSpot(e.key.toDouble(), (e.value[key] as num).toDouble()))
+          .toList();
+    }
+
+    final spots3m = toSpots('us3m');
+    final spots10y = toSpots('us10y');
+    final spots30y = toSpots('us30y');
+
+    final allValues = [...spots3m, ...spots10y, ...spots30y].map((s) => s.y);
+    if (allValues.isEmpty) return const SizedBox.shrink();
+    final minY = allValues.reduce(min) - 0.2;
+    final maxY = allValues.reduce(max) + 0.2;
+
+    return LineChart(
+      LineChartData(
+        minY: minY,
+        maxY: maxY,
+        clipData: const FlClipData.all(),
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: false,
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: c.border, strokeWidth: 0.5),
         ),
-        children: const [
-          _EconomicCalendar(),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 32,
+              getTitlesWidget: (v, _) => Text(
+                '${v.toStringAsFixed(1)}%',
+                style: AppTypography.xs.copyWith(color: c.textFaint, fontSize: 9),
+              ),
+            ),
+          ),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        ),
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            fitInsideHorizontally: true,
+            fitInsideVertically: true,
+            getTooltipItems: (spots) => spots.map((s) {
+              final idx = s.x.toInt();
+              if (idx >= series.length) return null;
+              final date = series[idx]['date'] as String? ?? '';
+              return LineTooltipItem(
+                '${date.substring(0, 7)}\n${s.y.toStringAsFixed(2)}%',
+                AppTypography.xs.copyWith(color: c.textPrimary),
+              );
+            }).toList(),
+          ),
+        ),
+        lineBarsData: [
+          _yieldLine(spots3m, c.warning),
+          _yieldLine(spots10y, c.accent),
+          _yieldLine(spots30y, Colors.teal.shade300),
+        ],
+      ),
+    );
+  }
+
+  LineChartBarData _yieldLine(List<FlSpot> spots, Color color) {
+    return LineChartBarData(
+      spots: spots,
+      isCurved: true,
+      color: color,
+      barWidth: 1.5,
+      dotData: const FlDotData(show: false),
+      belowBarData: BarAreaData(show: false),
+    );
+  }
+}
+
+// ── Calendar Tab ──────────────────────────────────────────────────────────────
+
+final _eventsProvider =
+    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  final data = await ApiClient.instance.get(ApiEndpoints.economyEvents)
+      as Map<String, dynamic>;
+  return (data['events'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+});
+
+class _MacroCalendarTab extends ConsumerWidget {
+  const _MacroCalendarTab();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final eventsAsync = ref.watch(_eventsProvider);
+
+    return eventsAsync.when(
+      loading: () => MaxWidthLayout(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+              AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
+          children: const [_EconomicCalendar()],
+        ),
+      ),
+      error: (_, __) => MaxWidthLayout(
+        child: ListView(
+          padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+              AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
+          children: const [_EconomicCalendar()],
+        ),
+      ),
+      data: (events) {
+        if (events.isEmpty) {
+          return MaxWidthLayout(
+            child: ListView(
+              padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+                  AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
+              children: const [_EconomicCalendar()],
+            ),
+          );
+        }
+
+        // Group by date
+        final Map<String, List<Map<String, dynamic>>> grouped = {};
+        for (final e in events) {
+          final date = e['date'] as String? ?? '';
+          grouped.putIfAbsent(date, () => []).add(e);
+        }
+        final dates = grouped.keys.toList()..sort();
+
+        return MaxWidthLayout(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+                AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
+            children: [
+              GlassCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('Economic Events',
+                            style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                        const SizedBox(width: AppSpacing.s2),
+                        GestureDetector(
+                          onTap: () => _showCalendarInfo(context),
+                          child: Icon(Icons.info_outline_rounded,
+                              size: 16, color: c.textMuted),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: c.danger.withAlpha(30),
+                            borderRadius: BorderRadius.circular(AppRadius.full),
+                            border: Border.all(color: c.danger.withAlpha(60)),
+                          ),
+                          child: Text('High Impact',
+                              style: AppTypography.xs.copyWith(
+                                  color: c.danger, fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.s4),
+                    ...dates.expand((date) {
+                      final evts = grouped[date]!;
+                      final dt = DateTime.tryParse(date);
+                      final label = dt != null
+                          ? '${_dayName(dt.weekday)}, ${_monthName(dt.month)} ${dt.day}'
+                          : date;
+                      return [
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              top: AppSpacing.s3, bottom: AppSpacing.s2),
+                          child: Text(label,
+                              style: AppTypography.labelSm.copyWith(
+                                  color: c.textMuted, letterSpacing: 1.0)),
+                        ),
+                        ...evts.map((e) => _DynamicEventRow(event: e)),
+                      ];
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String _dayName(int weekday) {
+    const d = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    return d[(weekday - 1).clamp(0, 6)];
+  }
+
+  String _monthName(int month) {
+    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return m[(month - 1).clamp(0, 11)];
+  }
+}
+
+class _DynamicEventRow extends StatelessWidget {
+  const _DynamicEventRow({required this.event});
+  final Map<String, dynamic> event;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final eventName = event['event'] as String? ?? '';
+    final time = event['time'] as String? ?? '';
+    final previous = event['previous'] as String?;
+    final forecast = event['forecast'] as String?;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            margin: const EdgeInsets.only(top: 5),
+            decoration: BoxDecoration(color: c.danger, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: AppSpacing.s3),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(eventName,
+                          style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+                    ),
+                    if (time.isNotEmpty)
+                      Text(time,
+                          style: AppTypography.xs.copyWith(color: c.textMuted)),
+                  ],
+                ),
+                if (previous != null || forecast != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      [
+                        if (previous != null) 'Prev: $previous',
+                        if (forecast != null) 'Fcst: $forecast',
+                      ].join('  '),
+                      style: AppTypography.xs.copyWith(color: c.textMuted),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -2037,6 +2393,678 @@ class _LegendDot extends StatelessWidget {
         Text(label,
             style: AppTypography.xs.copyWith(color: c.textMuted)),
       ],
+    );
+  }
+}
+
+// ── Regime Summary Section ────────────────────────────────────────────────────
+
+class _RegimeSummarySection extends ConsumerWidget {
+  const _RegimeSummarySection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_regimeSummaryProvider);
+
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (data) {
+        final bullish = (data['bullish'] as num?)?.toInt() ?? 0;
+        final neutral = (data['neutral'] as num?)?.toInt() ?? 0;
+        final bearish = (data['bearish'] as num?)?.toInt() ?? 0;
+        final total = (data['total'] as num?)?.toInt() ?? 1;
+        final breakdown = data['regimeBreakdown'] as Map<String, dynamic>? ?? {};
+        final topBullish = (data['topBullish'] as List?)
+            ?.cast<Map<String, dynamic>>() ?? [];
+        final topBearish = (data['topBearish'] as List?)
+            ?.cast<Map<String, dynamic>>() ?? [];
+
+        return GlassCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Market Regime',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s3),
+              // Signal bar
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                child: Row(
+                  children: [
+                    if (bullish > 0)
+                      Expanded(
+                        flex: bullish,
+                        child: Container(
+                          height: 10,
+                          color: c.positive,
+                        ),
+                      ),
+                    if (neutral > 0)
+                      Expanded(
+                        flex: neutral,
+                        child: Container(
+                          height: 10,
+                          color: c.warning,
+                        ),
+                      ),
+                    if (bearish > 0)
+                      Expanded(
+                        flex: bearish,
+                        child: Container(
+                          height: 10,
+                          color: c.danger,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.s2),
+              Row(
+                children: [
+                  _RegimePill('${(bullish / total * 100).round()}% BUY', c.positive),
+                  const SizedBox(width: AppSpacing.s2),
+                  _RegimePill('${(neutral / total * 100).round()}% HOLD', c.warning),
+                  const SizedBox(width: AppSpacing.s2),
+                  _RegimePill('${(bearish / total * 100).round()}% SELL', c.danger),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              // Regime breakdown pills
+              Wrap(
+                spacing: AppSpacing.s2,
+                runSpacing: AppSpacing.s2,
+                children: [
+                  _RegimePill(
+                    'Quiet Trend: ${breakdown['quiet_trend'] ?? 0}',
+                    c.accent,
+                  ),
+                  _RegimePill(
+                    'Quiet Range: ${breakdown['quiet_range'] ?? 0}',
+                    c.textMuted,
+                  ),
+                  _RegimePill(
+                    'Vol. Trend: ${breakdown['volatile_trend'] ?? 0}',
+                    c.warning,
+                  ),
+                  _RegimePill(
+                    'Chaotic: ${breakdown['chaotic'] ?? 0}',
+                    c.danger,
+                  ),
+                ],
+              ),
+              if (topBullish.isNotEmpty || topBearish.isNotEmpty) ...[
+                const SizedBox(height: AppSpacing.s3),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (topBullish.isNotEmpty)
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Most Bullish',
+                                style: AppTypography.xs.copyWith(
+                                    color: c.positive,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: AppSpacing.s2),
+                            ...topBullish.map((a) => Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '${a['flag']} ${a['name']}',
+                                style: AppTypography.xs.copyWith(color: c.textPrimary),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )),
+                          ],
+                        ),
+                      ),
+                    if (topBullish.isNotEmpty && topBearish.isNotEmpty)
+                      const SizedBox(width: AppSpacing.s4),
+                    if (topBearish.isNotEmpty)
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Most Bearish',
+                                style: AppTypography.xs.copyWith(
+                                    color: c.danger,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(height: AppSpacing.s2),
+                            ...topBearish.map((a) => Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                '${a['flag']} ${a['name']}',
+                                style: AppTypography.xs.copyWith(color: c.textPrimary),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            )),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RegimePill extends StatelessWidget {
+  const _RegimePill(this.label, this.color);
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(30),
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: color.withAlpha(80)),
+      ),
+      child: Text(label,
+          style: AppTypography.xs.copyWith(
+              color: color, fontWeight: FontWeight.w600)),
+    );
+  }
+}
+
+// ── Fear & Greed Gauge ────────────────────────────────────────────────────────
+
+class _FearGreedGauge extends ConsumerWidget {
+  const _FearGreedGauge();
+
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_fearGreedProvider);
+
+    return GlassCard(
+      blur: true,
+      child: async.when(
+        loading: () => SizedBox(
+          height: 100,
+          child: Center(child: CircularProgressIndicator(color: c.accent)),
+        ),
+        error: (_, __) => const SizedBox.shrink(),
+        data: (data) {
+          final value = (data['value'] as num?)?.toInt() ?? 50;
+          final classification = data['classification'] as String? ?? 'Neutral';
+          final normalized = value / 100.0;
+
+          final gaugeColor = value < 25
+              ? c.danger
+              : value < 45
+                  ? c.warning
+                  : value < 55
+                      ? c.textMuted
+                      : value < 75
+                          ? c.positive
+                          : Colors.teal.shade300;
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('Crypto Fear & Greed',
+                      style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: gaugeColor.withAlpha(30),
+                      borderRadius: BorderRadius.circular(AppRadius.full),
+                      border: Border.all(color: gaugeColor.withAlpha(80)),
+                    ),
+                    child: Text(classification,
+                        style: AppTypography.xs.copyWith(
+                            color: gaugeColor, fontWeight: FontWeight.w700)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              Center(
+                child: SizedBox(
+                  height: 70,
+                  child: CustomPaint(
+                    painter: _ArcGaugePainter(
+                      value: normalized,
+                      trackColor: c.border,
+                      lowColor: c.danger,
+                      midColor: c.warning,
+                      highColor: c.positive,
+                      extremeColor: Colors.teal.shade300,
+                    ),
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 28),
+                        child: Text(
+                          '$value',
+                          style: AppTypography.xl2.copyWith(
+                              fontWeight: FontWeight.w800,
+                              color: c.textPrimary),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Extreme Fear',
+                      style: AppTypography.xs.copyWith(color: c.danger)),
+                  Text('Neutral',
+                      style: AppTypography.xs.copyWith(color: c.textMuted)),
+                  Text('Extreme Greed',
+                      style: AppTypography.xs.copyWith(color: Colors.teal.shade300)),
+                ],
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ── Sector Rotation Section ───────────────────────────────────────────────────
+
+class _SectorRotationSection extends ConsumerWidget {
+  const _SectorRotationSection();
+
+  void _showInfo(BuildContext context) {
+    final c = context.colors;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+      ),
+      isScrollControlled: true,
+      builder: (_) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                      color: c.border, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.s4),
+              Text('Sector Rotation',
+                  style:
+                      AppTypography.headingMd.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s3),
+              Text(
+                'This chart shows how each sector is performing relative to the S&P 500, '
+                'and whether that performance is improving or fading. '
+                'It is dynamic — recalculated weekly from live sector ETF prices.',
+                style: AppTypography.sm.copyWith(color: c.textSecondary),
+              ),
+              const SizedBox(height: AppSpacing.s4),
+              _SectorInfoItem(
+                c: c,
+                label: 'X-axis · Relative Strength',
+                desc: 'How well the sector has performed vs the S&P 500. '
+                    'Right side = outperforming the market. '
+                    'Left side = underperforming.',
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              _SectorInfoItem(
+                c: c,
+                label: 'Y-axis · Momentum',
+                desc: 'Is that relative performance getting better or worse? '
+                    'Top = gaining speed (improving). '
+                    'Bottom = losing speed (fading).',
+              ),
+              const SizedBox(height: AppSpacing.s4),
+              Text('Quadrants',
+                  style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s2),
+              _SectorQuadrantInfo(
+                  color: Colors.teal.shade400,
+                  label: 'Leading (↗)',
+                  desc: 'Outperforming AND gaining speed. Best zone to be positioned.'),
+              _SectorQuadrantInfo(
+                  color: Colors.orange.shade400,
+                  label: 'Weakening (↘)',
+                  desc: 'Still outperforming but slowing down. Consider taking profits.'),
+              _SectorQuadrantInfo(
+                  color: Colors.red.shade400,
+                  label: 'Lagging (↙)',
+                  desc: 'Underperforming AND losing speed. Avoid or underweight.'),
+              _SectorQuadrantInfo(
+                  color: Colors.blue.shade400,
+                  label: 'Improving (↖)',
+                  desc: 'Still underperforming but gaining speed. Early rotation signal.'),
+              const SizedBox(height: AppSpacing.s3),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_sectorRotationProvider);
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('Sector Rotation',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              ),
+              GestureDetector(
+                onTap: () => _showInfo(context),
+                child: Icon(Icons.info_outline_rounded,
+                    size: 18, color: c.textMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s2),
+          Text('Relative strength vs S&P 500 · Live weekly data',
+              style: AppTypography.xs.copyWith(color: c.textMuted)),
+          const SizedBox(height: AppSpacing.s4),
+          async.when(
+            loading: () => SizedBox(
+                height: 160,
+                child: Center(
+                    child: CircularProgressIndicator(color: c.accent))),
+            error: (_, __) => Text('Failed to load',
+                style: AppTypography.sm.copyWith(color: c.textMuted)),
+            data: (sectors) {
+              if (sectors.isEmpty) return const SizedBox.shrink();
+              final leading = sectors
+                  .where((s) =>
+                      (s['rsRatio'] as num) >= 100 &&
+                      (s['rsMomentum'] as num) >= 100)
+                  .toList();
+              final weakening = sectors
+                  .where((s) =>
+                      (s['rsRatio'] as num) >= 100 &&
+                      (s['rsMomentum'] as num) < 100)
+                  .toList();
+              final lagging = sectors
+                  .where((s) =>
+                      (s['rsRatio'] as num) < 100 &&
+                      (s['rsMomentum'] as num) < 100)
+                  .toList();
+              final improving = sectors
+                  .where((s) =>
+                      (s['rsRatio'] as num) < 100 &&
+                      (s['rsMomentum'] as num) >= 100)
+                  .toList();
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _QuadrantCard(
+                          sectors: improving,
+                          label: 'Improving',
+                          arrow: '↖',
+                          color: Colors.blue.shade400,
+                          desc: 'Weak · gaining speed',
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s2),
+                      Expanded(
+                        child: _QuadrantCard(
+                          sectors: leading,
+                          label: 'Leading',
+                          arrow: '↗',
+                          color: Colors.teal.shade400,
+                          desc: 'Strong · gaining speed',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.s2),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _QuadrantCard(
+                          sectors: lagging,
+                          label: 'Lagging',
+                          arrow: '↙',
+                          color: Colors.red.shade400,
+                          desc: 'Weak · losing speed',
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s2),
+                      Expanded(
+                        child: _QuadrantCard(
+                          sectors: weakening,
+                          label: 'Weakening',
+                          arrow: '↘',
+                          color: Colors.orange.shade400,
+                          desc: 'Strong · losing speed',
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Sector abbreviation helper ────────────────────────────────────────────────
+
+String _sectorAbbrev(String name) {
+  const map = {
+    'Technology': 'Tech',
+    'Healthcare': 'Hlth',
+    'Financials': 'Fin',
+    'Energy': 'Enrg',
+    'Real Estate': 'RE',
+    'Utilities': 'Util',
+    'Industrials': 'Indu',
+    'Communication Services': 'Comm',
+    'Comm. Services': 'Comm',
+    'Materials': 'Mats',
+    'Consumer Staples': 'Stpl',
+    'Cons. Staples': 'Stpl',
+    'Consumer Discretionary': 'Disc',
+    'Cons. Disc.': 'Disc',
+  };
+  if (map.containsKey(name)) return map[name]!;
+  return name.length > 5 ? name.substring(0, 4) : name;
+}
+
+// ── Quadrant card ─────────────────────────────────────────────────────────────
+
+class _QuadrantCard extends StatelessWidget {
+  const _QuadrantCard({
+    required this.sectors,
+    required this.label,
+    required this.arrow,
+    required this.color,
+    required this.desc,
+  });
+
+  final List<Map<String, dynamic>> sectors;
+  final String label;
+  final String arrow;
+  final Color color;
+  final String desc;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: color.withAlpha(70)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(arrow,
+                  style: TextStyle(
+                      color: color,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700)),
+              const SizedBox(width: 4),
+              Text(label,
+                  style:
+                      AppTypography.labelSm.copyWith(color: color)),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(desc,
+              style: AppTypography.xs
+                  .copyWith(color: c.textMuted, fontSize: 9)),
+          const SizedBox(height: AppSpacing.s2),
+          if (sectors.isEmpty)
+            Text('—',
+                style: AppTypography.sm.copyWith(color: c.textFaint))
+          else
+            Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              children: sectors.map((s) {
+                final emoji = s['emoji'] as String? ?? '';
+                final name =
+                    _sectorAbbrev(s['name'] as String? ?? '');
+                return Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: color.withAlpha(30),
+                    borderRadius:
+                        BorderRadius.circular(AppRadius.full),
+                  ),
+                  child: Text(
+                    '$emoji $name',
+                    style: AppTypography.xs.copyWith(
+                        color: c.textPrimary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600),
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Sector rotation info helpers ──────────────────────────────────────────────
+
+class _SectorInfoItem extends StatelessWidget {
+  const _SectorInfoItem({required this.c, required this.label, required this.desc});
+  final AppPalette c;
+  final String label;
+  final String desc;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 3,
+          height: 36,
+          margin: const EdgeInsets.only(right: AppSpacing.s3),
+          decoration: BoxDecoration(
+            color: c.accent,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  style: AppTypography.labelSm.copyWith(color: c.textPrimary)),
+              const SizedBox(height: 2),
+              Text(desc,
+                  style: AppTypography.xs.copyWith(color: c.textSecondary)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectorQuadrantInfo extends StatelessWidget {
+  const _SectorQuadrantInfo(
+      {required this.color, required this.label, required this.desc});
+  final Color color;
+  final String label;
+  final String desc;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            margin: const EdgeInsets.only(top: 3, right: AppSpacing.s2),
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                children: [
+                  TextSpan(
+                    text: '$label  ',
+                    style: AppTypography.labelSm.copyWith(color: color),
+                  ),
+                  TextSpan(
+                    text: desc,
+                    style: AppTypography.xs.copyWith(color: c.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import type { ChartProvider, OHLCVCandle, PriceData, RangeData } from "./types";
 
 const YF_HEADERS = {
@@ -6,13 +7,51 @@ const YF_HEADERS = {
 };
 const TIMEOUT_MS = 10_000;
 
-async function yfGet(url: string): Promise<any> {
+// Cap total concurrent outbound Yahoo Finance requests across all endpoints.
+const yfLimiter = pLimit(10);
+
+// Deduplicate concurrent requests for the same URL — second caller gets the first caller's promise.
+const _inFlight = new Map<string, Promise<unknown>>();
+
+async function yfGetInner(url: string): Promise<unknown> {
   const resp = await fetch(url, {
     headers: YF_HEADERS,
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
+  if (resp.status === 429) {
+    const err = new Error(`YF_RATE_LIMITED`);
+    (err as any).status = 429;
+    throw err;
+  }
   if (!resp.ok) throw new Error(`YF fetch failed: ${resp.status}`);
   return resp.json();
+}
+
+// Exponential backoff on 429; dedup identical in-flight URLs.
+async function yfGet(url: string): Promise<unknown> {
+  const existing = _inFlight.get(url);
+  if (existing) return existing;
+
+  const promise = yfLimiter(async () => {
+    const MAX_RETRIES = 3;
+    let delay = 1_000;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        return await yfGetInner(url);
+      } catch (err: any) {
+        const is429 = err?.status === 429 || err?.message === "YF_RATE_LIMITED";
+        if (is429 && attempt < MAX_RETRIES) {
+          await new Promise(r => setTimeout(r, delay));
+          delay = Math.min(delay * 2, 30_000);
+          continue;
+        }
+        throw err;
+      }
+    }
+  }).finally(() => _inFlight.delete(url));
+
+  _inFlight.set(url, promise);
+  return promise;
 }
 
 export const yahooProvider: ChartProvider = {
@@ -23,7 +62,7 @@ export const yahooProvider: ChartProvider = {
     try {
       const data = await yfGet(
         `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`,
-      );
+      ) as any;
       const meta = data?.chart?.result?.[0]?.meta;
       if (!meta) return null;
       const price = meta.regularMarketPrice as number;
@@ -47,7 +86,7 @@ export const yahooProvider: ChartProvider = {
     try {
       const data = await yfGet(
         `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`,
-      );
+      ) as any;
       const result = data?.chart?.result?.[0];
       if (!result) return null;
       const rawCloses = result.indicators?.quote?.[0]?.close as (number | null)[] | undefined;
@@ -67,7 +106,7 @@ export const yahooProvider: ChartProvider = {
   async fetchChartCandles(symbol: string, range: string, interval: string): Promise<OHLCVCandle[]> {
     const data = await yfGet(
       `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`,
-    );
+    ) as any;
     const result = data?.chart?.result?.[0];
     if (!result) throw new Error("No data for symbol");
 
@@ -79,9 +118,12 @@ export const yahooProvider: ChartProvider = {
     const closes  = (quote.close  ?? []) as (number | null)[];
     const volumes = (quote.volume ?? []) as (number | null)[];
 
+    const isIntraday = interval !== "1d" && interval !== "1wk" && interval !== "1mo";
     return timestamps
       .map((ts, i) => ({
-        time:   new Date(ts * 1000).toISOString().split("T")[0],
+        time:   isIntraday
+          ? new Date(ts * 1000).toISOString()
+          : new Date(ts * 1000).toISOString().split("T")[0],
         open:   opens[i]   as number,
         high:   highs[i]   as number,
         low:    lows[i]    as number,
@@ -95,7 +137,7 @@ export const yahooProvider: ChartProvider = {
     try {
       const data = await yfGet(
         `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&range=${range}`,
-      );
+      ) as any;
       const result = data?.chart?.result?.[0];
       if (!result) return [];
 

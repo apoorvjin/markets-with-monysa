@@ -97,7 +97,7 @@ function matchAmount(text: string): { label: string; mid: number } | null {
 async function extractPdfText(buf: Buffer): Promise<string> {
   // Dynamic import — pdfjs-dist is ESM-only
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const doc = await (pdfjs as any).getDocument({ data: new Uint8Array(buf) }).promise;
+  const doc = await (pdfjs as any).getDocument({ data: new Uint8Array(buf), useSystemFonts: true }).promise;
   let text = "";
   try {
     for (let p = 1; p <= (doc as any).numPages; p++) {
@@ -135,17 +135,43 @@ function detectType(window: string): "purchase" | "sale" | "exchange" {
 // Uses a loose prefix-match to tolerate character substitutions (salo, lourch, etc.)
 const TYPE_KEYWORD_RE = /\b[a-z]?(?:sal\w*|sell|purch\w+|nurch\w+|ourch\w+|durch\w+|exch\w+)\b/gi;
 
-function extractCompanyName(lookback: string): string {
+// Corporate suffix anchors — used to locate the company name boundary in extracted text
+const COMPANY_SUFFIXES = new Set(["INC", "CORP", "LLC", "LTD", "ETF", "FUND", "TRUST", "PLC"]);
+
+// Common English stop-words that never appear in company names
+const STOP_WORDS = new Set([
+  "YOUR", "YOU", "THE", "OF", "FOR", "BY", "AT", "IN", "TO", "AND", "OR",
+  "WITH", "FROM", "AN", "MY", "THEIR", "THIS", "THAT",
+]);
+
+// OCR noise patterns from adjacent PDF columns
+const NOISE_TOKEN_RE = /urch|yea|yoa|yos|vos|nos|daw|aoont|unsol|amount|acct|brok|aclod/i;
+
+const VOWELS = new Set("AEIOU");
+function hasLongConsRun(word: string): boolean {
+  let run = 0;
+  for (const ch of word) {
+    run = VOWELS.has(ch) ? 0 : run + 1;
+    if (run >= 4) return true;
+  }
+  return false;
+}
+
+function isNoise(word: string): boolean {
+  return NOISE_TOKEN_RE.test(word) || STOP_WORDS.has(word) || hasLongConsRun(word);
+}
+
+// Returns every distinct company name found in the lookback window.
+// A single 300-char window may span multiple PDF rows (due to column bleed),
+// so we scan all corporate suffixes left-to-right and emit one entry per anchor.
+function extractAllCompanyNames(lookback: string): string[] {
   // Row layout: [row#] [description] [type] [date] [N/A] → amount
-  // Strategy: anchor on the last transaction-type keyword, then take
-  // the text BEFORE it (that's where the description lives).
   const typeMatches = [...lookback.matchAll(TYPE_KEYWORD_RE)];
   const beforeType = typeMatches.length > 0
     ? lookback.slice(0, typeMatches[typeMatches.length - 1].index!)
     : lookback;
 
-  // Take last 160 chars of the pre-type segment (one row's description worth)
-  const segment = beforeType.slice(-160);
+  const segment = beforeType.slice(-300);
 
   const cleaned = segment
     .replace(/\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}/g, " ")  // dates
@@ -153,13 +179,55 @@ function extractCompanyName(lookback: string): string {
     .replace(/\b\d{4,}\b/g, " ")                          // large standalone numbers
     .replace(/[^A-Za-z\s\-&]/g, " ")                      // keep letters
     .replace(/\b[A-Za-z]\b/g, " ")                        // lone letters
+    .replace(/\bINC(?=[A-Z])/g, "INC ")                   // split INCCL → INC CL
+    .replace(/\bCORP(?=[A-Z])/g, "CORP ")                 // split CORPA → CORP A
     .replace(/\s{2,}/g, " ")
     .trim()
     .toUpperCase();
 
   const words = cleaned.split(/\s+/).filter((w) => w.length >= 2);
-  if (words.length === 0) return "";
-  return words.slice(-6).join(" ");
+  if (words.length === 0) return [];
+
+  const results: string[] = [];
+
+  // Scan every corporate suffix in order — each is an anchor for one company entry.
+  for (let si = 0; si < words.length; si++) {
+    if (!COMPANY_SUFFIXES.has(words[si])) continue;
+
+    // Collect up to 2 post-suffix qualifiers (e.g. "COM", "CL", "CLASS").
+    // Stop immediately at noise — it means we've crossed into the type column.
+    const after: string[] = [];
+    for (let i = si + 1; i < words.length && after.length < 2; i++) {
+      const w = words[i];
+      if (NOISE_TOKEN_RE.test(w) || w.length < 2) break;
+      if (COMPANY_SUFFIXES.has(w)) break; // next company starts
+      after.push(w);
+    }
+
+    // Walk backwards collecting the company name, stopping at the previous suffix
+    // (that row's name is already captured by an earlier iteration).
+    // Use break (not continue) on noise — the first bad word is a hard boundary.
+    // "Transaction of your broker ADOBE INC": hitting YOUR stops the walk cleanly.
+    const before: string[] = [];
+    for (let i = si - 1; i >= 0 && before.length < 3; i--) {
+      const w = words[i];
+      if (COMPANY_SUFFIXES.has(w)) break; // previous row boundary
+      if (w.length < 3) continue;         // skip lone letters / short tokens
+      if (isNoise(w)) break;              // hard stop at first bad word
+      before.unshift(w);
+    }
+
+    if (before.length > 0) {
+      results.push([...before, words[si], ...after].join(" "));
+    }
+  }
+
+  // Fallback: last 6 words (no corporate suffix — e.g. ETFs, crypto tickers)
+  if (results.length === 0) {
+    return [words.slice(-6).join(" ")];
+  }
+
+  return results;
 }
 
 function parseTransactionsFromText(
@@ -178,8 +246,10 @@ function parseTransactionsFromText(
     while ((m = localRe.exec(text)) !== null) {
       const lookback = text.slice(Math.max(0, m.index - 300), m.index);
       const txType = detectType(lookback.slice(-150));
-      const description = extractCompanyName(lookback) || label;
-      results.push({ description, type: txType, date: "", amount: label, amountMidpoint: mid, filingDate, source });
+      const descriptions = extractAllCompanyNames(lookback);
+      for (const description of descriptions) {
+        results.push({ description, type: txType, date: "", amount: label, amountMidpoint: mid, filingDate, source });
+      }
     }
   }
 
@@ -239,7 +309,7 @@ async function fetchTrumpTransactions(): Promise<OgeTransaction[]> {
     }))
     .filter((f) => f.pdfUrl)
     .sort((a, b) => b.filingDate.localeCompare(a.filingDate))
-    .slice(0, 7); // cap at 7 most recent — pdfjs is memory-heavy on constrained servers
+    .slice(0, 7); // cap at 7 most recent — run on 512 MB worker machine via spawnFlyWorker()
 
   if (filings.length === 0) throw new Error("No Trump 278-T filings found in OGE index");
   console.log(`[oge] found ${filings.length} Trump 278-T filings in last 12 months`);
@@ -283,7 +353,7 @@ async function fetchTrumpTransactions(): Promise<OgeTransaction[]> {
 // ── Distributed lock (prevents multiple machines running pipeline at once) ────
 
 const LOCK_KEY = "oge:pipeline-lock";
-const LOCK_TTL = 10 * 60; // 10 min — enough time to process 7 PDFs
+const LOCK_TTL = 10 * 60; // 10 min — enough time to process 7 PDFs on a 512 MB worker
 
 async function acquireLock(): Promise<boolean> {
   if (!redis) return true; // single-machine dev mode, always proceed
@@ -300,31 +370,149 @@ async function releaseLock() {
   try { await redis.del(LOCK_KEY); } catch {}
 }
 
+async function bustCache() {
+  memCache = null;
+  _lockFailTs = 0;
+  _fetching = false; // allow immediate re-trigger from /refresh endpoint
+  if (redis) {
+    try { await redis.del(REDIS_KEY, LOCK_KEY); } catch {}
+  }
+}
+
+// ── Fly.io ephemeral worker machine ──────────────────────────────────────────
+// Spawns a temporary 1024 MB machine just for the PDF pipeline, then auto-destroys.
+// Falls back to in-process if FLY_API_TOKEN / FLY_APP_NAME / FLY_MACHINE_ID absent.
+
+let _lastWorkerMemoryMb: number | null = null;
+
+async function spawnFlyWorker(): Promise<boolean> {
+  const appName  = process.env.FLY_APP_NAME;
+  const machineId = process.env.FLY_MACHINE_ID;
+  const token    = process.env.FLY_API_TOKEN;
+  if (!appName || !machineId || !token) return false;
+
+  try {
+    // Resolve current machine's image so the worker uses the same build.
+    const infoResp = await fetch(
+      `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}`,
+      { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000) },
+    );
+    if (!infoResp.ok) {
+      console.warn(`[oge] could not fetch machine info: ${infoResp.status}`);
+      return false;
+    }
+    const info = await infoResp.json() as { config?: { image?: string } };
+    const image = info.config?.image;
+    if (!image) { console.warn("[oge] machine image ref missing"); return false; }
+
+    // Create ephemeral 1024 MB machine with worker flag.
+    const createResp = await fetch(
+      `https://api.machines.dev/v1/apps/${appName}/machines`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          config: {
+            image,
+            env: { OGE_WORKER_MODE: "1" },
+            guest: { memory_mb: 1024, cpu_kind: "shared", cpus: 1 },
+            auto_destroy: true,
+            restart: { policy: "no" },
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
+      },
+    );
+    if (!createResp.ok) {
+      const body = await createResp.text();
+      console.warn(`[oge] worker spawn failed: ${createResp.status} ${body.slice(0, 120)}`);
+      return false;
+    }
+    const worker = await createResp.json() as { id: string; config?: { guest?: { memory_mb?: number } } };
+    _lastWorkerMemoryMb = worker.config?.guest?.memory_mb ?? null;
+    console.log(`[oge] spawned 1024 MB ephemeral worker ${worker.id} (actual: ${_lastWorkerMemoryMb} MB) — awaiting Redis result`);
+    return true;
+  } catch (e) {
+    console.warn("[oge] worker spawn error:", (e as Error).message);
+    return false;
+  }
+}
+
 // ── Background pipeline ───────────────────────────────────────────────────────
 
 let _fetching = false;
 
+// Timestamp of the last failed lock acquisition — prevents hammering Redis with
+// repeated lock checks on every GET while another machine holds the lock.
+let _lockFailTs = 0;
+const LOCK_COOLDOWN_MS = 5 * 60_000; // 5 min between retry attempts
+
 function triggerPipeline() {
   if (_fetching) return;
+  if (Date.now() - _lockFailTs < LOCK_COOLDOWN_MS) return;
   _fetching = true;
-  acquireLock().then(async (acquired) => {
-    if (!acquired) {
-      console.log("[oge] another machine already running pipeline — skipping");
+
+  spawnFlyWorker().then((spawned) => {
+    if (spawned) {
+      // Ephemeral 512 MB worker owns the pipeline + Redis write.
+      // Main machines keep returning loading:true until getCached() finds data.
+      // Safety: reset _fetching after 15 min in case the worker silently fails.
+      setTimeout(() => { _fetching = false; }, 15 * 60_000);
+      return;
+    }
+
+    // On Fly.io: NEVER fall back to in-process — pdfjs OOMs 256 MB machines.
+    // If we reach here on Fly.io it means FLY_API_TOKEN is missing or invalid.
+    if (process.env.FLY_APP_NAME) {
+      console.error("[oge] worker spawn failed on Fly.io — set FLY_API_TOKEN secret. In-process pipeline disabled to prevent OOM.");
       _fetching = false;
       return;
     }
-    console.log("[oge] pipeline started");
-    try {
-      const txns = await fetchTrumpTransactions();
-      await setCached(txns);
-      console.log(`[oge] pipeline complete — ${txns.length} transactions cached`);
-    } catch (e) {
-      console.error("[oge] pipeline failed:", (e as Error).message);
-    } finally {
-      await releaseLock();
-      _fetching = false;
-    }
+
+    // Local dev only: in-process pipeline (no Fly.io env, no memory constraint).
+    acquireLock().then(async (acquired) => {
+      if (!acquired) {
+        console.log("[oge] another machine holds the pipeline lock — cooling down 5 min");
+        _lockFailTs = Date.now();
+        _fetching = false;
+        return;
+      }
+      console.log("[oge] pipeline started (local in-process)");
+      try {
+        const txns = await fetchTrumpTransactions();
+        await setCached(txns);
+        console.log(`[oge] pipeline complete — ${txns.length} transactions cached`);
+      } catch (e) {
+        console.error("[oge] pipeline failed:", (e as Error).message);
+      } finally {
+        await releaseLock();
+        _fetching = false;
+      }
+    });
   });
+}
+
+// ── Worker entry point (OGE_WORKER_MODE=1) ───────────────────────────────────
+// Called by server/index.ts when the ephemeral 512 MB machine starts.
+
+export async function runOgePipelineAndExit(): Promise<void> {
+  console.log("[oge-worker] starting — 512 MB mode");
+  const acquired = await acquireLock();
+  if (!acquired) {
+    console.log("[oge-worker] lock held by another worker — exiting");
+    process.exit(0);
+  }
+  try {
+    const txns = await fetchTrumpTransactions();
+    await setCached(txns);
+    console.log(`[oge-worker] complete — ${txns.length} transactions written to Redis`);
+    await releaseLock();
+    process.exit(0);
+  } catch (e) {
+    console.error("[oge-worker] failed:", (e as Error).message);
+    await releaseLock();
+    process.exit(1);
+  }
 }
 
 // ── Route registration ────────────────────────────────────────────────────────
@@ -340,10 +528,59 @@ export function registerOgeRoutes(app: Express) {
     }
   }).catch(() => triggerPipeline());
 
+  // Debug endpoint — shows env vars and tests Fly.io Machines API reachability.
+  app.get("/api/oge/trump-transactions/config", async (_req, res) => {
+    const appName   = process.env.FLY_APP_NAME;
+    const machineId = process.env.FLY_MACHINE_ID;
+    const token     = process.env.FLY_API_TOKEN;
+
+    let machineApiStatus: string | number = "not tested";
+    let machineApiImage: string | null = null;
+    if (appName && machineId && token) {
+      try {
+        const r = await fetch(
+          `https://api.machines.dev/v1/apps/${appName}/machines/${machineId}`,
+          { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8_000) },
+        );
+        machineApiStatus = r.status;
+        if (r.ok) {
+          const d = await r.json() as { config?: { image?: string } };
+          machineApiImage = d.config?.image ?? null;
+        } else {
+          machineApiImage = await r.text();
+        }
+      } catch (e) {
+        machineApiStatus = `error: ${(e as Error).message}`;
+      }
+    }
+
+    res.json({
+      hasFlyAppName:   !!appName,
+      hasFlyMachineId: !!machineId,
+      hasFlyApiToken:  !!token,
+      hasRedis:        !!redis,
+      fetching:             _fetching,
+      lockFailTs:           _lockFailTs ? new Date(_lockFailTs).toISOString() : null,
+      flyAppName:           appName ?? null,
+      lastWorkerMemoryMb:   _lastWorkerMemoryMb,
+      machineApiStatus,
+      machineApiImage,
+    });
+  });
+
+  // Force-bust cache and re-run the PDF pipeline immediately.
+  // Hit this once after deploying parser fixes to avoid waiting 24h.
+  app.post("/api/oge/trump-transactions/refresh", async (_req, res) => {
+    await bustCache();
+    triggerPipeline();
+    res.json({ ok: true, message: "Cache cleared — pipeline running in background" });
+  });
+
   app.get("/api/oge/trump-transactions", async (_req, res) => {
     const cached = await getCached();
     if (cached) {
-      return res.json({ transactions: cached, total: cached.length, lastUpdated: new Date().toISOString() });
+      const pipelineRanAt = memCache ? new Date(memCache.ts).toISOString() : new Date().toISOString();
+      return res.json({ transactions: cached, total: cached.length, lastUpdated: pipelineRanAt });
     }
 
     if (_fetching) {

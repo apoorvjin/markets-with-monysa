@@ -114,6 +114,11 @@ echo ""
 flutter clean
 
 echo ""
+echo -e "${BLUE}▶ Fetching Dart dependencies...${NC}"
+# pod install reads Flutter/Generated.xcconfig which only exists after pub get.
+flutter pub get
+
+echo ""
 echo -e "${BLUE}▶ Reinstalling CocoaPods...${NC}"
 cd ios && pod deintegrate --quiet && pod install --silent && cd ..
 

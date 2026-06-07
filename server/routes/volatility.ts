@@ -70,6 +70,10 @@ const BRIEFING_CACHE_DURATION = 30 * 60 * 1000;
 const newsCache: Map<string, { data: any; timestamp: number }> = new Map();
 const NEWS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 
+// Crypto Fear & Greed Index
+let fearGreedCache: { data: any; timestamp: number } | null = null;
+const FEAR_GREED_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+
 export function registerVolatilityRoutes(app: Express): void {
   app.get("/api/volatility/assets", async (_req, res) => {
     const cacheKey = "volatility-assets-v3";
@@ -270,6 +274,39 @@ export function registerVolatilityRoutes(app: Express): void {
     } catch (error) {
       console.error("Error in /api/futures/news:", error);
       res.status(500).json({ error: "Failed to fetch news" });
+    }
+  });
+
+  // GET /api/volatility/fear-greed
+  app.get("/api/volatility/fear-greed", async (_req, res) => {
+    if (fearGreedCache && Date.now() - fearGreedCache.timestamp < FEAR_GREED_CACHE_DURATION) {
+      return res.json(fearGreedCache.data);
+    }
+    try {
+      const response = await fetch("https://api.alternative.me/fng/?limit=30", {
+        headers: { "User-Agent": "markets-api/1.0", "Accept": "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) throw new Error(`alternative.me returned ${response.status}`);
+      const raw = await response.json() as {
+        data: { value: string; value_classification: string; timestamp: string }[];
+      };
+      const items = raw.data ?? [];
+      const latest = items[0];
+      const result = {
+        value: parseInt(latest?.value ?? "50", 10),
+        classification: latest?.value_classification ?? "Neutral",
+        history: items.slice(0, 30).map((d) => ({
+          value: parseInt(d.value, 10),
+          date: new Date(parseInt(d.timestamp, 10) * 1000).toISOString().slice(0, 10),
+        })),
+        lastUpdated: new Date().toISOString(),
+      };
+      fearGreedCache = { data: result, timestamp: Date.now() };
+      return res.json(result);
+    } catch (err) {
+      console.error("[Fear & Greed]", err);
+      return res.status(503).json({ error: "Fear & Greed data temporarily unavailable" });
     }
   });
 }

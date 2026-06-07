@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { fetchYahooPrice, fetchRangeData, fetchBatch } from "./shared";
 import { yahooProvider } from "../providers";
+import { findPivots } from "../lib/pivots";
 
 const COUNTRY_EXCHANGE_MAP: Record<string, { exchanges: string[]; region: string; suffix: string }> = {
   CN: { exchanges: ["SSE", "SZSE"], region: "China", suffix: ".SS" },
@@ -658,7 +659,62 @@ async function fetchCotAssets(
 
 // ─── Chart cache ──────────────────────────────────────────────────────────────
 const chartCache = new Map<string, { data: unknown; timestamp: number }>();
-const CHART_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
+
+// Longer ranges have infrequent new bars — no need to refetch a 5y weekly chart every hour.
+const CHART_TTL_BY_RANGE: Record<string, number> = {
+  "1d":  60 * 1000,            // 1 minute (intraday — in-house only)
+  "1wk": 5 * 60 * 1000,        // 5 minutes (intraday — in-house only)
+  "1mo": 30 * 60 * 1000,       // 30 minutes
+  "3mo": 60 * 60 * 1000,       // 1 hour
+  "6mo": 2 * 60 * 60 * 1000,   // 2 hours
+  "1y":  4 * 60 * 60 * 1000,   // 4 hours
+  "5y":  12 * 60 * 60 * 1000,  // 12 hours
+};
+
+const CHART_INTERVAL_BY_RANGE: Record<string, string> = {
+  "1d":  "5m",
+  "1wk": "15m",
+  "1mo": "1d",
+  "3mo": "1d",
+  "6mo": "1d",
+  "1y":  "1d",
+  "5y":  "1wk",
+};
+
+// ─── Stale-While-Revalidate helper for futures endpoints ─────────────────────
+// Returns stale cache immediately and triggers a background refresh so the
+// next request gets fresh data without a loading spinner.
+const _swrRefreshing = new Set<string>();
+
+function swrRespond<T>(
+  res: import("express").Response,
+  cacheKey: string,
+  cache: Map<string, { data: T; timestamp: number }>,
+  ttl: number,
+  refresh: () => Promise<T>,
+  toJson: (data: T) => object,
+): boolean {
+  const cached = cache.get(cacheKey);
+  if (!cached) return false;
+
+  const age = Date.now() - cached.timestamp;
+  if (age < ttl) {
+    // Still fresh — serve directly.
+    res.json(toJson(cached.data));
+    return true;
+  }
+
+  // Stale: return immediately, refresh in background.
+  res.json(toJson(cached.data));
+  if (!_swrRefreshing.has(cacheKey)) {
+    _swrRefreshing.add(cacheKey);
+    refresh()
+      .then(data => cache.set(cacheKey, { data, timestamp: Date.now() }))
+      .catch(() => {})
+      .finally(() => _swrRefreshing.delete(cacheKey));
+  }
+  return true;
+}
 
 export function registerMarketsRoutes(app: Express): void {
   app.get("/api/stocks/:countryCode", async (req, res) => {
@@ -697,22 +753,32 @@ export function registerMarketsRoutes(app: Express): void {
   // Futures: Indices
   app.get("/api/futures/indices", async (_req, res) => {
     const cacheKey = "indices";
-    const cached = futuresCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < FUTURES_CACHE_DURATION) {
-      return res.json({ items: cached.data, lastUpdated: new Date(cached.timestamp).toISOString() });
-    }
-    try {
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+
+    const fetchIndices = async () => {
       const symbols = WORLD_INDICES.map(i => i.symbol);
       const prices = await fetchBatch(symbols);
-      const items = WORLD_INDICES.map(idx => ({
+      return WORLD_INDICES.map(idx => ({
         ...idx,
         price: prices.get(idx.symbol)?.price,
         change: prices.get(idx.symbol)?.change,
         changePercent: prices.get(idx.symbol)?.changePercent,
       }));
+    };
+
+    type IndicesItem = Awaited<ReturnType<typeof fetchIndices>>[number];
+    const served = swrRespond<IndicesItem[]>(
+      res, cacheKey, futuresCache as Map<string, { data: IndicesItem[]; timestamp: number }>,
+      FUTURES_CACHE_DURATION, fetchIndices,
+      data => ({ items: data, lastUpdated: new Date(futuresCache.get(cacheKey)?.timestamp ?? Date.now()).toISOString() }),
+    );
+    if (served) return;
+
+    try {
+      const items = await fetchIndices();
       futuresCache.set(cacheKey, { data: items, timestamp: Date.now() });
       res.json({ items, lastUpdated: new Date().toISOString() });
-    } catch (e) {
+    } catch {
       res.status(500).json({ error: "Failed to fetch indices" });
     }
   });
@@ -720,22 +786,32 @@ export function registerMarketsRoutes(app: Express): void {
   // Futures: Commodities
   app.get("/api/futures/commodities", async (_req, res) => {
     const cacheKey = "commodities";
-    const cached = futuresCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < FUTURES_CACHE_DURATION) {
-      return res.json({ items: cached.data, lastUpdated: new Date(cached.timestamp).toISOString() });
-    }
-    try {
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+
+    const fetchCommodities = async () => {
       const symbols = COMMODITIES.map(c => c.symbol);
       const prices = await fetchBatch(symbols);
-      const items = COMMODITIES.map(c => ({
+      return COMMODITIES.map(c => ({
         ...c,
         price: prices.get(c.symbol)?.price,
         change: prices.get(c.symbol)?.change,
         changePercent: prices.get(c.symbol)?.changePercent,
       }));
+    };
+
+    type CommodityItem = Awaited<ReturnType<typeof fetchCommodities>>[number];
+    const served = swrRespond<CommodityItem[]>(
+      res, cacheKey, futuresCache as Map<string, { data: CommodityItem[]; timestamp: number }>,
+      FUTURES_CACHE_DURATION, fetchCommodities,
+      data => ({ items: data, lastUpdated: new Date(futuresCache.get(cacheKey)?.timestamp ?? Date.now()).toISOString() }),
+    );
+    if (served) return;
+
+    try {
+      const items = await fetchCommodities();
       futuresCache.set(cacheKey, { data: items, timestamp: Date.now() });
       res.json({ items, lastUpdated: new Date().toISOString() });
-    } catch (e) {
+    } catch {
       res.status(500).json({ error: "Failed to fetch commodities" });
     }
   });
@@ -743,49 +819,73 @@ export function registerMarketsRoutes(app: Express): void {
   // Futures: Forex
   app.get("/api/futures/forex", async (_req, res) => {
     const cacheKey = "forex";
-    const cached = futuresCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < FUTURES_CACHE_DURATION) {
-      return res.json({ items: cached.data, lastUpdated: new Date(cached.timestamp).toISOString() });
-    }
-    try {
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+
+    const fetchForex = async () => {
       const symbols = FOREX_PAIRS.map(f => f.symbol);
       const prices = await fetchBatch(symbols);
-      const items = FOREX_PAIRS.map(f => ({
+      return FOREX_PAIRS.map(f => ({
         ...f,
         price: prices.get(f.symbol)?.price,
         change: prices.get(f.symbol)?.change,
         changePercent: prices.get(f.symbol)?.changePercent,
       }));
+    };
+
+    type ForexItem = Awaited<ReturnType<typeof fetchForex>>[number];
+    const served = swrRespond<ForexItem[]>(
+      res, cacheKey, futuresCache as Map<string, { data: ForexItem[]; timestamp: number }>,
+      FUTURES_CACHE_DURATION, fetchForex,
+      data => ({ items: data, lastUpdated: new Date(futuresCache.get(cacheKey)?.timestamp ?? Date.now()).toISOString() }),
+    );
+    if (served) return;
+
+    try {
+      const items = await fetchForex();
       futuresCache.set(cacheKey, { data: items, timestamp: Date.now() });
       res.json({ items, lastUpdated: new Date().toISOString() });
-    } catch (e) {
+    } catch {
       res.status(500).json({ error: "Failed to fetch forex" });
     }
   });
 
   // ─── Chart OHLCV data — Yahoo Finance historical prices ──────────────────────
-  // Feeds the Lightweight Charts (MIT) candlestick chart in ChartModal.
-  // No TradingView widget or CDN key required.
+  // Response shape branches on req.chartRenderer (set by parseChartRenderer
+  // middleware from the X-Chart-Renderer header):
+  //   - "inhouse": accepts intraday 1d/1wk ranges, returns {candles, levels}.
+  //   - anything else (yahoo/tradingview): legacy {candles} shape, rejects 1d/1wk.
   app.get("/api/chart/:symbol", async (req, res) => {
-    const raw   = req.params.symbol;
-    const range = (req.query.range as string) || "3mo";
-    const validRanges = ["1mo", "3mo", "6mo", "1y", "5y"];
-    const safeRange   = validRanges.includes(range) ? range : "3mo";
-    const interval    = safeRange === "5y" ? "1wk" : "1d";
+    const raw      = req.params.symbol;
+    const range    = (req.query.range as string) || "3mo";
+    const renderer = req.chartRenderer;
+    const isInHouse = renderer === "inhouse";
 
-    const cacheKey = `${raw}:${safeRange}`;
-    const cached   = chartCache.get(cacheKey);
-    if (cached && Date.now() - cached.timestamp < CHART_CACHE_DURATION) {
+    const validRanges = isInHouse
+      ? ["1d", "1wk", "1mo", "3mo", "6mo", "1y", "5y"]
+      : ["1mo", "3mo", "6mo", "1y", "5y"];
+    const safeRange = validRanges.includes(range) ? range : "3mo";
+    const interval  = CHART_INTERVAL_BY_RANGE[safeRange] ?? "1d";
+
+    const cacheKey = `${raw}:${safeRange}:${renderer}`;
+    const cacheTtl = CHART_TTL_BY_RANGE[safeRange] ?? 60 * 60 * 1000;
+    const maxAgeSec = Math.floor(cacheTtl / 1000 / 2); // CDN max-age = half the server TTL
+    res.set("Cache-Control", `public, max-age=${maxAgeSec}, stale-while-revalidate=${maxAgeSec * 2}`);
+
+    const cached = chartCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < cacheTtl) {
       return res.json(cached.data);
     }
 
     try {
       const candles = await yahooProvider.fetchChartCandles(raw, safeRange, interval);
-      const responseData = {
+      const baseResponse = {
         candles,
         symbol:      raw,
         lastUpdated: new Date().toISOString(),
       };
+      const responseData = isInHouse
+        ? { ...baseResponse, levels: findPivots(candles) }
+        : baseResponse;
       chartCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
       res.json(responseData);
     } catch (e) {
