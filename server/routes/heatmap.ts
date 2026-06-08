@@ -3,6 +3,26 @@ import { fetchYahooPrice, fetchRangeData } from "./shared";
 import { getDevicePlan, isPro } from "../plan-enforcement";
 import { INDEX_SYMBOLS } from "../data/index_constituents";
 
+// ── FX normalisation (USD primary, native secondary) ─────────────────────────
+
+const INDEX_CURRENCY: Record<string, string> = {
+  sp500: "USD", ndx: "USD", dji: "USD", russell2000: "USD",
+  ftse100: "GBP", dax40: "EUR", nikkei225: "JPY", hsi: "HKD", nifty50: "INR",
+};
+
+// Yahoo symbols for non-USD currencies.
+// inverse=true means Yahoo quotes "1 USD = X native", so rate to USD = 1/price.
+const CURRENCY_FX_SYMBOL: Record<string, { symbol: string; inverse: boolean }> = {
+  GBP: { symbol: "GBPUSD=X", inverse: false },
+  EUR: { symbol: "EURUSD=X", inverse: false },
+  JPY: { symbol: "USDJPY=X", inverse: true },
+  HKD: { symbol: "USDHKD=X", inverse: true },
+  INR: { symbol: "USDINR=X", inverse: true },
+};
+
+const FX_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+const fxRateCache = new Map<string, { rateToUsd: number; timestamp: number }>();
+
 const HEATMAP_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 let heatmapCache: { data: unknown; timestamp: number } | null = null;
 // Deduplicates concurrent fetches: if a fetch is already in flight, all concurrent
@@ -299,7 +319,7 @@ type TreemapStock = {
   symbol: string;
   name: string;
   sector: string;
-  marketCap: number;
+  marketCap: number;        // native-currency value — unchanged
   changePercent: number;
   price: number;
   dayHigh: number | null;
@@ -313,6 +333,10 @@ type TreemapStock = {
   preMarketChangePercent: number | null;
   postMarketPrice: number | null;
   postMarketChangePercent: number | null;
+  // FX normalisation fields (US-005).
+  nativeCurrency: string;        // "USD" | "GBP" | "JPY" | "HKD" | "INR"
+  marketCapUsd: number | null;   // null only when non-USD index + FX fetch failed
+  fxRateUsed: number | null;     // null for USD indices
 };
 
 const SUPPORTED_TIMEFRAMES = new Set(["1d", "1w", "1m", "ytd"]);
@@ -340,6 +364,23 @@ const treemapDataCache = new Map<string, {
 }>();
 const treemapInFlight = new Map<string, Promise<void>>();
 
+async function getUsdRate(currency: string): Promise<number | null> {
+  if (currency === "USD") return 1;
+  const cached = fxRateCache.get(currency);
+  if (cached && Date.now() - cached.timestamp < FX_CACHE_TTL) return cached.rateToUsd;
+  const cfg = CURRENCY_FX_SYMBOL[currency];
+  if (!cfg) return null;
+  try {
+    const q = await fetchYahooQuoteSummary(cfg.symbol);
+    if (!q?.price) return null;
+    const rate = cfg.inverse ? 1 / q.price : q.price;
+    fxRateCache.set(currency, { rateToUsd: rate, timestamp: Date.now() });
+    return rate;
+  } catch {
+    return null;
+  }
+}
+
 async function ensureTreemapCacheFresh(
   cacheKey: string,
   index: string,
@@ -352,7 +393,13 @@ async function ensureTreemapCacheFresh(
   let inFlight = treemapInFlight.get(cacheKey);
   if (!inFlight) {
     inFlight = (async () => {
-      const constituents = await fetchConstituents(index);
+      const currency = INDEX_CURRENCY[index] ?? "USD";
+      // Fetch FX rate concurrently with constituents — both are cached so this
+      // adds no latency on warm runs; on cold runs the FX fetch is fast.
+      const [constituents, fxRate] = await Promise.all([
+        fetchConstituents(index),
+        getUsdRate(currency),
+      ]);
       const needsAssetProfile = constituents.some(c => !c.sector || !c.name);
       const symbols = constituents.map(c => c.symbol);
       const quotes = await fetchYahooQuoteSummaryBatch(
@@ -386,6 +433,9 @@ async function ensureTreemapCacheFresh(
         if (changePercent == null) continue;
         const name = c.name ?? q.longName ?? q.shortName ?? c.symbol;
         const sector = c.sector ?? q.sector ?? "Unknown";
+        const marketCapUsd = currency === "USD"
+          ? q.marketCap
+          : (fxRate != null ? +(q.marketCap * fxRate).toFixed(0) : null);
         stocks.push({
           symbol: c.symbol,
           name,
@@ -402,6 +452,9 @@ async function ensureTreemapCacheFresh(
           preMarketChangePercent: q.preMarketChangePercent,
           postMarketPrice: q.postMarketPrice,
           postMarketChangePercent: q.postMarketChangePercent,
+          nativeCurrency: currency,
+          marketCapUsd,
+          fxRateUsed: currency !== "USD" ? fxRate : null,
         });
       }
       stocks.sort((a, b) => b.marketCap - a.marketCap);

@@ -1341,7 +1341,7 @@ void _showAbout(BuildContext context) {
                 const SizedBox(height: AppSpacing.s2),
                 Text(
                   'Market prices from Yahoo Finance · CFTC Disaggregated COT Report · '
-                  'US Treasury FiscalData API · Tariff data reflects April 2025 USTR schedules.',
+                  'US Treasury FiscalData API · Tariff data from USTR Section 301 schedules (see Investing → Exposure for freshness).',
                   style: AppTypography.sm.copyWith(color: c.textSecondary),
                 ),
                 const SizedBox(height: AppSpacing.s4),

@@ -669,7 +669,7 @@ class SectorBestSetupsResponse {
       );
 }
 
-const kCrisisDataAsOf = 'May 2026';
+const kCrisisDataAsOf = '';
 
 const kCrisisEvents = [
   CrisisEvent(

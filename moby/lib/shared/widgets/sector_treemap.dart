@@ -200,7 +200,7 @@ _TreemapData _computeLayout(List<TreemapStock> stocks, Size size) {
         ? Rect.fromLTWH(sr.rect.left, sr.rect.top + 18, sr.rect.width, sr.rect.height - 18)
         : sr.rect;
     final stockRects = _squarify<TreemapStock>(
-      inside.map((s) => _Item(s, s.marketCap)).toList(),
+      inside.map((s) => _Item(s, s.effectiveMarketCap)).toList(),
       tilesRect,
     );
     for (final tr in stockRects) {
@@ -210,7 +210,7 @@ _TreemapData _computeLayout(List<TreemapStock> stocks, Size size) {
   return _TreemapData(tiles, sectors);
 }
 
-double _sumCap(List<TreemapStock> ss) => ss.fold<double>(0.0, (a, b) => a + b.marketCap);
+double _sumCap(List<TreemapStock> ss) => ss.fold<double>(0.0, (a, b) => a + b.effectiveMarketCap);
 
 class _Item<T> {
   final T id;
@@ -462,7 +462,7 @@ class _TooltipCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '\$${_fmtPrice(stock.price)}',
+                  '${_pricePrefix(stock.nativeCurrency)}${_fmtPrice(stock.price)}',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
@@ -505,13 +505,32 @@ class _TooltipCard extends StatelessWidget {
                   stock.fiftyTwoWeekHigh!, stock.price),
               const SizedBox(height: 6),
             ],
-            _row(c, 'Market cap', _fmtMarketCap(stock.marketCap)),
+            _marketCapRow(c),
             const SizedBox(height: 6),
             _row(c, 'Sector', stock.sector),
           ],
         ),
       ),
     );
+  }
+
+  Widget _marketCapRow(AppPalette c) {
+    final isUsd = stock.nativeCurrency == 'USD';
+    final hasUsdCap = stock.marketCapUsd != null;
+    final String capStr;
+    if (isUsd || !hasUsdCap) {
+      // USD index: show $ value directly.
+      // Non-USD without FX: show native with proper symbol, no misleading $.
+      capStr = hasUsdCap
+          ? _fmtMarketCap(stock.marketCapUsd!)
+          : _fmtNativeMarketCap(stock.marketCap, stock.nativeCurrency);
+    } else {
+      // Non-USD with FX rate: "$X.XB  (₹Y.YT)"
+      final usdStr = _fmtMarketCap(stock.marketCapUsd!);
+      final nativeStr = _fmtNativeMarketCap(stock.marketCap, stock.nativeCurrency);
+      capStr = '$usdStr  ($nativeStr)';
+    }
+    return _row(c, 'Market cap', capStr);
   }
 
   Widget _row(AppPalette c, String label, String value) {
@@ -541,7 +560,7 @@ class _TooltipCard extends StatelessWidget {
             Text(label, style: TextStyle(fontSize: 11, color: c.textSecondary)),
             const Spacer(),
             Text(
-              '\$${_fmtPrice(lo)}  –  \$${_fmtPrice(hi)}',
+              '${_pricePrefix(stock.nativeCurrency)}${_fmtPrice(lo)}  –  ${_pricePrefix(stock.nativeCurrency)}${_fmtPrice(hi)}',
               style: TextStyle(
                 fontSize: 11,
                 color: c.textPrimary,
@@ -608,7 +627,7 @@ class _TooltipCard extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         Text(
-          '\$${_fmtPrice(price)}',
+          '${_pricePrefix(stock.nativeCurrency)}${_fmtPrice(price)}',
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
@@ -645,3 +664,23 @@ String _fmtMarketCap(double v) {
   if (v >= 1e6) return '\$${(v / 1e6).toStringAsFixed(0)}M';
   return '\$${v.toStringAsFixed(0)}';
 }
+
+const _kCurrencySymbol = {
+  'GBP': '£',
+  'EUR': '€',
+  'JPY': '¥',
+  'HKD': 'HK\$',
+  'INR': '₹',
+};
+
+String _fmtNativeMarketCap(double v, String currency) {
+  final sym = _kCurrencySymbol[currency] ?? currency;
+  if (v >= 1e12) return '$sym${(v / 1e12).toStringAsFixed(2)}T';
+  if (v >= 1e9) return '$sym${(v / 1e9).toStringAsFixed(1)}B';
+  if (v >= 1e6) return '$sym${(v / 1e6).toStringAsFixed(0)}M';
+  return '$sym${v.toStringAsFixed(0)}';
+}
+
+/// Returns the correct currency prefix for price values (e.g. ₹ for INR, $ for USD).
+String _pricePrefix(String currency) =>
+    currency == 'USD' ? '\$' : (_kCurrencySymbol[currency] ?? '\$');

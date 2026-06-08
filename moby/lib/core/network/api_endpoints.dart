@@ -93,6 +93,7 @@ abstract final class ApiEndpoints {
       '$baseUrl/api/trading/copy-trades?memberName=${Uri.encodeComponent(memberName)}';
   static String get yieldCurveHistory => '$baseUrl/api/economy/yield-curve-history';
   static String get economyEvents     => '$baseUrl/api/economy/events';
+  static String get tariffs           => '$baseUrl/api/tariffs';
   static String get fearGreed         => '$baseUrl/api/volatility/fear-greed';
 
   static String exposureAnalysis({

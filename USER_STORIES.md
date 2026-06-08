@@ -6,6 +6,16 @@
 
 ---
 
+## Done
+
+### US-005 — Currency-normalize the treemap (USD with native footnote)
+**As a** Pro+ user comparing global indices on Markets → Heatmap **I want** every tile's market cap shown in USD with the native-currency value as a secondary line **so that** I can meaningfully compare cross-index tiles (e.g. Reliance vs. Apple, FTSE vs. Nifty) without misreading INR/GBP/JPY as USD.
+- Captured: 2026-06-07
+- Completed: 2026-06-08
+- Notes: Backend adds `nativeCurrency`, `marketCapUsd`, `fxRateUsed` to each `TreemapStock` via 30-min cached FX rates from Yahoo Finance (GBPUSD=X, EURUSD=X, USDJPY=X⁻¹, USDHKD=X⁻¹, USDINR=X⁻¹). Flutter uses `effectiveMarketCap` (`marketCapUsd ?? marketCap`) for tile sizing. Tooltip shows `$X.XB  (₹Y.YT)` for non-USD stocks with FX available; native-only with proper symbol (₹/£/¥/€/HK$) when FX fetch fails. `marketCap` field left unchanged (native value).
+
+---
+
 ## Backlog
 
 <!-- Add new stories below. Each entry: -->
@@ -33,11 +43,6 @@
 **As a** macro investor **I want** a scrubbable timeline above the heatmap that lets me jump to "yesterday's close", "1W ago", "1M ago", or named crash dates (May 2020, Sept 2008) **so that** I can see how the index looked at a given point in history and compare regimes.
 - Captured: 2026-06-06
 - Notes: Backend needs `?asOf=YYYY-MM-DD` mode for `/api/heatmap/treemap` — derive each constituent's price/%change from Yahoo `chart` data for that date. Slider UI should integrate with Crisis Playbook screen (`/macro` Crisis tab) so tapping a historical crisis date deep-links to the matching heatmap snapshot.
-
-### US-005 — Currency-normalize the treemap (USD with native footnote)
-**As a** Pro+ user comparing global indices on Markets → Heatmap **I want** every tile's market cap shown in USD with the native-currency value as a secondary line **so that** I can meaningfully compare cross-index tiles (e.g. Reliance vs. Apple, FTSE vs. Nifty) without misreading INR/GBP/JPY as USD.
-- Captured: 2026-06-07
-- Notes: Documented SWOT weakness + existing CLAUDE.md pitfall. Backend `/api/heatmap/treemap` (`server/routes/heatmap.ts`) should add `nativeCurrency`, `marketCapUsd`, `fxRateUsed` to each `TreemapStock`, keep `marketCap` untouched, and source FX from existing forex provider with a 30-min cache. UI in `treemap_tab.dart` + `sector_treemap.dart` uses `marketCapUsd` for tile sizing and shows USD primary / native secondary in the tooltip with proper symbols (₹/£/¥/€). FX-missing rows render native only — no misleading `$`. Unblocks a future cross-index "Global Mega-cap" treemap. Display-currency picker in Profile is a follow-up story.
 
 ### US-007 — Refresh stale static content (crisis playbook, tariffs, economic calendar)
 **As a** user trusting Monysa for macro decisions **I want** the crisis playbook, tariff exposure data, and economic calendar to reflect the current state of the world (or clearly disclose when they were last updated) **so that** I don't act on year-old snapshots and lose trust in the app.
@@ -611,10 +616,50 @@
 - Captured: 2026-06-07
 - Notes: SWOT-identified #1 churn driver. New `signal_log` store in `server/data/`. Scheduled emitter (15-min cadence during market hours) captures every non-HOLD signal once per `(symbol, strategy)` using only candles closed at-or-before `fired_at` — no peeking. Resolver job marks `hit_tp` / `hit_sl` / `expired` / `closed_eod` with SL-first on intra-bar conflicts. Endpoints: `GET /api/trading/track-record` (public/Free for acquisition), `GET /api/trading/track-record/:strategy/signals`, `GET /api/trading/track-record/freshness`, `POST /api/trading/paper/follow` + `GET /api/trading/paper/portfolio` (Pro+ via `signals_advanced`). Paper portfolio is **never backfilled** — PnL starts at first signal after follow. Open positions excluded from win-rate. New 5th sub-tab "Track Record" in `trading_screen.dart` (tab order: Dashboard / AI Signals / Track Record / Alerts / Power Moves), KPI grid + equity curve sparkline (fl_chart) + recent signals list + honesty banner + methodology bottom sheet (disclose no slippage/fees, link S3/S6/S9 backtest caveats from `server/trading.ts:2405-2408`). Asset Detail Backtest tab gets a "vs. live track record" row when ≥30 signals exist. Phase 1: ship emitter silently for 14 days to accumulate data; Phase 2: UI; Phase 3: paper portfolio. Record is permanent — no retroactive edits after launch. New env: `ENABLE_SIGNAL_LOGGER`.
 
+### US-016 — Currency symbol audit: native vs. USD across all screens
+**As a** global user viewing non-US assets (Indian stocks, UK equities, Hong Kong markets, forex pairs) **I want** every price, market cap, and monetary value in the app to display the correct currency symbol — ₹ for INR, £ for GBP, ¥ for JPY, HK$ for HKD, A$ for AUD, etc. — **so that** I never mistake a ₹96,000 Nifty stock price for a $96,000 USD price and make a misinformed trade decision.
+- Captured: 2026-06-08
+- Notes: Audit of the codebase found 4+ separate ad-hoc currency formatting functions across different files, each with different coverage and different bugs. Specific issues found:
+
+  **Confirmed bugs (show wrong or missing symbol today):**
+  - `trading_screen.dart` `_formatPrice()` (line 828) — no currency prefix at all; `QuoteItem.currency` field exists but is ignored. All asset prices in Dashboard and Power Moves rows appear as bare numbers ("96420" not "₹96,420").
+  - `asset_detail_screen.dart` `_currencySymbol()` (line 2449) — returns `''` for `'USD'`, so USD prices in fundamentals (52-week range, etc.) display without a `$` prefix. All non-listed currencies (HKD, AUD, CAD, CHF, SGD, KRW, TWD, etc.) also fall through to `''`.
+  - `country_stocks_screen.dart` `_formatPrice()` (line 242) — shows `$` only for USD, empty string for everything else; Indian stocks on the India tab show "96,420" not "₹96,420"; UK stocks show "875" not "£875".
+  - `sector_treemap.dart` `_pricePrefix()` (line 685) — fallback for unknown currencies returns `$` instead of the ISO code, so e.g. AUD stocks in a future TOPIX-like index would show "$" not "A$".
+  - `multibaggers_screen.dart` `_fmtPrice()` — no currency prefix; country chips switch between US/India/UK/Japan/HK/China/Euronext but prices display identically as bare numbers regardless of currency.
+
+  **Missing currencies in symbol maps:** `_kCurrencySymbol` in `sector_treemap.dart` and `_currencySymbol()` in `asset_detail_screen.dart` both omit: `AUD` (A$), `CAD` (CA$), `CHF` (CHF), `SGD` (S$), `KRW` (₩), `TWD` (NT$), `BRL` (R$), `MXN` ($), `IDR` (Rp), `THB` (฿), `VND` (₫), `MYR` (RM), `PHP` (₱).
+
+  **CLAUDE.md pitfall note to re-verify:** "marketCap reported in the listing-currency for non-US indices (Nifty 50 returns INR; the tooltip still prefixes '$' — cosmetic)" — the `_pricePrefix()` function was improved but the CLAUDE.md entry may be stale. Verify against a live Nifty 50 treemap session and update the pitfall table accordingly.
+
+  **Fix approach — single shared utility:**
+  Create `moby/lib/utils/currency_format.dart` with:
+  - `const kCurrencySymbol = { 'USD': '\$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 'CNY': '¥', 'INR': '₹', 'HKD': 'HK\$', 'AUD': 'A\$', 'CAD': 'CA\$', 'CHF': 'CHF ', 'SGD': 'S\$', 'KRW': '₩', 'TWD': 'NT\$', 'BRL': 'R\$', 'MXN': '\$', 'IDR': 'Rp ', 'THB': '฿', 'VND': '₫', 'MYR': 'RM ', 'PHP': '₱' }` (narrow non-breaking space before symbol where needed for readability)
+  - `String currencyPrefix(String? currency)` — returns symbol from map, falls back to `'${currency ?? ''} '` (ISO code + narrow space, e.g. "SGD 142.50") rather than silently using `$`
+  - `String fmtPrice(double? price, { String? currency })` — formats number with correct prefix; handles the >1000 / <1 thresholds already in each ad-hoc impl
+  - `String fmtMarketCap(double? v, { String? currency, double? usdEquivalent })` — shows USD primary with native in parens when `usdEquivalent` is available (reuses US-005 pattern); native-only otherwise
+  Delete the 4 ad-hoc formatters and replace all call sites with the shared util. No behavior change for USD-only paths — this is purely additive for non-USD.
+
+  **Acceptance per screen:**
+  1. Trading → Dashboard: `QuoteItem.currency` drives prefix; Nifty 50 stocks show "₹X,XXX"; FTSE stocks show "£XXX"; Crypto shows "$X.XX"
+  2. Trading → Power Moves: same as Dashboard
+  3. Country Stocks (India tab): prices show "₹" prefix; exchange chips NSE/BSE don't affect prefix (currency is always INR for both)
+  4. Multibaggers (all 7 country tabs): price column shows native symbol per country
+  5. Asset Detail → Indicators tab: 52-week range + live price show `$` for USD; non-USD shows correct symbol
+  6. Markets → Heatmap treemap: tile tooltip market cap: `$X.XB` for USD; `₹X.XT (≈$X.XB)` for INR when `marketCapUsd` available; `₹X.XT` native-only when FX unavailable
+  7. No screen shows a bare number where a currency value is meant
+  8. Unknown currencies show ISO code (e.g. "SGD 142.50") rather than a `$` lie
+
+  **Non-goals:** full i18n / locale-aware number separators (that's `[[i18n-localization]]`); converting all prices to user's home currency (separate feature); changing the USD treemap tooltip (already correct).
+
+  **Files to touch:** `moby/lib/utils/currency_format.dart` (new), `sector_treemap.dart`, `asset_detail_screen.dart`, `country_stocks_screen.dart`, `trading_screen.dart`, `multibaggers_screen.dart`, CLAUDE.md pitfall table update.
+
+### US-015 — Live tariff-data refresh via admin API (no deploy required)
+**As an** operator **I want** to push an updated tariff dataset to the running server via a single authenticated API call — without redeploying — **so that** rate changes (new executive orders, WTO schedule changes, bilateral agreements) are reflected in the Exposure tab within minutes, not after the next app-store release cycle.
+- Captured: 2026-06-08
+- Notes: US-007 moved tariff data to `server/data/tariffs.json` + `GET /api/tariffs` (24h cache). The remaining manual step is: edit `server/data/tariffs.json` on the Fly.io VM, bump `TARIFFS_DATA_AS_OF` in `economy.ts`, and restart the process — this requires SSH access and a redeploy, which defeats the purpose of server-side storage. The fix is a thin admin endpoint that accepts a new dataset, writes it atomically to disk, and busts the in-memory cache — no restart, no redeploy, no app release. **Implementation:** `POST /api/admin/tariffs/refresh` — authenticated via `Authorization: Bearer $ADMIN_TOKEN` (new env var, required; 401 if absent or wrong). Body: `{ countries: [...], dataAsOf: "YYYY-MM-DD", source: string }`. Server validates the payload (must be array of ≥ 100 countries with required fields), writes atomically to `server/data/tariffs.json` via `writeFile` + rename (prevents partial reads), clears `tariffsCache` in `economy.ts`, returns `{ ok: true, countries: N, dataAsOf, lastUpdated }`. Export `clearTariffsCache()` from `economy.ts` so the admin route can call it without circular imports. New env var: `ADMIN_TOKEN` (random 32-byte hex; document alongside existing env vars in CLAUDE.md). SOP for quarterly refresh: (1) download latest USTR/WTO schedule, (2) regenerate `countries` array (maintain same `CountryTariff` shape), (3) `curl -X POST https://monysa-api.fly.dev/api/admin/tariffs/refresh -H "Authorization: Bearer $ADMIN_TOKEN" -d @new_tariffs.json`. No Fly.io deploy, no app store submission, cache busts instantly. Acceptance: (1) `POST` with valid token + valid body → 200, cache cleared, next `GET /api/tariffs` returns new data; (2) wrong token → 401; (3) malformed body (< 100 countries, missing required fields) → 422 with descriptive error; (4) file write failure → 500, cache NOT cleared (old data still served); (5) concurrent `GET /api/tariffs` during write sees old data (atomic rename prevents partial read); (6) `ADMIN_TOKEN` env var documented in CLAUDE.md.
+
 ---
 
 ## In Progress
 
----
-
-## Done

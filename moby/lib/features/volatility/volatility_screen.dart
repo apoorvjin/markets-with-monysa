@@ -546,11 +546,19 @@ class _YieldCurveChart extends StatelessWidget {
 
 // ── Calendar Tab ──────────────────────────────────────────────────────────────
 
+typedef _CalendarResult = ({
+  List<Map<String, dynamic>> events,
+  String lastUpdated,
+});
+
 final _eventsProvider =
-    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+    FutureProvider.autoDispose<_CalendarResult>((ref) async {
   final data = await ApiClient.instance.get(ApiEndpoints.economyEvents)
       as Map<String, dynamic>;
-  return (data['events'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+  return (
+    events: (data['events'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+    lastUpdated: data['lastUpdated'] as String? ?? '',
+  );
 });
 
 class _MacroCalendarTab extends ConsumerWidget {
@@ -561,91 +569,91 @@ class _MacroCalendarTab extends ConsumerWidget {
     final c = context.colors;
     final eventsAsync = ref.watch(_eventsProvider);
 
+    Widget fallback() => MaxWidthLayout(
+          child: ListView(
+            padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+                AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
+            children: const [_EconomicCalendar()],
+          ),
+        );
+
     return eventsAsync.when(
-      loading: () => MaxWidthLayout(
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
-              AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
-          children: const [_EconomicCalendar()],
-        ),
-      ),
-      error: (_, __) => MaxWidthLayout(
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
-              AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
-          children: const [_EconomicCalendar()],
-        ),
-      ),
-      data: (events) {
-        if (events.isEmpty) {
-          return MaxWidthLayout(
-            child: ListView(
-              padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
-                  AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
-              children: const [_EconomicCalendar()],
-            ),
-          );
-        }
+      loading: fallback,
+      error: (_, __) => fallback(),
+      data: (result) {
+        if (result.events.isEmpty) return fallback();
 
         // Group by date
         final Map<String, List<Map<String, dynamic>>> grouped = {};
-        for (final e in events) {
+        for (final e in result.events) {
           final date = e['date'] as String? ?? '';
           grouped.putIfAbsent(date, () => []).add(e);
         }
         final dates = grouped.keys.toList()..sort();
 
         return MaxWidthLayout(
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
-                AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
+          child: Column(
             children: [
-              GlassCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              if (result.lastUpdated.isNotEmpty)
+                FreshnessBar(lastUpdated: result.lastUpdated),
+              Expanded(
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+                      AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
                   children: [
-                    Row(
-                      children: [
-                        Text('Economic Events',
-                            style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-                        const SizedBox(width: AppSpacing.s2),
-                        GestureDetector(
-                          onTap: () => _showCalendarInfo(context),
-                          child: Icon(Icons.info_outline_rounded,
-                              size: 16, color: c.textMuted),
-                        ),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: c.danger.withAlpha(30),
-                            borderRadius: BorderRadius.circular(AppRadius.full),
-                            border: Border.all(color: c.danger.withAlpha(60)),
+                    GlassCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text('Economic Events',
+                                  style: AppTypography.headingSm
+                                      .copyWith(color: c.textPrimary)),
+                              const SizedBox(width: AppSpacing.s2),
+                              GestureDetector(
+                                onTap: () => _showCalendarInfo(context),
+                                child: Icon(Icons.info_outline_rounded,
+                                    size: 16, color: c.textMuted),
+                              ),
+                              const Spacer(),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: c.danger.withAlpha(30),
+                                  borderRadius:
+                                      BorderRadius.circular(AppRadius.full),
+                                  border: Border.all(color: c.danger.withAlpha(60)),
+                                ),
+                                child: Text('High Impact',
+                                    style: AppTypography.xs.copyWith(
+                                        color: c.danger,
+                                        fontWeight: FontWeight.w700)),
+                              ),
+                            ],
                           ),
-                          child: Text('High Impact',
-                              style: AppTypography.xs.copyWith(
-                                  color: c.danger, fontWeight: FontWeight.w700)),
-                        ),
-                      ],
+                          const SizedBox(height: AppSpacing.s4),
+                          ...dates.expand((date) {
+                            final evts = grouped[date]!;
+                            final dt = DateTime.tryParse(date);
+                            final label = dt != null
+                                ? '${_dayName(dt.weekday)}, ${_monthName(dt.month)} ${dt.day}'
+                                : date;
+                            return [
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                    top: AppSpacing.s3, bottom: AppSpacing.s2),
+                                child: Text(label,
+                                    style: AppTypography.labelSm.copyWith(
+                                        color: c.textMuted, letterSpacing: 1.0)),
+                              ),
+                              ...evts.map((e) => _DynamicEventRow(event: e)),
+                            ];
+                          }),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: AppSpacing.s4),
-                    ...dates.expand((date) {
-                      final evts = grouped[date]!;
-                      final dt = DateTime.tryParse(date);
-                      final label = dt != null
-                          ? '${_dayName(dt.weekday)}, ${_monthName(dt.month)} ${dt.day}'
-                          : date;
-                      return [
-                        Padding(
-                          padding: const EdgeInsets.only(
-                              top: AppSpacing.s3, bottom: AppSpacing.s2),
-                          child: Text(label,
-                              style: AppTypography.labelSm.copyWith(
-                                  color: c.textMuted, letterSpacing: 1.0)),
-                        ),
-                        ...evts.map((e) => _DynamicEventRow(event: e)),
-                      ];
-                    }),
                   ],
                 ),
               ),
@@ -1343,10 +1351,11 @@ class _HistoricalPlaybook extends ConsumerWidget {
           const SizedBox(height: AppSpacing.s3),
           ...crises.map((e) => _CrisisCard(event: e)),
           const SizedBox(height: AppSpacing.s2),
-          Text(
-            'Data as of $dataAsOf',
-            style: AppTypography.xs.copyWith(color: c.textSecondary),
-          ),
+          if (dataAsOf.isNotEmpty)
+            Text(
+              'Data as of $dataAsOf',
+              style: AppTypography.xs.copyWith(color: c.textSecondary),
+            ),
         ],
       ),
     );
@@ -2024,36 +2033,21 @@ class _CalEvent {
   final String category; // 'Fed' | 'Inflation' | 'Jobs' | 'GDP' | 'Other'
 }
 
+// Static recurring event types shown when the live API is unavailable.
+// Exact dates are always fetched from /api/economy/events.
 const _kCalEvents = [
-  _CalEvent('Jun 11', 'CPI Inflation Report', 'High', 'Inflation'),
-  _CalEvent('Jun 12', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
-  _CalEvent('Jun 17-18', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
-  _CalEvent('Jun 18', 'Fed Press Conference (Powell)', 'High', 'Fed'),
-  _CalEvent('Jun 26', 'GDP Q1 Final (3rd Estimate)', 'Medium', 'GDP'),
-  _CalEvent('Jul 3', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
-  _CalEvent('Jul 9', 'CPI Inflation Report', 'High', 'Inflation'),
-  _CalEvent('Jul 10', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
-  _CalEvent('Jul 25', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
-  _CalEvent('Jul 29-30', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
-  _CalEvent('Jul 30', 'GDP Q2 Advance (1st Estimate)', 'High', 'GDP'),
-  _CalEvent('Aug 1', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
-  _CalEvent('Aug 12', 'JOLTS Job Openings', 'Medium', 'Jobs'),
-  _CalEvent('Aug 13', 'CPI Inflation Report', 'High', 'Inflation'),
-  _CalEvent('Aug 15', 'Retail Sales', 'Medium', 'Other'),
-  _CalEvent('Aug 21-23', 'Jackson Hole Symposium', 'High', 'Fed'),
-  _CalEvent('Aug 29', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
-  _CalEvent('Sep 5', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
-  _CalEvent('Sep 10', 'CPI Inflation Report', 'High', 'Inflation'),
-  _CalEvent('Sep 11', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
-  _CalEvent('Sep 16-17', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
-  _CalEvent('Sep 26', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
-  _CalEvent('Oct 3', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
-  _CalEvent('Oct 9', 'JOLTS Job Openings', 'Medium', 'Jobs'),
-  _CalEvent('Oct 14', 'CPI Inflation Report', 'High', 'Inflation'),
-  _CalEvent('Oct 16', 'Retail Sales', 'Medium', 'Other'),
-  _CalEvent('Oct 28-29', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
-  _CalEvent('Oct 30', 'GDP Q3 Advance (1st Estimate)', 'High', 'GDP'),
-]; // Indicative dates — verify against federalreserve.gov for exact schedule
+  _CalEvent('8×/year', 'FOMC Meeting & Rate Decision', 'High', 'Fed'),
+  _CalEvent('8×/year', 'Fed Press Conference', 'High', 'Fed'),
+  _CalEvent('Monthly', 'CPI Inflation Report', 'High', 'Inflation'),
+  _CalEvent('Monthly', 'PPI (Producer Price Index)', 'Medium', 'Inflation'),
+  _CalEvent('Monthly', 'PCE Inflation (Fed Preferred)', 'High', 'Inflation'),
+  _CalEvent('Monthly 1st Fri', 'Non-Farm Payrolls (Jobs)', 'High', 'Jobs'),
+  _CalEvent('Monthly', 'JOLTS Job Openings', 'Medium', 'Jobs'),
+  _CalEvent('Quarterly', 'GDP Advance Estimate', 'High', 'GDP'),
+  _CalEvent('Quarterly', 'GDP Final Estimate', 'Medium', 'GDP'),
+  _CalEvent('Monthly', 'Retail Sales', 'Medium', 'Other'),
+  _CalEvent('Annual · Aug', 'Jackson Hole Symposium', 'High', 'Fed'),
+];
 
 void _showCalendarInfo(BuildContext context) {
   final c = context.colors;
@@ -2238,7 +2232,7 @@ class _EconomicCalendar extends StatelessWidget {
               child: Icon(Icons.info_outline_rounded, size: 16, color: c.textMuted),
             ),
             const Spacer(),
-            Text('indicative dates',
+            Text('recurring schedule',
                 style: AppTypography.xs.copyWith(color: c.textMuted)),
           ],
         ),

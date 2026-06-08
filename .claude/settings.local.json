@@ -203,7 +203,11 @@
       "Bash(curl -s -A \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" -b /tmp/yfcookie.txt \"https://query2.finance.yahoo.com/v1/test/getcrumb\")",
       "Bash(curl -s -A 'Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36' -b /tmp/yfcookie.txt 'https://query2.finance.yahoo.com/v10/finance/quoteSummary/AAPL?modules=defaultKeyStatistics,summaryDetail&crumb=__TRACKED_VAR__')",
       "Bash(curl -s -o /tmp/v.json -w \"HTTP=%{http_code} t=%{time_total}s\\\\n\" \"http://localhost:5001/api/heatmap/treemap?index=sp500&limit=30&timeframe=1m\" --max-time 120)",
-      "Bash(curl -s 'http://localhost:5001/api/trading/best-setups-sector?version=v2')"
+      "Bash(curl -s 'http://localhost:5001/api/trading/best-setups-sector?version=v2')",
+      "Bash(curl -s --max-time 60 'http://localhost:5001/api/heatmap/treemap?index=__TRACKED_VAR__&limit=1')",
+      "Bash(flutter emulators *)",
+      "Bash(adb devices *)",
+      "Bash(flutter doctor *)"
     ]
   }
 }

@@ -6,6 +6,7 @@ import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/sources/tariffs_data.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/max_width_layout.dart';
 
 // ── Provider ──────────────────────────────────────────────────────────────────
@@ -114,9 +115,40 @@ class _ExposureBodyState extends ConsumerState<ExposureBody> {
             .map((c) => c.tariffRate)
             .reduce((a, b) => a < b ? a : b);
 
+        final lastUpdated = TariffsData.instance.lastUpdated;
+        final dataAsOf = TariffsData.instance.dataAsOf;
+        final isStale = lastUpdated.isNotEmpty &&
+            DateTime.now()
+                    .difference(DateTime.tryParse(lastUpdated) ?? DateTime.now())
+                    .inDays >
+                90;
+
         return MaxWidthLayout(
           child: Column(
             children: [
+              if (lastUpdated.isNotEmpty)
+                FreshnessBar(lastUpdated: lastUpdated),
+              if (isStale)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+                  color: c.warning.withAlpha(20),
+                  child: Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 14, color: c.warning),
+                      const SizedBox(width: AppSpacing.s2),
+                      Expanded(
+                        child: Text(
+                          'Tariff data reflects $dataAsOf USTR schedules — rates may have changed.',
+                          style: AppTypography.xs
+                              .copyWith(color: c.warning),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: AppSpacing.s5, vertical: AppSpacing.s4),

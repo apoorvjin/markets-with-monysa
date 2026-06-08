@@ -1,5 +1,5 @@
-import 'dart:convert';
-import 'package:flutter/services.dart';
+import '../../core/network/api_client.dart';
+import '../../core/network/api_endpoints.dart';
 
 class SectorTariff {
   const SectorTariff({
@@ -72,7 +72,7 @@ class CountryTariff {
 
   String get flag {
     if (countryCode.length != 2) return '';
-    final base = 0x1F1E6 - 0x41;
+    const base = 0x1F1E6 - 0x41;
     return String.fromCharCode(base + countryCode.codeUnitAt(0)) +
         String.fromCharCode(base + countryCode.codeUnitAt(1));
   }
@@ -84,11 +84,16 @@ class TariffsData {
   static TariffsData get instance => _instance;
 
   List<CountryTariff>? _countries;
+  String lastUpdated = '';
+  String dataAsOf = '';
 
   Future<List<CountryTariff>> load() async {
     if (_countries != null) return _countries!;
-    final raw = await rootBundle.loadString('assets/data/tariffs.json');
-    final list = json.decode(raw) as List;
+    final data =
+        await ApiClient.instance.get(ApiEndpoints.tariffs) as Map<String, dynamic>;
+    lastUpdated = data['lastUpdated'] as String? ?? '';
+    dataAsOf = data['dataAsOf'] as String? ?? '';
+    final list = data['countries'] as List;
     _countries = list
         .map((e) => CountryTariff.fromJson(e as Map<String, dynamic>))
         .toList();

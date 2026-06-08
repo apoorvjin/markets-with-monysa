@@ -2,7 +2,7 @@ class TreemapStock {
   final String symbol;
   final String name;
   final String sector;
-  final double marketCap;
+  final double marketCap;       // native-currency value (e.g. INR for Nifty 50)
   final double changePercent;
   final double price;
   final double? dayHigh;
@@ -14,6 +14,13 @@ class TreemapStock {
   final double? preMarketChangePercent;
   final double? postMarketPrice;
   final double? postMarketChangePercent;
+  // FX normalisation (US-005)
+  final String nativeCurrency;  // "USD" | "GBP" | "JPY" | "HKD" | "INR"
+  final double? marketCapUsd;   // null only when non-USD + FX fetch failed
+  final double? fxRateUsed;     // null for USD indices
+
+  /// USD market cap when available; falls back to native for tile sizing.
+  double get effectiveMarketCap => marketCapUsd ?? marketCap;
 
   const TreemapStock({
     required this.symbol,
@@ -31,6 +38,9 @@ class TreemapStock {
     this.preMarketChangePercent,
     this.postMarketPrice,
     this.postMarketChangePercent,
+    this.nativeCurrency = 'USD',
+    this.marketCapUsd,
+    this.fxRateUsed,
   });
 
   factory TreemapStock.fromJson(Map<String, dynamic> json) {
@@ -53,6 +63,9 @@ class TreemapStock {
       preMarketChangePercent: n(json['preMarketChangePercent']),
       postMarketPrice: n(json['postMarketPrice']),
       postMarketChangePercent: n(json['postMarketChangePercent']),
+      nativeCurrency: json['nativeCurrency'] as String? ?? 'USD',
+      marketCapUsd: n(json['marketCapUsd']),
+      fxRateUsed: n(json['fxRateUsed']),
     );
   }
 }

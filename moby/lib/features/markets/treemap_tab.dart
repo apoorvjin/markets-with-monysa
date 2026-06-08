@@ -223,8 +223,10 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
               ),
               const SizedBox(height: AppSpacing.s2),
               Text(
-                'S&P 500 stocks shown as tiles. Tile size = market capitalisation. '
-                'Tile colour = today\'s % change.',
+                'Stocks shown as tiles. Tile size = market capitalisation in USD. '
+                'For non-US indices (FTSE 100, DAX 40, Nikkei 225, Hang Seng, Nifty 50), '
+                'market caps are converted to USD using live FX rates so cross-index tile '
+                'sizes are comparable. Tile colour = today\'s % change.',
                 style: AppTypography.sm.copyWith(color: c.textSecondary),
               ),
               const SizedBox(height: AppSpacing.s4),

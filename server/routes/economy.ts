@@ -1,4 +1,6 @@
 import type { Express } from "express";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { fetchYahooPrice, fetchRangeData } from "./shared";
 import { yahooProvider } from "../providers";
 
@@ -159,6 +161,9 @@ export async function getSectorQuadrants(): Promise<Map<string, SectorRrg>> {
   }
   return map;
 }
+
+// Update this string whenever CRISIS_DATA entries are added or edited.
+const CRISIS_DATA_REVIEWED_AT = "June 2026";
 
 // Historical Crisis Playbook — edit this array to add/update events; no Flutter changes needed
 const CRISIS_DATA = [
@@ -547,7 +552,38 @@ export function registerEconomyRoutes(app: Express): void {
   });
 
   app.get("/api/crises", (_req, res) => {
-    res.json({ crises: CRISIS_DATA, dataAsOf: "May 2026" });
+    res.json({
+      crises: CRISIS_DATA,
+      dataAsOf: CRISIS_DATA_REVIEWED_AT,
+      lastUpdated: new Date().toISOString(),
+    });
+  });
+
+  // ── Tariff Country Data ─────────────────────────────────────────────────────
+  let tariffsCache: { data: unknown; timestamp: number } | null = null;
+  const TARIFFS_CACHE_DURATION = 24 * 60 * 60 * 1000;
+  const TARIFFS_DATA_AS_OF = "2025-04-09T00:00:00.000Z";
+
+  app.get("/api/tariffs", async (_req, res) => {
+    if (tariffsCache && Date.now() - tariffsCache.timestamp < TARIFFS_CACHE_DURATION) {
+      return res.json(tariffsCache.data);
+    }
+    try {
+      const filePath = resolve("server/data/tariffs.json");
+      const raw = await readFile(filePath, "utf-8");
+      const countries: unknown = JSON.parse(raw);
+      const result = {
+        countries,
+        dataAsOf: "April 2025",
+        lastUpdated: TARIFFS_DATA_AS_OF,
+        source: "USTR Section 301 + WTO Tariff Database",
+      };
+      tariffsCache = { data: result, timestamp: Date.now() };
+      return res.json(result);
+    } catch (err) {
+      console.error("[Tariffs] Failed to load tariffs data:", err);
+      return res.status(503).json({ error: "Tariff data temporarily unavailable" });
+    }
   });
 
   // GET /api/economy/yield-curve-history
