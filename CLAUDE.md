@@ -50,6 +50,12 @@ server/
                            # Russell 2000 / DAX 40 / Nikkei 225 / Hang Seng (used by /api/heatmap/treemap).
                            # S&P 500 constituents fetched live from public CSV.
 
+  lib/                  # Shared server utilities
+    chart-renderer.ts   # Per-device chart-provider preference middleware
+    leader.ts           # Multi-machine leader election via Upstash Redis lease.
+                       # Gates BacktestWarm + Finnhub WS to one machine when Fly runs >1.
+                       # isLeader() returns true without Redis (local dev / single-machine).
+
   providers/            # Chart data provider abstraction
     index.ts            # Provider registry (currently: yahoo only)
     types.ts            # Interface definitions: OHLCVCandle, PriceData, RangeData, ChartProvider
@@ -74,6 +80,22 @@ server/
 - `isInsight(plan)` — true for insight/enterprise
 
 In dev mode (`APP_SIGNING_SECRET` absent) every device returns `"enterprise"` — no gates fire.
+
+### Caching Architecture
+
+Three coordinated caching layers:
+
+1. **In-process Map caches** (per route) — every endpoint stores `{ data, ts }` per cache key with per-route TTLs. Survives the lifetime of one machine.
+2. **`Cache-Control` headers** on every route — emitted with `max-age` ≈ half the in-process TTL and `stale-while-revalidate` ≈ the full TTL. Lets a CDN/edge cache absorb concurrent device traffic. The Flutter Dio client doesn't honour these directly; ETag/304 negotiation handles the client side.
+3. **Server ETag → client `If-None-Match`** — Express auto-generates weak ETags on `res.json()`. The Flutter `ETagInterceptor` ([etag_interceptor.dart](moby/lib/core/network/etag_interceptor.dart)) caches body+ETag in memory and substitutes the cached body on 304, so large stable payloads (tariffs ~50 KB, treemap ~200 KB) skip a fresh download.
+
+**Leader election** ([leader.ts](server/lib/leader.ts)): when Fly runs >1 machine, `BacktestWarm` and the Finnhub WS connection are leader-only. Uses an Upstash Redis lease (`leader:lease`, 90s TTL, 30s refresh). Without Redis configured, every process is leader (safe for single-machine / local dev).
+
+**`/api/trading/quotes`** is the odd one out: it serves from the `latestPrices` Map populated by a 20s background poll loop, not from a request-time cache. Do **not** add the standard cache pattern (or Redis L2) on this endpoint — the poll already is the cache. See [US-017](USER_STORIES.md) for the pattern applied elsewhere.
+
+**`/api/trading/best-setups-sector` skeleton-first pattern**: heavy computation (~5 min cold) is fronted by a fast `cacheWarm: false` skeleton response when the cache is cold. The handler kicks off the compute via `ensureBestSetupsSectorFresh` (in-flight coalesced per version) and returns instantly. The client auto-polls every 30s (capped at 10 polls) until `cacheWarm: true`. Pre-warm runs at boot+3 min on the leader. See `/api/trading/scanner/best-setups` for the original skeleton pattern.
+
+**Disk persistence (Flutter)** via [disk_cache.dart](moby/lib/core/cache/disk_cache.dart) — `SharedPreferences`-backed JSON cache used by `TariffsData`, `HeatmapRepository.fetchTreemap`, `TradingRepository._fetchAndCacheScanner`, and `TradingRepository.fetchSectorBestSetups`. Pattern: hydrate from disk on cold start → fetch network → write disk on success → fall back to `readStale` on network error. Repositories that don't use disk persistence still keep in-memory caches keyed by their TTLs.
 
 ### API Endpoints
 
@@ -114,7 +136,7 @@ In dev mode (`APP_SIGNING_SECRET` absent) every device returns `"enterprise"` �
 | `GET /api/trading/scanner/10x/single` | Single-symbol 10X score (?symbol=) | varies |
 | `GET /api/trading/scanner/backtest/:type` | Historical signal backtest (v1/v2 via ?version=) | 24h |
 | `GET /api/trading/scanner/best-setups` | Best setups filter (?version=&type=&minWinRate=) | varies |
-| `GET /api/trading/best-setups-sector` | Sector-grouped best setups (?version=) → { leading, improving, cacheWarm, lastUpdated } | varies |
+| `GET /api/trading/best-setups-sector` | Sector-grouped best setups (?version=) → { leading, improving, cacheWarm, lastUpdated }. **Cold cache returns `cacheWarm:false` skeleton in <5 ms** and kicks off background compute — client must poll, not block. | 30m warm; skeleton when cold |
 | `GET /api/trading/regime-summary` | Market regime summary (trend, breadth, volatility signals) | varies |
 | `GET /api/trading/earnings-calendar` | Upcoming earnings (?days=15) | varies |
 | `GET /api/trading/correlation` | Asset correlation matrix | varies |
@@ -248,10 +270,16 @@ moby/lib/
   app.dart                         # MaterialApp.router (title: 'Monysa') + AppShell (bottom nav, 5 tabs)
 
   core/
+    cache/
+      disk_cache.dart              # DiskCache — SharedPreferences-backed JSON cache with TTL. read() honours TTL;
+                                   # readStale() ignores TTL (for offline fallback). Used by TariffsData, HeatmapRepository
+                                   # (treemap), TradingRepository (scanner + sector best-setups).
     network/
-      api_client.dart              # Singleton Dio (15s connect, 30s receive, LogInterceptor + SigningInterceptor)
+      api_client.dart              # Singleton Dio (15s connect, 30s receive, LogInterceptor + SigningInterceptor + ETagInterceptor)
       api_endpoints.dart           # All URL builders — baseUrl from dart-define or fly.dev default
       device_id.dart               # DeviceId — generates + persists UUID; sent as X-Device-ID header
+      etag_interceptor.dart        # ETagInterceptor — captures ETag on success, sends If-None-Match on subsequent GETs,
+                                   # substitutes cached body on 304. In-memory only, capped at 64 entries.
       request_signer.dart          # RequestSigner — HMAC-SHA256 sign() via APP_SIGNING_SECRET dart-define
     router/
       app_router.dart              # go_router config (all routes)
@@ -284,7 +312,8 @@ moby/lib/
       heatmap_repository.dart      # fetchHeatmap, fetchAssets(category), fetchTreemap(index, limit) — client-side 15m/30m/5m TTLs
       house_trades_repository.dart # fetchHouseTrades — fetches /api/house-trades, returns HouseTradesResult
     sources/
-      tariffs_data.dart            # Hardcoded 113-country tariff data (April 2025)
+      tariffs_data.dart            # TariffsData singleton — fetches /api/tariffs, hydrates from DiskCache on cold start,
+                                   # 24h in-memory TTL refresh. `lastUpdated` / `dataAsOf` populated after first load().
 
   features/
     splash/splash_screen.dart
@@ -552,6 +581,13 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | Treemap tile sizing | `marketCap` (native currency) | Use `effectiveMarketCap` (= `marketCapUsd ?? marketCap`). All tiles are FX-normalised to USD when `marketCapUsd` is present — cross-index comparison is meaningful. |
 | Adding a new screen inside AppShell | content extends behind glass bottom nav pill (clipped) | AppShell uses `extendBody: true` with a 58 px glass pill. **Always import `shared/widgets/app_shell_insets.dart`** — use `appShellBottomInset(context)` for any scroll/list bottom padding and `showAppBottomSheet()` instead of `showModalBottomSheet` for any modal (handles iOS notch + nav pill + drag-to-dismiss height in one call). Never hand-roll `MediaQuery.padding.bottom + nav heights` — it regressed three times before this helper existed |
 | Yahoo `/v7/finance/quote` for batched US-equity marketCap | gated behind Unauthorized | Yahoo blocks v7 on cloud IPs. Use `/v10/finance/quoteSummary?modules=price,assetProfile` with crumb auth (fc.yahoo.com cookie → /v1/test/getcrumb) — `server/routes/heatmap.ts` already handles refresh + concurrency |
+| `/api/trading/best-setups-sector` blocking 30–50 s on cold cache | calling and `await`-ing the response | Cold cache now returns `cacheWarm:false` skeleton in <5 ms while computing in the background (in-flight coalesced per version). Client must poll until `cacheWarm:true` — `_sectorBestSetupsProvider` in `investing_screen.dart` auto-re-fetches every 30 s, capped at 10 polls via `_sectorPollAttemptProvider`. Never `await` for warm data inside the handler. |
+| `/api/trading/quotes` and the two-layer cache pattern | adding Redis L2 to mirror other hot routes | This route reads from `latestPrices` Map populated by the 20s background poll (`pollAllPrices`), not from a request-time cache lookup. The poll IS the cache. Do not add Redis L2 here — see US-017 for the routes that should use it. |
+| BacktestWarm + Finnhub WS on multi-machine Fly | running on every machine | Both are gated to leader via `isLeader()` from `server/lib/leader.ts`. Followers skip with a `[BacktestWarm] skipping startup warm — follower` log. Leader election uses Upstash Redis lease; without Redis every process is leader (single-machine assumption). |
+| Yahoo crumb 429 → 15-min hard backoff | flat 15-min backoff on first failure | Escalating backoff `[60s, 5m, 15m, 30m]` keyed off `_yfCrumbConsecutiveFails` in `server/trading.ts`. Resets to 0 on first success. A single transient 429 no longer wipes out quote freshness for 15 minutes. |
+| Express behind Fly's proxy | leaving `trust proxy` unset (default) | `app.set("trust proxy", 1)` in `server/index.ts` — without it, `express-rate-limit` groups all users under Fly's proxy IP and emits `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` warnings. |
+| Disk-persisted payloads survive a wrong schema | bumping a model shape without bumping `DiskCache._schemaVersion` | DiskCache prefixes keys with `dcache.v$_schemaVersion.`. Bump the version when changing the on-disk shape of *any* persisted payload (tariffs, treemap, scanner, best-sector). Old entries become unreachable and are overwritten on next write. |
+| Server-side ETag for plan-gated endpoints | leaving the default `Cache-Control: public` | `private`-mark plan-gated endpoints (signals, analyst-note, exposure, treemap) so a CDN edge can't serve the response to other devices. Public for unauthenticated content (sectors, bonds, tariffs, etc.). |
 
 ---
 

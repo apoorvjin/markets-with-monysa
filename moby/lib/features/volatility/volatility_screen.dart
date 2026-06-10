@@ -27,11 +27,15 @@ import 'correlation_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
+// keepAlive: server caches assets 10m — don't refetch on tab switch within session.
 final _volAssetsProvider =
-    FutureProvider.autoDispose<Map<String, dynamic>>(
-        (_) => VolatilityRepository.instance.fetchAssets());
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) {
+  ref.keepAlive();
+  return VolatilityRepository.instance.fetchAssets();
+});
 
 final _briefingProvider = FutureProvider.autoDispose<String>((ref) async {
+  ref.keepAlive(); // AI briefing is 30m-cached server-side and Pro+ gated
   final assets = await ref.watch(_volAssetsProvider.future);
   final vixMap = assets['vix'] as Map<String, dynamic>?;
   final items = (assets['items'] as List? ?? []).cast<Map<String, dynamic>>();
@@ -46,14 +50,17 @@ final _briefingProvider = FutureProvider.autoDispose<String>((ref) async {
   });
 });
 
-final _bondsProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
-    (_) => MarketsRepository.instance.fetchBonds());
+final _bondsProvider = FutureProvider.autoDispose<Map<String, dynamic>>((ref) {
+  ref.keepAlive(); // 30m server TTL
+  return MarketsRepository.instance.fetchBonds();
+});
 
 
 final _crisesProvider = FutureProvider.autoDispose<
-    ({List<CrisisEvent> crises, String dataAsOf})>(
-  (_) => VolatilityRepository.instance.fetchCrises(),
-);
+    ({List<CrisisEvent> crises, String dataAsOf})>((ref) {
+  ref.keepAlive(); // static editorial data
+  return VolatilityRepository.instance.fetchCrises();
+});
 
 // Not autoDispose: fetching heatmap data is expensive (72–240 Yahoo Finance
 // requests). Disposing on category switch then re-watching restarts the fetch,
@@ -94,12 +101,14 @@ final _sectorRotationProvider =
 
 final _fearGreedProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  ref.keepAlive(); // 1h server TTL
   final data = await ApiClient.instance.get(ApiEndpoints.fearGreed);
   return data as Map<String, dynamic>;
 });
 
 final _regimeSummaryProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  ref.keepAlive(); // computed from sectors+bonds (15-30m server TTL)
   final data = await ApiClient.instance.get(ApiEndpoints.regimeSummary);
   return data as Map<String, dynamic>;
 });
@@ -396,6 +405,7 @@ class _MacroDebtTab extends ConsumerWidget {
 
 final _yieldHistoryProvider =
     FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  ref.keepAlive(); // 6h server TTL
   final data = await ApiClient.instance.get(ApiEndpoints.yieldCurveHistory);
   return data as Map<String, dynamic>;
 });
@@ -553,6 +563,7 @@ typedef _CalendarResult = ({
 
 final _eventsProvider =
     FutureProvider.autoDispose<_CalendarResult>((ref) async {
+  ref.keepAlive(); // 12h server TTL
   final data = await ApiClient.instance.get(ApiEndpoints.economyEvents)
       as Map<String, dynamic>;
   return (

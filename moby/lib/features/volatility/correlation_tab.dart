@@ -11,6 +11,7 @@ import '../../shared/widgets/error_view.dart';
 
 final correlationProvider =
     FutureProvider.autoDispose<_CorrelationData>((ref) async {
+  ref.keepAlive(); // correlation matrix is server-cached, stable within a session
   final data =
       await ApiClient.instance.get(ApiEndpoints.correlation) as Map<String, dynamic>;
   return _CorrelationData.fromJson(data);

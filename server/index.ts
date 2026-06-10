@@ -4,9 +4,16 @@ import rateLimit from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { registerRoutes } from "./routes";
 import { parseChartRenderer } from "./lib/chart-renderer";
+import { startLeaderElection, machineId } from "./lib/leader";
 
 const app = express();
 const log = console.log;
+
+// Behind Fly.io's edge proxy, every request arrives with X-Forwarded-For but a
+// shared upstream IP. Trust 1 hop so express-rate-limit keys per real client IP
+// instead of grouping everyone behind the proxy. Without this, the rate limiter
+// emits ValidationError noise and groups all users under one IP.
+app.set("trust proxy", 1);
 
 declare module "http" {
   interface IncomingMessage {
@@ -246,6 +253,11 @@ function setupErrorHandler(app: express.Application) {
 
   setupErrorHandler(app);
 
+  // Start leader election before listening so background jobs can check
+  // isLeader() as soon as they fire. Safe to call when Redis is absent
+  // (becomes a no-op and isLeader() returns true).
+  startLeaderElection();
+
   const port = parseInt(process.env.PORT || "5001", 10);
   server.listen(
     {
@@ -254,7 +266,7 @@ function setupErrorHandler(app: express.Application) {
       reusePort: true,
     },
     () => {
-      log(`express server serving on port ${port}`);
+      log(`express server serving on port ${port} (machine ${machineId()})`);
     },
   );
 })();

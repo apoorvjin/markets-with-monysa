@@ -58,6 +58,9 @@ abstract final class ApiEndpoints {
   static String bestSetupsSector({required String version}) =>
       '$baseUrl/api/trading/best-setups-sector?version=$version';
 
+  static String institutionalFlow({required String type}) =>
+      '$baseUrl/api/trading/scanner/institutional-flow?type=$type';
+
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';
 
@@ -76,6 +79,8 @@ abstract final class ApiEndpoints {
     String timeframe = '1d',
   }) =>
       '$baseUrl/api/heatmap/treemap?index=$index&limit=$limit&timeframe=$timeframe';
+  static String heatmapMovers({String index = 'sp500'}) =>
+      '$baseUrl/api/heatmap/movers?index=$index';
 
   static String get quiverCongress         => '$baseUrl/api/quiver/congress';
   static String get quiverLobbying         => '$baseUrl/api/quiver/lobbying';

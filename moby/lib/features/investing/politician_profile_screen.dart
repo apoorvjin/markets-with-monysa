@@ -17,7 +17,8 @@ import '../../shared/widgets/theme_toggle.dart';
 
 final _politicianTradesProvider =
     FutureProvider.autoDispose.family<CongressTradesResponse, String>(
-  (_, name) async {
+  (ref, name) async {
+    ref.keepAlive(); // 2h server TTL
     final data = await ApiClient.instance
         .get(ApiEndpoints.congressTradesByMember(name)) as Map<String, dynamic>;
     return CongressTradesResponse.fromJson(data);
@@ -26,7 +27,8 @@ final _politicianTradesProvider =
 
 final _copyTradesProvider =
     FutureProvider.autoDispose.family<_CopyTradesData, String>(
-  (_, name) async {
+  (ref, name) async {
+    ref.keepAlive(); // 1h server TTL
     final data = await ApiClient.instance
         .get(ApiEndpoints.copyTrades(name)) as Map<String, dynamic>;
     return _CopyTradesData.fromJson(data);

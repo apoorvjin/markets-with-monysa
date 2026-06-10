@@ -300,6 +300,7 @@ export function registerEconomyRoutes(app: Express): void {
   app.get("/api/search", async (req, res) => {
     const q = ((req.query.q as string) || "").trim();
     if (!q) return res.json({ results: [] });
+    res.set("Cache-Control", "public, max-age=3600, stale-while-revalidate=7200"); // 1h / 2h SWR
     const limit = Math.min(parseInt((req.query.limit as string) || "15"), 20);
     try {
       const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(q)}&quotesCount=${limit}&newsCount=0&lang=en-US&region=US`;
@@ -323,6 +324,7 @@ export function registerEconomyRoutes(app: Express): void {
 
   app.get("/api/usa-debt", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=21600, stale-while-revalidate=43200"); // 6h fresh / 12h SWR
       if (debtCache && Date.now() - debtCache.timestamp < DEBT_CACHE_DURATION) {
         return res.json(debtCache.data);
       }
@@ -403,6 +405,7 @@ export function registerEconomyRoutes(app: Express): void {
     const code = (req.params.code as string).toUpperCase();
     if (!code) return res.status(400).json({ error: "Invalid code" });
 
+    res.set("Cache-Control", "public, max-age=43200, stale-while-revalidate=86400"); // 12h fresh / 24h SWR
     const cached = countryDataCache[code];
     if (cached && Date.now() - cached.timestamp < COUNTRY_DATA_CACHE_DURATION) {
       return res.json(cached.data);
@@ -433,6 +436,7 @@ export function registerEconomyRoutes(app: Express): void {
 
   app.get("/api/bonds", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=900, stale-while-revalidate=1800"); // 15m fresh / 30m SWR
       if (bondsCache && Date.now() - bondsCache.timestamp < BONDS_CACHE_DURATION) {
         return res.json(bondsCache.data);
       }
@@ -480,6 +484,7 @@ export function registerEconomyRoutes(app: Express): void {
 
   app.get("/api/sectors", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=450, stale-while-revalidate=900"); // 7.5m fresh / 15m SWR
       if (sectorsCache && Date.now() - sectorsCache.timestamp < SECTORS_CACHE_DURATION) {
         return res.json(sectorsCache.data);
       }
@@ -552,6 +557,8 @@ export function registerEconomyRoutes(app: Express): void {
   });
 
   app.get("/api/crises", (_req, res) => {
+    // Crisis playbook is editorial / near-static — refresh daily at the edge.
+    res.set("Cache-Control", "public, max-age=86400, stale-while-revalidate=172800"); // 24h / 48h SWR
     res.json({
       crises: CRISIS_DATA,
       dataAsOf: CRISIS_DATA_REVIEWED_AT,
@@ -565,6 +572,7 @@ export function registerEconomyRoutes(app: Express): void {
   const TARIFFS_DATA_AS_OF = "2025-04-09T00:00:00.000Z";
 
   app.get("/api/tariffs", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=43200, stale-while-revalidate=86400"); // 12h / 24h SWR
     if (tariffsCache && Date.now() - tariffsCache.timestamp < TARIFFS_CACHE_DURATION) {
       return res.json(tariffsCache.data);
     }
@@ -591,6 +599,7 @@ export function registerEconomyRoutes(app: Express): void {
   const YIELD_HISTORY_TTL = 6 * 60 * 60 * 1000;
 
   app.get("/api/economy/yield-curve-history", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=10800, stale-while-revalidate=21600"); // 3h / 6h SWR
     if (yieldHistoryCache && Date.now() - yieldHistoryCache.ts < YIELD_HISTORY_TTL) {
       return res.json(yieldHistoryCache.data);
     }
@@ -655,6 +664,7 @@ export function registerEconomyRoutes(app: Express): void {
   ];
 
   app.get("/api/economy/events", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=21600, stale-while-revalidate=43200"); // 6h / 12h SWR
     if (eventsCache && Date.now() - eventsCache.ts < EVENTS_TTL) {
       return res.json(eventsCache.data);
     }

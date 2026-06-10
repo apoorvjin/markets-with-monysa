@@ -580,6 +580,7 @@ export function registerOgeRoutes(app: Express) {
     const cached = await getCached();
     if (cached) {
       const pipelineRanAt = memCache ? new Date(memCache.ts).toISOString() : new Date().toISOString();
+      res.set("Cache-Control", "public, max-age=21600, stale-while-revalidate=43200"); // 6h / 12h SWR
       return res.json({ transactions: cached, total: cached.length, lastUpdated: pipelineRanAt });
     }
 

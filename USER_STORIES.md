@@ -654,6 +654,118 @@
 
   **Files to touch:** `moby/lib/utils/currency_format.dart` (new), `sector_treemap.dart`, `asset_detail_screen.dart`, `country_stocks_screen.dart`, `trading_screen.dart`, `multibaggers_screen.dart`, CLAUDE.md pitfall table update.
 
+### US-017 — Redis L2 cache for hot API routes (deploy resilience + thundering-herd protection)
+**As the** on-call engineer / product owner **I want** the highest-volume API routes (`/api/futures/*`, `/api/heatmap/treemap`, `/api/trading/signals/:s`, `/api/trading/scanner/*`, `/api/quiver/*`, `/api/house-trades`) to use Upstash Redis as an L2 cache behind the existing in-process L1 — mirroring the OGE Form 278-T pattern (`server/routes/oge.ts`) — **so that** a server restart (deploy, OOM, Fly machine cycle) does not cold-wipe every cache simultaneously and trigger N-user stampedes against Yahoo Finance / FMP / Quiver / Anthropic upstream APIs.
+- Captured: 2026-06-08
+- Notes: Today every cache except OGE lives in process memory only. With `min_machines_running = 1` and `auto_stop_machines = "off"` ([fly.toml](fly.toml)), the machine is always up — but every deploy cycles the process and wipes 30+ `Map<string, { data, ts }>` caches at once. The first wave of post-deploy requests then races against upstream APIs simultaneously. `_yfInFlight` coalescing ([server/trading.ts:228](server/trading.ts#L228)) partially absorbs this for Yahoo, but signals, futures, treemap, scanners, and FMP-backed routes each see their own cold-start stampede. The risk grows linearly with subscriber count and is the single biggest operational hazard left in the cache layer after US-001 through US-016 land.
+
+  **Architectural pattern** (mirror `server/routes/oge.ts`):
+  - Two-layer read: check in-process Map first → on miss, check Redis → on miss, fetch upstream + write both.
+  - Two-layer write: every upstream success populates both the in-process Map and Redis with the route's documented TTL.
+  - Redis is **optional** — when `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are absent (local dev), the L2 silently skips and L1 alone serves the route exactly as today. This keeps the OGE pattern's "graceful degradation" contract intact.
+
+  **Priority routes** (ordered by user-visible impact + upstream cost):
+  1. **`/api/trading/signals/:symbol`** (30s TTL) — highest volume, called from Trading AI Signals tab on every asset view and 30s refresh. Upstream: Yahoo Finance candle fetch + math.
+  2. **`/api/futures/indices`, `/api/futures/commodities`, `/api/futures/forex`** (10m TTL) — every device hits these on Markets tab open.
+  3. **`/api/heatmap/treemap`** (5m quotes + 24h constituents) — Pro+ users on Markets → Heatmap, CPU-expensive recompute (FX normalization + squarified treemap).
+  4. **`/api/trading/scanner/*`** (30m–1h TTL) — slow to compute (50+ symbols × Pine logic), Power Moves tab.
+  5. **`/api/quiver/*`, `/api/house-trades`** (4h TTL) — FMP free tier is rate-limited; a cold deploy that hammers FMP exhausts the daily quota for everyone.
+  6. **`/api/trading/news/:symbol`** (4h TTL) — Alpha Vantage paid; cold-start cost matters.
+  7. **`/api/trading/backtest/:symbol`** (10m TTL) — heavy walk-forward computation; restart pain is real.
+  8. **`/api/trading/quotes`** — note: this route reads from `latestPrices` Map populated by the 20s server poll, not from cache lookup per-request. Redis is *not* needed here; the `latestPrices` Map is itself the cache, and the poll resumes within 20s of restart. Document this in CLAUDE.md so future-Claude doesn't add a redundant Redis layer.
+
+  **Implementation skeleton** (per route — same as OGE):
+  ```ts
+  const REDIS_KEY = (k: string) => `cache:signals:${k}`;
+  const TTL_S = 30; // matches in-process TTL
+
+  async function getCached(key: string): Promise<T | null> {
+    // L1: in-process map (existing logic untouched)
+    const mem = signalCache.get(key);
+    if (mem && Date.now() - mem.ts < SIGNAL_TTL) return mem.data;
+    // L2: Redis (skip silently if absent)
+    if (!redis) return null;
+    try {
+      const raw = await redis.get<T>(REDIS_KEY(key));
+      if (raw) {
+        signalCache.set(key, { data: raw, ts: Date.now() }); // warm L1
+        return raw;
+      }
+    } catch (e) { console.warn("[signals] redis get failed:", e); }
+    return null;
+  }
+
+  async function setCached(key: string, data: T): Promise<void> {
+    signalCache.set(key, { data, ts: Date.now() });
+    if (!redis) return;
+    try { await redis.set(REDIS_KEY(key), data, { ex: TTL_S }); }
+    catch (e) { console.warn("[signals] redis set failed:", e); }
+  }
+  ```
+
+  **Cross-cutting requirements:**
+  - **No behavior change in the happy path.** L1 always served first; Redis is a fallback for cold L1 only. Latency profile unchanged for warm caches.
+  - **Stampede protection** stays in L1 via the existing in-flight `Promise` maps (`_yfInFlight`, `treemapInFlight`, `assetsInFlightMap`). Redis L2 protects across restarts; in-flight coalescing protects within a process.
+  - **Key namespacing.** Use `cache:<route>:<args>` prefix to avoid collision with OGE keys and future features. Document the namespace in CLAUDE.md.
+  - **TTL parity.** Redis `ex:` value must equal the L1 TTL — drifting them causes "Redis says fresh, L1 says stale" inconsistencies that surface as flickering data.
+  - **No serialization gotchas.** Upstash REST client handles JSON automatically; don't hand-stringify. Verify Date / undefined behavior in tests.
+  - **Telemetry.** Counters `cache.hit{route,layer}` for L1/L2/miss; warn if L2 hit rate exceeds 20% (= L1 is too small) or stays at 0% (= Redis broken silently).
+  - **CLAUDE.md updates:** new section "Two-layer caching (L1 in-process + L2 Redis)" with the OGE pattern explanation, and a pitfall: *"`/api/trading/quotes` does NOT use the cache pattern — it reads from `latestPrices` populated by a 20s background poll; do not add a Redis layer there."*
+  - **Cost.** Upstash pay-as-you-go: $0.20 per 100k commands. At signals 30s TTL × 49 symbols × ~2 commands per miss × moderate traffic → ~$1–3/mo. Scales linearly with paid subscribers.
+  - **Out of scope for this story:** Redis pub/sub for cross-machine cache invalidation (only matters if Fly horizontally scales beyond 1 machine — a `[[multi-machine-cache-coherence]]` follow-up).
+
+  **Acceptance:**
+  1. Each priority route follows the L1+L2 pattern; in-process behavior unchanged in dev mode (no Redis vars set).
+  2. With Redis configured, restart the server → `curl /api/trading/signals/AAPL` returns warm Redis data without an upstream fetch (verify via Yahoo request log).
+  3. Telemetry counters increment correctly per layer.
+  4. CLAUDE.md updated with the pattern + the `/api/trading/quotes` exclusion pitfall.
+  5. Manual: post-deploy "thundering herd" simulation (concurrent 100 requests to `/api/futures/indices` immediately after restart) sees ≤2 upstream Yahoo calls, not 100.
+
+  **Rollout order:**
+  1. `/api/trading/signals/:s` (highest volume, biggest win).
+  2. `/api/futures/*` (next most hit).
+  3. `/api/heatmap/treemap` (Pro+ but CPU-expensive).
+  4. `/api/trading/scanner/*`.
+  5. `/api/quiver/*` + `/api/house-trades` (FMP quota protection).
+  6. `/api/trading/news/:s` + `/api/trading/backtest/:s`.
+
+  **Estimate:** ~1 day end-to-end (mechanical per-route refactor + telemetry + CLAUDE.md). Each route ships independently behind the same pattern.
+
+  **Non-goals:** rewriting in-process caches to a unified abstraction (separate `[[cache-helper-extraction]]` cleanup); horizontal scaling cross-machine invalidation; cache warming on deploy (separate `[[deploy-warmup]]` story if cold-start latency proves user-visible).
+
+### US-018 — Redis L2 cache for AI analyst notes (Anthropic token savings + deploy resilience)
+**As the** product owner / on-call engineer **I want** the Pro+-gated AI analyst note endpoint (`/api/trading/analyst-note/:symbol`) to persist generated notes to Upstash Redis with a 1h TTL — alongside the existing 15m in-process cache — **so that** a server restart does not force Anthropic Haiku to regenerate notes for every popular symbol that a user opens, and so that the Anthropic monthly bill stays predictable as subscriber count grows.
+- Captured: 2026-06-08
+- Notes: Today `_noteCache` ([server/trading.ts:2615](server/trading.ts#L2615)) is a `Map<string, { note, ts }>` with `NOTE_TTL = 15 min` and a per-symbol `_notePending` Promise to coalesce concurrent generations. The dedup is good, but the cache dies on every restart. Each post-deploy first-view of a popular asset → fresh Anthropic Haiku call at `max_tokens: 150`. At ~50 popular symbols × 2 deploys/week × growing subscriber base, this is a slowly-growing constant cost burn that compounds.
+
+  **Pattern:** identical to US-017 — Redis as L2 behind the existing in-process L1, OGE pattern. Note-specific TTL choices:
+  - L1 (`_noteCache`): keep at 15 min (current). Notes are short and Anthropic Haiku is cheap; we don't want truly stale market commentary surfaced.
+  - L2 (Redis): 1 hour. The note text doesn't reference live price (it's qualitative analysis), so a 1h horizon is acceptable for the deploy-resilience use case. After 1h the L1 + L2 both recompute.
+
+  **Why a separate story from US-017:**
+  - **Different upstream cost profile.** US-017 protects against rate-limit / quota exhaustion on free-tier upstreams (Yahoo, FMP). US-018 protects against billable LLM tokens — different dollar dynamics, different acceptable staleness, deserves an independent decision.
+  - **Different gating.** Analyst notes are Pro+ via `analyst_notes_unlimited` — lower request volume than `/api/trading/signals/:s`, so Redis command cost is genuinely trivial (~$0.50/mo).
+  - **Different audit trail.** LLM-cost governance (see US-013) wants explicit per-vendor counters and budget caps. Wrapping this cache before US-013 lands gives the meter cleaner numbers, since cached hits don't count against the Anthropic quota.
+
+  **Implementation:**
+  - Use the same `cache:notes:<symbol>` Redis key pattern as US-017.
+  - Preserve the existing `_notePending` in-flight coalescer — it still matters within a process for the rare burst where N users open the same asset within milliseconds.
+  - Same graceful degradation: Redis absent → L1-only behavior, identical to today.
+  - Add telemetry: `llm.cache.hit{vendor:anthropic,layer:l1|l2|miss}` so US-013's LlmQuota can subtract cache hits from billed-call counts.
+
+  **Acceptance:**
+  1. Restart the server, `curl /api/trading/analyst-note/AAPL` → returns Redis-cached note without an Anthropic API call (verify via Anthropic request log or counter).
+  2. After 1h Redis TTL expires, next call regenerates and re-warms both layers.
+  3. Note text is byte-identical between L1 cache, L2 cache, and a freshly-generated note for the same `(symbol, candles)` input (deterministic prompt — verify the prompt builder doesn't include a timestamp).
+  4. With Redis env vars absent (local dev) endpoint behaves exactly as today.
+  5. CLAUDE.md updated to list `/api/trading/analyst-note/:symbol` under the two-layer cache pattern.
+
+  **Estimate:** ~2h (single endpoint, same pattern as US-017). Ship after or alongside US-017 — same infra, same review pattern.
+
+  **Cost delta:** +~$0.50/mo Upstash commands. Anthropic savings: ~$1/mo today, scales linearly with paid subscribers — net positive immediately, more so over time.
+
+  **Non-goals:** Anthropic prompt-caching headers (the `cache_control` block on the Haiku call body itself — that's a separate optimization tracked by US-013); semantic dedup of notes across similar candle inputs (too clever; the symbol-keyed cache is enough); cross-region note replication (single-region Upstash is fine).
+
 ### US-015 — Live tariff-data refresh via admin API (no deploy required)
 **As an** operator **I want** to push an updated tariff dataset to the running server via a single authenticated API call — without redeploying — **so that** rate changes (new executive orders, WTO schedule changes, bilateral agreements) are reflected in the Exposure tab within minutes, not after the next app-store release cycle.
 - Captured: 2026-06-08

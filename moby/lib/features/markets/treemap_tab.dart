@@ -56,6 +56,9 @@ class _TreemapKey {
 
 final _treemapProvider = FutureProvider.autoDispose
     .family<TreemapHeatmapData, _TreemapKey>((ref, key) {
+  // Server caches quotes 5m + constituents 24h; expensive FX-normalised payload.
+  // Keep alive across tab switches within a session.
+  ref.keepAlive();
   return HeatmapRepository.instance.fetchTreemap(
     index: key.index,
     limit: _kLimit,

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'chart_renderer_interceptor.dart';
 import 'device_id.dart';
+import 'etag_interceptor.dart';
 import 'request_signer.dart';
 
 class _RetryInterceptor extends Interceptor {
@@ -76,6 +77,9 @@ class ApiClient {
     _dio.interceptors.add(_SigningInterceptor());
     _dio.interceptors.add(_DeviceIdInterceptor());
     _dio.interceptors.add(ChartRendererInterceptor());
+    // ETag handling runs before retry so 304 bodies are substituted before
+    // any retry logic sees them.
+    _dio.interceptors.add(ETagInterceptor());
     _dio.interceptors.add(_RetryInterceptor(_dio));
     _dio.interceptors.add(LogInterceptor(
       requestBody: false,

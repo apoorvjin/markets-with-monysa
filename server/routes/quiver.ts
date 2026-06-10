@@ -722,6 +722,7 @@ export function registerQuiverRoutes(app: Express) {
   // S1 — Congress Buys (FMP → Quiver → snapshot)
   app.get("/api/quiver/congress", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
       const items = await getCongressPortfolio();
       reply(res, items, { label: "Congress Buys", rebalance: "Weekly" });
     } catch (e) {
@@ -733,6 +734,7 @@ export function registerQuiverRoutes(app: Express) {
   // Raw congress trades — last 365 days, individual rows (requires FMP_API_KEY)
   app.get("/api/quiver/congress-trades", async (req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
       const trades = await getCongressTrades();
       const { ticker, chamber, type, memberName } = req.query as Record<string, string>;
 
@@ -756,6 +758,7 @@ export function registerQuiverRoutes(app: Express) {
   // S2 — Lobbying Growth
   app.get("/api/quiver/lobbying", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=14400, stale-while-revalidate=28800"); // 4h / 8h SWR
       const items = await getLobbyingPortfolio();
       reply(res, items, { label: "Lobbying Growth", rebalance: "Monthly" });
     } catch (e) {
@@ -767,6 +770,7 @@ export function registerQuiverRoutes(app: Express) {
   // House PTR trades — all history via FMP house-trading (requires FMP_API_KEY)
   app.get("/api/house-trades", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
       const trades = await getHouseTrades();
       res.json({ trades, total: trades.length, lastUpdated: new Date().toISOString() });
     } catch (e) {
@@ -803,6 +807,7 @@ export function registerQuiverRoutes(app: Express) {
   // S3 — Insider Buys
   app.get("/api/quiver/insider", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
       const items = await getInsiderPortfolio();
       reply(res, items, { label: "Insider Buys", rebalance: "Weekly" });
     } catch (e) {
@@ -819,6 +824,7 @@ export function registerQuiverRoutes(app: Express) {
     const memberName = (req.query.memberName as string ?? "").trim();
     if (!memberName) return res.status(400).json({ error: "memberName is required" });
 
+    res.set("Cache-Control", "public, max-age=1800, stale-while-revalidate=3600"); // 30m / 1h SWR
     const cacheKey = memberName.toLowerCase();
     const cached = _copyTradesCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < COPY_TRADES_TTL) return res.json(cached.data);

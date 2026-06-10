@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../models/trading_signal.dart';
 import '../models/candle.dart';
+import '../../core/cache/disk_cache.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
 
@@ -21,6 +22,13 @@ class _BestSetupsEntry {
 class _BestSectorEntry {
   _BestSectorEntry(this.data) : _cachedAt = DateTime.now();
   final SectorBestSetupsResponse data;
+  final DateTime _cachedAt;
+  bool get isValid => DateTime.now().difference(_cachedAt).inMinutes < 30;
+}
+
+class _InstFlowEntry {
+  _InstFlowEntry(this.data) : _cachedAt = DateTime.now();
+  final InstitutionalFlowResult data;
   final DateTime _cachedAt;
   bool get isValid => DateTime.now().difference(_cachedAt).inMinutes < 30;
 }
@@ -47,28 +55,70 @@ class TradingRepository {
   static final _bestSectorInFlight =
       <String, Future<SectorBestSetupsResponse>>{};
 
+  // Institutional flow cache — keyed by type ("accumulation"|"distribution"|"vwap").
+  static final _instFlowCache = <String, _InstFlowEntry>{};
+  static final _instFlowInFlight = <String, Future<InstitutionalFlowResult>>{};
+
   Future<List<TenXScanResult>> _cachedFetch(
       String cacheKey, String endpoint) {
     final entry = _scannerCache[cacheKey];
     if (entry != null && entry.isValid) return Future.value(entry.data);
     if (_inFlight.containsKey(cacheKey)) return _inFlight[cacheKey]!;
 
-    final future = ApiClient.instance
-        .get(endpoint)
-        .then((raw) {
-          final results = ((raw as Map<String, dynamic>)['assets'] as List)
-              .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
-              .toList();
-          _scannerCache[cacheKey] = _ScannerCacheEntry(results);
-          _inFlight.remove(cacheKey);
-          return results;
-        })
-        .catchError((Object e) {
-          _inFlight.remove(cacheKey);
-          throw e;
-        });
+    final future = _fetchAndCacheScanner(cacheKey, endpoint);
     _inFlight[cacheKey] = future;
     return future;
+  }
+
+  Future<List<TenXScanResult>> _fetchAndCacheScanner(
+      String cacheKey, String endpoint) async {
+    final diskKey = 'scanner.$cacheKey';
+
+    // Hydrate from disk on cold start while the network fetch runs — the
+    // caller gets either the disk value (if the network fails) or the fresh
+    // network value, with no blank state in between.
+    List<TenXScanResult>? diskHydrated;
+    if (_scannerCache[cacheKey] == null) {
+      final disk = await DiskCache.instance.read<Map<String, dynamic>>(
+        diskKey,
+        ttl: const Duration(hours: 6),
+        decode: (j) => Map<String, dynamic>.from(j as Map),
+      );
+      if (disk != null) {
+        diskHydrated = (disk['assets'] as List)
+            .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+            .toList();
+        _scannerCache[cacheKey] = _ScannerCacheEntry(diskHydrated);
+      }
+    }
+
+    try {
+      final raw =
+          await ApiClient.instance.get(endpoint) as Map<String, dynamic>;
+      final results = (raw['assets'] as List)
+          .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+          .toList();
+      _scannerCache[cacheKey] = _ScannerCacheEntry(results);
+      _inFlight.remove(cacheKey);
+      await DiskCache.instance.write(diskKey, raw);
+      return results;
+    } catch (e) {
+      _inFlight.remove(cacheKey);
+      // Offline fallback: use whatever disk has, regardless of age.
+      if (diskHydrated != null) return diskHydrated;
+      final stale = await DiskCache.instance.readStale<Map<String, dynamic>>(
+        diskKey,
+        decode: (j) => Map<String, dynamic>.from(j as Map),
+      );
+      if (stale != null) {
+        final results = (stale['assets'] as List)
+            .map((e) => TenXScanResult.fromJson(e as Map<String, dynamic>))
+            .toList();
+        _scannerCache[cacheKey] = _ScannerCacheEntry(results);
+        return results;
+      }
+      rethrow;
+    }
   }
 
   void clearScannerCache(String cacheKey) => _scannerCache.remove(cacheKey);
@@ -139,10 +189,13 @@ class TradingRepository {
         .toList();
   }
 
-  Future<List<NewsArticle>> fetchNews(String symbol) async {
+  Future<NewsResult> fetchNews(String symbol) async {
     final data = await ApiClient.instance.get(ApiEndpoints.tradingNews(symbol));
-    final articles = data['articles'] as List;
-    return articles.map((e) => NewsArticle.fromJson(e as Map<String, dynamic>)).toList();
+    final articles = (data['articles'] as List)
+        .map((e) => NewsArticle.fromJson(e as Map<String, dynamic>))
+        .toList();
+    final agg = (data['aggregateSentiment'] as num?)?.toDouble() ?? 0.0;
+    return NewsResult(articles: articles, aggregateSentiment: agg);
   }
 
   // Sentinel returned when the server rejects due to plan limits.
@@ -274,23 +327,61 @@ class TradingRepository {
 
   Future<SectorBestSetupsResponse> fetchSectorBestSetups({
     required String version,
-  }) {
+  }) async {
     final key = version;
+    final diskKey = 'best-sector.$key';
     final entry = _bestSectorCache[key];
-    if (entry != null && entry.isValid) return Future.value(entry.data);
+    if (entry != null && entry.isValid) return entry.data;
     if (_bestSectorInFlight.containsKey(key)) return _bestSectorInFlight[key]!;
+
+    // Hydrate memory from disk on cold start before the network fetch, so we
+    // have something to return as offline fallback if the network fails.
+    if (entry == null) {
+      final disk = await DiskCache.instance.read<Map<String, dynamic>>(
+        diskKey,
+        // 6h is generous; data freshness recovers on next successful warm fetch.
+        ttl: const Duration(hours: 6),
+        decode: (j) => Map<String, dynamic>.from(j as Map),
+      );
+      if (disk != null) {
+        final hydrated = SectorBestSetupsResponse.fromJson(disk);
+        _bestSectorCache[key] = _BestSectorEntry(hydrated);
+      }
+    }
 
     final future = ApiClient.instance
         .get(ApiEndpoints.bestSetupsSector(version: version))
-        .then((raw) {
-          final resp =
-              SectorBestSetupsResponse.fromJson(raw as Map<String, dynamic>);
-          if (resp.cacheWarm) _bestSectorCache[key] = _BestSectorEntry(resp);
+        .then((raw) async {
+          final json = raw as Map<String, dynamic>;
+          final resp = SectorBestSetupsResponse.fromJson(json);
+          if (resp.cacheWarm) {
+            _bestSectorCache[key] = _BestSectorEntry(resp);
+            // Persist warm payloads only — never overwrite disk with a skeleton.
+            await DiskCache.instance.write(diskKey, json);
+          } else {
+            // Server returned skeleton (cacheWarm:false). If we have a warm
+            // disk-hydrated entry from earlier, prefer it over the empty
+            // skeleton so the user sees real (slightly stale) data while the
+            // server recomputes in the background.
+            final hydrated = _bestSectorCache[key];
+            if (hydrated != null && hydrated.data.cacheWarm) {
+              _bestSectorInFlight.remove(key);
+              return hydrated.data;
+            }
+          }
           _bestSectorInFlight.remove(key);
           return resp;
         })
-        .catchError((Object e) {
+        .catchError((Object e) async {
           _bestSectorInFlight.remove(key);
+          // Offline fallback: serve stale disk if available, regardless of age.
+          final stale = await DiskCache.instance.readStale<Map<String, dynamic>>(
+            diskKey,
+            decode: (j) => Map<String, dynamic>.from(j as Map),
+          );
+          if (stale != null) {
+            return SectorBestSetupsResponse.fromJson(stale);
+          }
           throw e;
         });
     _bestSectorInFlight[key] = future;
@@ -344,5 +435,27 @@ class TradingRepository {
     return results
         .map((e) => StockSearchResult.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  Future<InstitutionalFlowResult> fetchInstitutionalFlow(String type) {
+    final entry = _instFlowCache[type];
+    if (entry != null && entry.isValid) return Future.value(entry.data);
+    if (_instFlowInFlight.containsKey(type)) return _instFlowInFlight[type]!;
+
+    final future = ApiClient.instance
+        .get(ApiEndpoints.institutionalFlow(type: type))
+        .then((raw) {
+          final resp =
+              InstitutionalFlowResult.fromJson(raw as Map<String, dynamic>);
+          _instFlowCache[type] = _InstFlowEntry(resp);
+          _instFlowInFlight.remove(type);
+          return resp;
+        })
+        .catchError((Object e) {
+          _instFlowInFlight.remove(type);
+          throw e;
+        });
+    _instFlowInFlight[type] = future;
+    return future;
   }
 }

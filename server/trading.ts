@@ -17,6 +17,7 @@ import pLimit from "p-limit";
 import { yahooProvider } from "./providers";
 import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
 import { fetchSp500Constituents } from "./routes/heatmap";
+import { isLeader } from "./lib/leader";
 import {
   getSectorQuadrants,
   GICS_TO_ETF_SECTOR,
@@ -266,6 +267,11 @@ let _yfCookie: string | null = null;
 let _yfCrumbTs = 0;
 let _yfCrumbPending: Promise<{ crumb: string; cookie: string } | null> | null = null;
 let _yfCrumbBackoffUntil = 0;
+// Track consecutive crumb failures to scale backoff. A flat 15min on the first
+// 429 was too punitive post-deploy: a single transient Yahoo blip wiped out
+// quote freshness for a quarter hour. Now we escalate: 60s → 5m → 15m → 30m.
+let _yfCrumbConsecutiveFails = 0;
+const YF_CRUMB_BACKOFFS_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
 
 // Yahoo Finance uses a 307 → guce.yahoo.com/consent redirect that sets the GUCS session
 // cookie on the intermediate response. Node.js fetch with redirect:"follow" doesn't accumulate
@@ -348,9 +354,16 @@ async function getYFCrumb(): Promise<{ crumb: string; cookie: string } | null> {
       _yfCrumb = result.crumb;
       _yfCookie = result.cookie;
       _yfCrumbTs = Date.now();
+      _yfCrumbConsecutiveFails = 0;
     } else {
-      // Back off 15 min before retrying to avoid 429 storm
-      _yfCrumbBackoffUntil = Date.now() + 15 * 60_000;
+      // Escalate backoff per consecutive failure: 60s → 5m → 15m → 30m. A flat
+      // 15min on the first 429 was too punitive — a transient Yahoo blip would
+      // wipe out quote freshness for a quarter hour post-deploy.
+      const idx = Math.min(_yfCrumbConsecutiveFails, YF_CRUMB_BACKOFFS_MS.length - 1);
+      const backoffMs = YF_CRUMB_BACKOFFS_MS[idx];
+      _yfCrumbBackoffUntil = Date.now() + backoffMs;
+      _yfCrumbConsecutiveFails++;
+      console.warn(`[YFCrumb] backoff ${Math.round(backoffMs / 1000)}s (consecutive fails: ${_yfCrumbConsecutiveFails})`);
     }
     return result;
   });
@@ -577,7 +590,17 @@ function startFinnhubWebSocket() {
   connect();
 }
 
-startFinnhubWebSocket();
+// Defer Finnhub WS startup until leader election settles (5s gives the Redis
+// lease acquisition time to resolve). Free-tier Finnhub rejects the 2nd
+// concurrent connection with a 429, so only the leader should hold it; the
+// quote poll in `pollAllPrices` keeps crypto reasonably fresh for followers.
+setTimeout(() => {
+  if (!isLeader()) {
+    console.log("[Finnhub WS] skipping connect — follower");
+    return;
+  }
+  startFinnhubWebSocket();
+}, 5_000);
 
 // ─── Technical Indicator Pipeline ────────────────────────────────────────────
 
@@ -2654,6 +2677,7 @@ setInterval(() => {
   if (_euronextScreenerCache && now - _euronextScreenerCache.ts > SCREENER_TTL) _euronextScreenerCache = null;
   if (_euronextScanCache && now - _euronextScanCache.ts > STOCK_SCAN_TTL) _euronextScanCache = null;
   if (_euronextV2ScanCache && now - _euronextV2ScanCache.ts > STOCK_SCAN_TTL) _euronextV2ScanCache = null;
+  for (const [k, v] of _instFlowCache) if (now - v.ts > INST_FLOW_TTL) _instFlowCache.delete(k);
 }, 10 * 60_000);
 
 async function _callClaude(symbol: string, strategy: string, direction: string, confidence: number): Promise<string> {
@@ -2820,6 +2844,21 @@ interface TenXScanResponse {
   cacheTtlSeconds: number;
 }
 
+interface FlowEntry {
+  symbol: string;
+  name: string;
+  price: number;
+  changePercent: number;
+  volumeRatio: number;
+  vwapDeviation?: number;
+}
+
+interface InstFlowResponse {
+  assets: FlowEntry[];
+  type: string;
+  lastUpdated: string;
+}
+
 interface FinnhubEarningsItem {
   period: string;
   actual: number | null;
@@ -2866,6 +2905,9 @@ let _cnV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null
 let _euronextScreenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
 let _euronextScanCache:     { data: TenXScanResponse; ts: number } | null = null;
 let _euronextV2ScanCache:   { data: TenXScanResponse; ts: number } | null = null;
+
+const _instFlowCache = new Map<string, { data: InstFlowResponse; ts: number }>();
+const INST_FLOW_TTL = 30 * 60_000;
 
 const SCREENER_TTL = 60 * 60_000; // 1 hour — screener lists change throughout the trading day
 
@@ -3231,6 +3273,82 @@ async function runStockScanner(): Promise<TenXScanResponse> {
     cacheTtlSeconds: STOCK_SCAN_TTL / 1000,
   };
   _stockScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Institutional Flow Scanner ──────────────────────────────────────────────
+
+async function runInstitutionalFlow(
+  type: "accumulation" | "distribution" | "vwap"
+): Promise<InstFlowResponse> {
+  const cached = _instFlowCache.get(type);
+  if (cached && Date.now() - cached.ts < INST_FLOW_TTL) return cached.data;
+
+  const universe = await fetchStockUniverse();
+
+  let assets: FlowEntry[];
+
+  if (type !== "vwap") {
+    const entries: FlowEntry[] = [];
+    for (const q of universe) {
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (avgVol === 0) continue;
+      const volumeRatio = Math.round((q.regularMarketVolume / avgVol) * 10) / 10;
+      const cp = q.regularMarketChangePercent;
+      const pass = type === "accumulation" ? cp > 0 : cp < 0;
+      if (pass && volumeRatio >= 2.0) {
+        entries.push({
+          symbol: q.symbol,
+          name: q.shortName ?? q.longName ?? q.symbol,
+          price: q.regularMarketPrice,
+          changePercent: cp,
+          volumeRatio,
+        });
+      }
+    }
+    entries.sort((a, b) => b.volumeRatio - a.volumeRatio);
+    assets = entries.slice(0, 10);
+
+  } else {
+    const candidates = universe.filter(q => {
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (avgVol === 0) return false;
+      return q.regularMarketVolume / avgVol >= 3.0;
+    }).slice(0, 100);
+
+    const rows = await runWithConcurrency<ScreenerQuote, FlowEntry>(
+      candidates,
+      async (q) => {
+        try {
+          const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+          const volumeRatio = Math.round((q.regularMarketVolume / avgVol) * 10) / 10;
+          const candles = (await yahooProvider.fetchHistoryCandles(q.symbol, "1d", "1mo")) as OHLCV[];
+          const vwap = calcVwap(candles, 20);
+          if (!vwap) return null;
+          const vwapDeviation = Math.round(((q.regularMarketPrice - vwap) / vwap) * 1000) / 10;
+          if (Math.abs(vwapDeviation) < 1.5) return null;
+          return {
+            symbol: q.symbol,
+            name: q.shortName ?? q.longName ?? q.symbol,
+            price: q.regularMarketPrice,
+            changePercent: q.regularMarketChangePercent,
+            volumeRatio,
+            vwapDeviation,
+          };
+        } catch {
+          return null;
+        }
+      },
+      5
+    );
+
+    const filtered = rows.filter((r): r is FlowEntry => r !== null);
+    filtered.sort((a, b) => Math.abs(b.vwapDeviation ?? 0) - Math.abs(a.vwapDeviation ?? 0));
+    assets = filtered.slice(0, 10);
+  }
+
+  const data: InstFlowResponse = { assets, type, lastUpdated: new Date().toISOString() };
+  _instFlowCache.set(type, { data, ts: Date.now() });
   return data;
 }
 
@@ -4738,21 +4856,31 @@ export async function runAllBacktests(): Promise<void> {
   }
 }
 
-// Startup warm: 2 min after boot so cache is hot shortly after every deploy
+// Startup warm: 2 min after boot so cache is hot shortly after every deploy.
+// Leader-only — on multi-machine Fly setups followers skip this so we don't
+// duplicate 5 min of Yahoo Finance scans on every redeploy.
 setTimeout(() => {
+  if (!isLeader()) {
+    console.log("[BacktestWarm] skipping startup warm — follower");
+    return;
+  }
   runAllBacktests().catch(err => console.error("[BacktestWarm] startup failed:", err));
 }, 2 * 60_000);
 
-// Nightly refresh at 00:05 UTC, then every 24 h
+// Nightly refresh at 00:05 UTC, then every 24 h — leader-only.
 (function scheduleNightlyBacktest() {
   const now = new Date();
   const next = new Date();
   next.setUTCHours(0, 5, 0, 0);
   if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
   setTimeout(() => {
-    runAllBacktests().catch(err => console.error("[BacktestWarm] nightly failed:", err));
-    setInterval(() => {
+    if (isLeader()) {
       runAllBacktests().catch(err => console.error("[BacktestWarm] nightly failed:", err));
+    }
+    setInterval(() => {
+      if (isLeader()) {
+        runAllBacktests().catch(err => console.error("[BacktestWarm] nightly failed:", err));
+      }
     }, 24 * 60 * 60_000);
   }, next.getTime() - now.getTime());
 })();
@@ -4760,14 +4888,16 @@ setTimeout(() => {
 export function createTradingRouter(): Router {
   const router = Router();
 
-  // GET /api/trading/strategies
+  // GET /api/trading/strategies — effectively static; refreshes on deploy
   router.get("/strategies", (_req: Request, res: Response) => {
-    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.setHeader("Cache-Control", "public, max-age=86400, stale-while-revalidate=172800"); // 24h / 48h SWR
     res.json({ strategies: STRATEGY_DEFS, timestamp: new Date().toISOString() });
   });
 
-  // GET /api/trading/quotes
+  // GET /api/trading/quotes — data refreshes via 20s background poll into latestPrices
   router.get("/quotes", (_req: Request, res: Response) => {
+    // 15s edge cache absorbs concurrent device polls (Trading Dashboard auto-refreshes every 30s).
+    res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
     const quotes = TRADING_ASSETS.map(asset => {
       const p = latestPrices.get(asset.symbol);
       return {
@@ -4856,6 +4986,8 @@ export function createTradingRouter(): Router {
     if (!signal) {
       return res.status(503).json({ error: "Insufficient historical data to generate signal" });
     }
+    // private — strategies 4–9 are plan-gated and the response is per-device-plan
+    res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=30");
     return res.json(signal);
   });
 
@@ -4878,6 +5010,7 @@ export function createTradingRouter(): Router {
     const confidence = parseFloat(req.query.confidence as string) || 50;
     const key = `${symbol}_${strategy}_${direction}`;
 
+    res.setHeader("Cache-Control", "private, max-age=900"); // 15m — Pro+ gated
     const cached = _noteCache.get(key);
     if (cached && Date.now() - cached.ts < NOTE_TTL) {
       return res.json({ note: cached.note });
@@ -4924,6 +5057,7 @@ export function createTradingRouter(): Router {
     if (candles.length === 0) {
       return res.status(503).json({ error: "Failed to fetch history" });
     }
+    res.setHeader("Cache-Control", "public, max-age=150, stale-while-revalidate=300"); // 2.5m / 5m SWR
     return res.json({ symbol, timeframe: tf, interval: tf, candles, count: candles.length });
   });
 
@@ -4943,6 +5077,7 @@ export function createTradingRouter(): Router {
     if (!result) {
       return res.status(503).json({ error: "Insufficient data for backtest (need 60+ candles)" });
     }
+    res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600"); // 5m / 10m SWR
     return res.json(result);
   });
 
@@ -4953,6 +5088,7 @@ export function createTradingRouter(): Router {
       return res.status(400).json({ error: "Invalid symbol format." });
     }
     const result = await fetchNewsForSymbol(symbol);
+    res.setHeader("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
     return res.json(result);
   });
 
@@ -5301,7 +5437,19 @@ export function createTradingRouter(): Router {
   // Reuses the existing _stockScanCache (dynamic Yahoo most-actives universe)
   // and joins against the S&P 500 sector CSV plus a small NDX-only override map.
   const _bestSetupsSectorCache = new Map<string, { data: unknown; ts: number }>();
+  // Tracks in-flight computations per version so concurrent client requests
+  // don't each kick off a duplicate (and so we can return cacheWarm:false
+  // immediately while one is already running).
+  const _bestSetupsSectorInFlight = new Map<string, Promise<void>>();
   const BEST_SETUPS_SECTOR_TTL = 30 * 60_000;
+
+  const _cacheWarmingResponse = (version: "v1" | "v2") => ({
+    leading: [],
+    improving: [],
+    cacheWarm: false,
+    version,
+    lastUpdated: new Date().toISOString(),
+  });
 
   let _symbolSectorCache: { map: Map<string, string>; ts: number } | null = null;
   const SYMBOL_SECTOR_TTL = 7 * 24 * 60 * 60_000;
@@ -5343,15 +5491,13 @@ export function createTradingRouter(): Router {
     return map;
   }
 
-  router.get("/best-setups-sector", async (req: Request, res: Response) => {
-    const version = (req.query.version === "v2" ? "v2" : "v1") as "v1" | "v2";
+  // Extracted so it can be kicked off from the handler (background) AND from
+  // the startup pre-warm — both share the same in-flight map.
+  function ensureBestSetupsSectorFresh(version: "v1" | "v2"): Promise<void> {
+    const existing = _bestSetupsSectorInFlight.get(version);
+    if (existing) return existing;
 
-    const cached = _bestSetupsSectorCache.get(version);
-    if (cached && Date.now() - cached.ts < BEST_SETUPS_SECTOR_TTL) {
-      return res.setHeader("Cache-Control", "public, max-age=1800").json(cached.data);
-    }
-
-    try {
+    const job = (async () => {
       const [scanData, sectorQuadrants, stockToSector] = await Promise.all([
         version === "v2" ? runStockScannerV2() : runStockScanner(),
         getSectorQuadrants(),
@@ -5425,14 +5571,48 @@ export function createTradingRouter(): Router {
         leading: buildList("Leading"),
         improving: buildList("Improving"),
         cacheWarm: true,
+        version,
         lastUpdated: scanData.lastUpdated,
       };
       _bestSetupsSectorCache.set(version, { data: payload, ts: Date.now() });
-      return res.setHeader("Cache-Control", "public, max-age=1800").json(payload);
-    } catch (err) {
-      console.error("[Best Setups Sector]", err);
-      return res.status(503).json({ error: "Sector setups temporarily unavailable" });
+    })()
+      .catch((err) => {
+        console.error("[Best Setups Sector] compute failed:", err);
+      })
+      .finally(() => {
+        _bestSetupsSectorInFlight.delete(version);
+      });
+
+    _bestSetupsSectorInFlight.set(version, job);
+    return job;
+  }
+
+  // Pre-warm both versions ~10s after backtest warm starts (which is 2 min
+  // after boot). The scanner + sectors caches are typically populated by
+  // then, so this is a cheap join + post-process; total < 10s.
+  setTimeout(() => {
+    if (!isLeader()) return;
+    void ensureBestSetupsSectorFresh("v1");
+    void ensureBestSetupsSectorFresh("v2");
+  }, 3 * 60_000);
+
+  router.get("/best-setups-sector", async (req: Request, res: Response) => {
+    const version = (req.query.version === "v2" ? "v2" : "v1") as "v1" | "v2";
+
+    const cached = _bestSetupsSectorCache.get(version);
+    if (cached && Date.now() - cached.ts < BEST_SETUPS_SECTOR_TTL) {
+      return res.setHeader("Cache-Control", "public, max-age=1800").json(cached.data);
     }
+
+    // No fresh cache. Kick off (or join) the background compute and return a
+    // cacheWarm:false skeleton immediately so the client renders its "warming
+    // up — check back in ~2 min" message instead of blocking the UI for 30-50s.
+    // Concurrent client requests all share the single in-flight Promise via
+    // _bestSetupsSectorInFlight, so we never duplicate the work.
+    void ensureBestSetupsSectorFresh(version);
+    return res
+      .setHeader("Cache-Control", "no-store")
+      .json(_cacheWarmingResponse(version));
   });
 
   // GET /api/trading/fundamentals/:symbol
@@ -5767,6 +5947,21 @@ export function createTradingRouter(): Router {
     } catch (err) {
       console.error("[Correlation]", err);
       return res.status(503).json({ error: "Correlation temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/institutional-flow?type=accumulation|distribution|vwap
+  router.get("/scanner/institutional-flow", async (req: Request, res: Response) => {
+    const t = req.query.type as string;
+    if (t !== "accumulation" && t !== "distribution" && t !== "vwap") {
+      return res.status(400).json({ error: "type must be accumulation, distribution, or vwap" });
+    }
+    try {
+      const result = await runInstitutionalFlow(t);
+      return res.setHeader("Cache-Control", "public, max-age=1800").json(result);
+    } catch (err) {
+      console.error("[InstFlow]", err);
+      return res.status(503).json({ error: "Institutional flow temporarily unavailable" });
     }
   });
 

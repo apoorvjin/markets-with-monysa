@@ -1,59 +1,111 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../data/models/movers_data.dart';
 import '../../data/models/trading_signal.dart';
+import '../../data/models/treemap_stock.dart';
+import '../../data/repositories/heatmap_repository.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/theme_toggle.dart';
-import '../../shared/widgets/upgrade_sheet.dart';
 import '../exposure/exposure_screen.dart';
+import 'best_setups_card.dart';
 import 'multibaggers_screen.dart';
 import 'house_trades_tab.dart';
 import 'earnings_calendar_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
-final _bestSetupsProvider = FutureProvider.autoDispose
-    .family<BestSetupsResponse, ({String version, String type})>(
-  (_, args) => TradingRepository.instance.fetchBestSetups(
-    version: args.version,
-    type: args.type,
-  ),
-);
+// keepAlive everywhere: server TTLs are 30m–24h; tab switches within a session
+// should not refetch. Repositories already cache; this just stops Riverpod from
+// disposing the cached future on tab navigation.
+
+// Tracks how many times we've polled while the server cache is still warming.
+// Capped via _maxSectorPolls so a permanently-blocked upstream doesn't trigger
+// indefinite polling.
+final _sectorPollAttemptProvider = StateProvider.family<int, String>((_, __) => 0);
+const _maxSectorPolls = 10; // 10 × 30s = 5 min ceiling
 
 final _sectorBestSetupsProvider =
     FutureProvider.autoDispose.family<SectorBestSetupsResponse, String>(
-  (_, version) =>
-      TradingRepository.instance.fetchSectorBestSetups(version: version),
+  (ref, version) async {
+    ref.keepAlive();
+    final resp =
+        await TradingRepository.instance.fetchSectorBestSetups(version: version);
+
+    if (!resp.cacheWarm) {
+      // Server is still computing — schedule a re-fetch in 30s so the UI shows
+      // real data the moment the server finishes, without the user having to
+      // manually pull-to-refresh.
+      final attempt = ref.read(_sectorPollAttemptProvider(version));
+      if (attempt < _maxSectorPolls) {
+        final timer = Timer(const Duration(seconds: 30), () {
+          ref.read(_sectorPollAttemptProvider(version).notifier).state =
+              attempt + 1;
+          // Clear the repository's cached `cacheWarm:false` entry so the next
+          // fetch actually hits the server again. (Repository only stores warm
+          // entries, but invalidating is a no-op when there's nothing cached.)
+          TradingRepository.instance.clearBestSectorCache(version);
+          ref.invalidateSelf();
+        });
+        ref.onDispose(timer.cancel);
+      }
+    } else {
+      // Reset counter once warm so a future cache expiry restarts the budget.
+      ref.read(_sectorPollAttemptProvider(version).notifier).state = 0;
+    }
+
+    return resp;
+  },
 );
 
 final _congressTradesProvider =
-    FutureProvider.autoDispose<CongressTradesResponse>(
-  (_) => TradingRepository.instance.fetchCongressTrades(),
-);
+    FutureProvider.autoDispose<CongressTradesResponse>((ref) {
+  ref.keepAlive(); // 2h server TTL
+  return TradingRepository.instance.fetchCongressTrades();
+});
 
 final _trumpTransactionsProvider =
-    FutureProvider.autoDispose<OgeTransactionsResponse>(
-  (_) => TradingRepository.instance.fetchTrumpTransactions(),
-);
+    FutureProvider.autoDispose<OgeTransactionsResponse>((ref) {
+  ref.keepAlive(); // 24h server TTL (OGE PDF pipeline)
+  return TradingRepository.instance.fetchTrumpTransactions();
+});
 
-final _quiverCongressProvider = FutureProvider.autoDispose<QuiverScanResponse>(
-  (_) => TradingRepository.instance.fetchQuiverCongress(),
-);
+final _quiverCongressProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
+  ref.keepAlive(); // 2h server TTL
+  return TradingRepository.instance.fetchQuiverCongress();
+});
 
-final _quiverLobbyingProvider = FutureProvider.autoDispose<QuiverScanResponse>(
-  (_) => TradingRepository.instance.fetchQuiverLobbying(),
-);
+final _quiverLobbyingProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
+  ref.keepAlive(); // 4h server TTL
+  return TradingRepository.instance.fetchQuiverLobbying();
+});
 
-final _quiverInsiderProvider = FutureProvider.autoDispose<QuiverScanResponse>(
-  (_) => TradingRepository.instance.fetchQuiverInsider(),
-);
+final _quiverInsiderProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
+  ref.keepAlive(); // 2h server TTL
+  return TradingRepository.instance.fetchQuiverInsider();
+});
+
+final _moversProvider =
+    FutureProvider.autoDispose.family<MoversData, String>((ref, index) {
+  ref.keepAlive(); // 5m server TTL — keep across tab switches
+  return HeatmapRepository.instance.fetchMovers(index: index);
+});
+
+final _institutionalFlowProvider =
+    FutureProvider.autoDispose.family<InstitutionalFlowResult, String>(
+        (ref, type) {
+  ref.keepAlive(); // 30m server TTL
+  return TradingRepository.instance.fetchInstitutionalFlow(type);
+});
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -143,7 +195,7 @@ class _InvestingDashboardTab extends ConsumerStatefulWidget {
 class _InvestingDashboardTabState
     extends ConsumerState<_InvestingDashboardTab> {
   String _version = 'v1';
-  String _type = 'assets';
+  static const String _type = 'stocks';
 
   @override
   void initState() {
@@ -153,7 +205,7 @@ class _InvestingDashboardTabState
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       TradingRepository.instance
-          .fetchBestSetups(version: 'v1', type: 'assets')
+          .fetchBestSetups(version: 'v1', type: _type)
           .ignore();
       TradingRepository.instance
           .fetchSectorBestSetups(version: 'v1')
@@ -163,11 +215,6 @@ class _InvestingDashboardTabState
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
-    final isPro = EntitlementService.can('best_setups');
-    final args = (version: _version, type: _type);
-    final async = ref.watch(_bestSetupsProvider(args));
-
     return MaxWidthLayout(
       child: ListView(
         padding: EdgeInsets.fromLTRB(
@@ -177,187 +224,869 @@ class _InvestingDashboardTabState
           AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
         ),
         children: [
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.s4),
-            decoration: BoxDecoration(
-              color: c.surfaceElevated,
-              borderRadius: BorderRadius.circular(AppRadius.md),
-              border: Border.all(color: c.border),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.bolt_rounded, size: 18, color: c.warning),
-                    const SizedBox(width: AppSpacing.s2),
-                    Expanded(
-                      child: Text('Best Setups Right Now',
-                          style: AppTypography.headingSm
-                              .copyWith(color: c.textPrimary)),
-                    ),
-                    GestureDetector(
-                      onTap: () => _showBestSetupsInfo(context),
-                      child: Icon(Icons.info_outline_rounded,
-                          size: 16, color: c.textMuted),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.s2),
-                Text(
-                  'Signals firing today with ≥65% historical 1m win rate',
-                  style: AppTypography.xs.copyWith(color: c.textMuted),
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                Row(
-                  children: [
-                    GestureDetector(
-                      onTap: () => setState(() =>
-                          _type = _type == 'assets' ? 'stocks' : 'assets'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: c.surfaceCard,
-                          borderRadius: BorderRadius.circular(AppRadius.full),
-                          border: Border.all(color: c.border),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _VersionDot(
-                                label: 'Assets',
-                                active: _type == 'assets',
-                                c: c),
-                            const SizedBox(width: 6),
-                            _VersionDot(
-                                label: 'Stocks',
-                                active: _type == 'stocks',
-                                c: c),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: AppSpacing.s3),
-                    GestureDetector(
-                      onTap: () => setState(
-                          () => _version = _version == 'v1' ? 'v2' : 'v1'),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: c.surfaceCard,
-                          borderRadius: BorderRadius.circular(AppRadius.full),
-                          border: Border.all(color: c.border),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            _VersionDot(
-                                label: 'v1', active: _version == 'v1', c: c),
-                            const SizedBox(width: 6),
-                            _VersionDot(
-                                label: 'v2', active: _version == 'v2', c: c),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: c.accentDim18,
-                        borderRadius: BorderRadius.circular(AppRadius.full),
-                      ),
-                      child: Text('Pro',
-                          style: AppTypography.xs.copyWith(
-                              color: c.accent, fontWeight: FontWeight.w700)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                Container(
-                  decoration: BoxDecoration(
-                    color: c.surfaceCard,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                    border: Border.all(color: c.border),
-                  ),
-                  child: !isPro
-                      ? _BestSetupsLockedBody(c: c, context: context)
-                      : async.when(
-                          loading: () => _BestSetupsLoadingBody(c: c),
-                          error: (_, __) => Padding(
-                            padding: const EdgeInsets.all(AppSpacing.s4),
-                            child: Text('Unable to load setups',
-                                style: AppTypography.xs
-                                    .copyWith(color: c.textMuted)),
-                          ),
-                          data: (resp) {
-                            if (!resp.cacheWarm) {
-                              return Padding(
-                                padding: const EdgeInsets.all(AppSpacing.s4),
-                                child: Row(
-                                  children: [
-                                    Icon(Icons.hourglass_top_rounded,
-                                        size: 14, color: c.textMuted),
-                                    const SizedBox(width: 6),
-                                    Text('Warming up — check back in ~2 min',
-                                        style: AppTypography.xs
-                                            .copyWith(color: c.textMuted)),
-                                  ],
-                                ),
-                              );
-                            }
-                            if (resp.setups.isEmpty) {
-                              return Padding(
-                                padding: const EdgeInsets.all(AppSpacing.s4),
-                                child: Text(
-                                    'No setups above 65% win rate today',
-                                    style: AppTypography.xs
-                                        .copyWith(color: c.textMuted)),
-                              );
-                            }
-                            return Column(
-                              children: [
-                                ...resp.setups.map((s) => _SetupRow(
-                                      setup: s,
-                                      version: _version,
-                                      type: _type,
-                                    )),
-                                GestureDetector(
-                                  onTap: () => context.push(
-                                      '/trading/10x-backtest?version=$_version&type=$_type'),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: AppSpacing.s4,
-                                        vertical: AppSpacing.s3),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Text('View Backtest History',
-                                            style: AppTypography.xs
-                                                .copyWith(color: c.accent)),
-                                        const SizedBox(width: 4),
-                                        Icon(Icons.arrow_forward_rounded,
-                                            size: 12, color: c.accent),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
+          const _MoversCard(),
+          const SizedBox(height: AppSpacing.s5),
+          BestSetupsCard(
+            type: _type,
+            version: _version,
+            onVersionChanged: (v) => setState(() => _version = v),
           ),
           const SizedBox(height: AppSpacing.s5),
           _SectorBestSetupsCard(version: _version),
+          const SizedBox(height: AppSpacing.s5),
+          const _InstitutionalFlowCard(),
         ],
       ),
+    );
+  }
+}
+
+// ── Institutional Flow Card ───────────────────────────────────────────────────
+
+class _InstitutionalFlowCard extends ConsumerStatefulWidget {
+  const _InstitutionalFlowCard();
+
+  @override
+  ConsumerState<_InstitutionalFlowCard> createState() =>
+      _InstitutionalFlowCardState();
+}
+
+class _InstitutionalFlowCardState
+    extends ConsumerState<_InstitutionalFlowCard> {
+  static const List<({String id, String label})> _tabs = [
+    (id: 'accumulation', label: 'Accumulation'),
+    (id: 'distribution', label: 'Distribution'),
+    (id: 'vwap', label: 'VWAP Break'),
+  ];
+  String _selected = 'accumulation';
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final isPro = EntitlementService.can('best_setups');
+    final async = ref.watch(_institutionalFlowProvider(_selected));
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s4),
+      decoration: BoxDecoration(
+        color: c.surfaceElevated,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.account_balance_wallet_rounded,
+                  size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text(
+                  'Institutional Flow',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary),
+                ),
+              ),
+              GestureDetector(
+                onTap: () => _showFlowInfo(context),
+                child: Icon(Icons.info_outline_rounded,
+                    size: 16, color: c.textMuted),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            'Top 10 US stocks with unusual volume indicating institutional activity',
+            style: AppTypography.xs.copyWith(color: c.textMuted),
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var i = 0; i < _tabs.length; i++) ...[
+                  _FilterChip(
+                    label: _tabs[i].label,
+                    active: _selected == _tabs[i].id,
+                    onTap: () => setState(() => _selected = _tabs[i].id),
+                  ),
+                  if (i < _tabs.length - 1) const SizedBox(width: AppSpacing.s2),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          Container(
+            decoration: BoxDecoration(
+              color: c.surfaceCard,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: c.border),
+            ),
+            child: !isPro
+                ? BestSetupsLockedBody(c: c, context: context)
+                : async.when(
+                    loading: () => BestSetupsLoadingBody(c: c),
+                    error: (_, __) => Padding(
+                      padding: const EdgeInsets.all(AppSpacing.s4),
+                      child: Text(
+                        'Unable to load institutional flow data',
+                        style: AppTypography.xs.copyWith(color: c.textMuted),
+                      ),
+                    ),
+                    data: (resp) => resp.assets.isEmpty
+                        ? Padding(
+                            padding: const EdgeInsets.all(AppSpacing.s4),
+                            child: Text(
+                              'No stocks match the current filter right now.',
+                              style:
+                                  AppTypography.xs.copyWith(color: c.textMuted),
+                            ),
+                          )
+                        : Column(
+                            children: resp.assets
+                                .map((s) => _FlowStockRow(
+                                      stock: s,
+                                      type: _selected,
+                                      c: c,
+                                    ))
+                                .toList(),
+                          ),
+                  ),
+          ),
+          if (isPro)
+            async.whenOrNull(
+                  data: (resp) => Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.s2),
+                    child: FreshnessBar(lastUpdated: resp.lastUpdated),
+                  ),
+                ) ??
+                const SizedBox.shrink(),
+        ],
+      ),
+    );
+  }
+
+  void _showFlowInfo(BuildContext context) {
+    final c = context.colors;
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: c.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.92,
+        builder: (ctx, sc) => ListView(
+          controller: sc,
+          padding: EdgeInsets.fromLTRB(
+              AppSpacing.s5,
+              AppSpacing.s5,
+              AppSpacing.s5,
+              AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
+          children: [
+            Center(
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                    color: c.border,
+                    borderRadius: BorderRadius.circular(2)),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.s5),
+            Row(children: [
+              Icon(Icons.account_balance_wallet_rounded,
+                  size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Institutional Flow',
+                    style: AppTypography.headingMd
+                        .copyWith(color: c.textPrimary)),
+              ),
+            ]),
+            const SizedBox(height: AppSpacing.s3),
+            Text(
+              'Detects unusual volume activity consistent with large institutional orders. All modes require volume ≥ 2× the 3-month daily average.',
+              style:
+                  AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
+            ),
+            const SizedBox(height: AppSpacing.s5),
+            BestSetupsInfoRow(
+              c: c,
+              label: 'Accumulation',
+              body:
+                  'Rising price + volumeRatio ≥ 2.0. Institutions buying into strength.',
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            BestSetupsInfoRow(
+              c: c,
+              label: 'Distribution',
+              body:
+                  'Falling price + volumeRatio ≥ 2.0. Institutions selling into weakness.',
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            BestSetupsInfoRow(
+              c: c,
+              label: 'VWAP Break',
+              body:
+                  'Price deviates ≥ 1.5% from the 20-day VWAP AND volumeRatio ≥ 3.0. Strong directional conviction from large players.',
+            ),
+            const SizedBox(height: AppSpacing.s5),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.s4),
+              decoration: BoxDecoration(
+                color: c.warning.withAlpha(15),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                border: Border.all(color: c.warning.withAlpha(50)),
+              ),
+              child: Text(
+                'volumeRatio = today\'s volume ÷ 3-month average daily volume. '
+                'A ratio of 2.0 means today\'s volume is twice the normal level.',
+                style: AppTypography.xs
+                    .copyWith(color: c.textSecondary, height: 1.55),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FlowStockRow extends StatelessWidget {
+  const _FlowStockRow({
+    required this.stock,
+    required this.type,
+    required this.c,
+  });
+
+  final InstitutionalFlowStock stock;
+  final String type;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUp = stock.changePercent >= 0;
+    final changeColor = isUp ? c.positive : c.danger;
+    final changeText =
+        '${isUp ? '+' : ''}${stock.changePercent.toStringAsFixed(2)}%';
+    final priceText = stock.price < 1
+        ? '\$${stock.price.toStringAsFixed(4)}'
+        : '\$${stock.price.toStringAsFixed(2)}';
+
+    return GestureDetector(
+      onTap: () => context.push(
+        '/asset/${Uri.encodeComponent(stock.symbol)}'
+        '?name=${Uri.encodeComponent(stock.name)}',
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: c.border)),
+        ),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: c.surfaceElevated,
+                          borderRadius: BorderRadius.circular(AppRadius.xs),
+                          border: Border.all(color: c.border),
+                        ),
+                        child: Text(
+                          stock.symbol,
+                          style: AppTypography.xs.copyWith(
+                            color: c.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.s2),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: c.accent.withAlpha(18),
+                          borderRadius: BorderRadius.circular(AppRadius.xs),
+                          border: Border.all(color: c.accent.withAlpha(55)),
+                        ),
+                        child: Text(
+                          '${stock.volumeRatio.toStringAsFixed(1)}× vol',
+                          style: AppTypography.xs.copyWith(
+                            color: c.accent,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      if (type == 'vwap' && stock.vwapDeviation != null) ...[
+                        const SizedBox(width: AppSpacing.s2),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: (stock.vwapDeviation! >= 0
+                                    ? c.positive
+                                    : c.danger)
+                                .withAlpha(18),
+                            borderRadius: BorderRadius.circular(AppRadius.xs),
+                            border: Border.all(
+                              color: (stock.vwapDeviation! >= 0
+                                      ? c.positive
+                                      : c.danger)
+                                  .withAlpha(55),
+                            ),
+                          ),
+                          child: Text(
+                            '${stock.vwapDeviation! >= 0 ? '+' : ''}${stock.vwapDeviation!.toStringAsFixed(1)}% VWAP',
+                            style: AppTypography.xs.copyWith(
+                              color: stock.vwapDeviation! >= 0
+                                  ? c.positive
+                                  : c.danger,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    stock.name,
+                    style: AppTypography.xs.copyWith(
+                      color: c.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  priceText,
+                  style: AppTypography.xs.copyWith(
+                    color: c.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                Text(
+                  changeText,
+                  style: AppTypography.xs.copyWith(
+                    color: changeColor,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Movers Card (Pre/Regular/Post-market top gainers + losers) ────────────────
+
+class _MoversCard extends ConsumerStatefulWidget {
+  const _MoversCard();
+
+  @override
+  ConsumerState<_MoversCard> createState() => _MoversCardState();
+}
+
+class _MoversCardState extends ConsumerState<_MoversCard> {
+  static const List<({String id, String label})> _indices = [
+    (id: 'sp500', label: 'S&P 500'),
+    (id: 'ndx', label: 'NDX'),
+    (id: 'russell2000', label: 'Russell 2000'),
+  ];
+  String _selected = 'sp500';
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final isPro = EntitlementService.can('treemap_heatmap');
+    final async = ref.watch(_moversProvider(_selected));
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s4),
+      decoration: BoxDecoration(
+        color: c.surfaceElevated,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.trending_up_rounded, size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text(
+                  'Movers',
+                  style: AppTypography.headingSm
+                      .copyWith(color: c.textPrimary),
+                ),
+              ),
+              if (isPro)
+                async.whenOrNull(
+                      data: (d) => _SessionBadge(session: d.session, c: c),
+                    ) ??
+                    const SizedBox.shrink(),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            'Top 10 gainers & losers in the active US session',
+            style: AppTypography.xs.copyWith(color: c.textMuted),
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var i = 0; i < _indices.length; i++) ...[
+                  _FilterChip(
+                    label: _indices[i].label,
+                    active: _selected == _indices[i].id,
+                    onTap: () => setState(() => _selected = _indices[i].id),
+                  ),
+                  if (i < _indices.length - 1)
+                    const SizedBox(width: AppSpacing.s2),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          if (!isPro)
+            Container(
+              decoration: BoxDecoration(
+                color: c.surfaceCard,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: c.border),
+              ),
+              child: BestSetupsLockedBody(c: c, context: context),
+            )
+          else
+            async.when(
+              loading: () => Container(
+                decoration: BoxDecoration(
+                  color: c.surfaceCard,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: c.border),
+                ),
+                child: BestSetupsLoadingBody(c: c),
+              ),
+              error: (_, __) => Container(
+                padding: const EdgeInsets.all(AppSpacing.s4),
+                decoration: BoxDecoration(
+                  color: c.surfaceCard,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: c.border),
+                ),
+                child: Text('Unable to load movers',
+                    style:
+                        AppTypography.xs.copyWith(color: c.textMuted)),
+              ),
+              data: (data) => _MoversBody(data: data, c: c),
+            ),
+          if (isPro)
+            async.whenOrNull(
+                  data: (d) => Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.s2),
+                    child: FreshnessBar(
+                        lastUpdated: d.lastUpdated.toIso8601String()),
+                  ),
+                ) ??
+                const SizedBox.shrink(),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionBadge extends StatelessWidget {
+  const _SessionBadge({required this.session, required this.c});
+  final String session; // pre | regular | post
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (session) {
+      'pre' => ('Pre-market', c.warning),
+      'post' => ('After-hours', c.accent),
+      _ => ('Today', c.positive),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(22),
+        borderRadius: BorderRadius.circular(AppRadius.full),
+        border: Border.all(color: color.withAlpha(70)),
+      ),
+      child: Text(
+        label,
+        style: AppTypography.xs
+            .copyWith(color: color, fontWeight: FontWeight.w700),
+      ),
+    );
+  }
+}
+
+String _fmtMcap(double v) {
+  if (v >= 1e12) return '\$${(v / 1e12).toStringAsFixed(2)}T';
+  if (v >= 1e9) return '\$${(v / 1e9).toStringAsFixed(2)}B';
+  if (v >= 1e6) return '\$${(v / 1e6).toStringAsFixed(1)}M';
+  return '\$${v.toStringAsFixed(0)}';
+}
+
+String _fmtPrice(double? v) {
+  if (v == null) return '—';
+  if (v < 1) return '\$${v.toStringAsFixed(4)}';
+  return '\$${v.toStringAsFixed(2)}';
+}
+
+class _MoversBody extends StatelessWidget {
+  const _MoversBody({required this.data, required this.c});
+  final MoversData data;
+  final AppPalette c;
+
+  double? _pickPct(TreemapStock s) => switch (data.session) {
+        'pre' => s.preMarketChangePercent,
+        'post' => s.postMarketChangePercent,
+        _ => s.changePercent,
+      };
+
+  double _pickPrice(TreemapStock s) => switch (data.session) {
+        'pre' => s.preMarketPrice ?? s.price,
+        'post' => s.postMarketPrice ?? s.price,
+        _ => s.price,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final hasGainers = data.gainers.isNotEmpty;
+    final hasLosers = data.losers.isNotEmpty;
+    if (!hasGainers && !hasLosers) {
+      final empty = switch (data.session) {
+        'pre' => 'No pre-market data yet',
+        'post' => 'No after-hours data yet',
+        _ => 'No movers yet',
+      };
+      return Container(
+        padding: const EdgeInsets.all(AppSpacing.s4),
+        decoration: BoxDecoration(
+          color: c.surfaceCard,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: c.border),
+        ),
+        child: Text(empty,
+            style: AppTypography.xs.copyWith(color: c.textMuted)),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (hasGainers) ...[
+          _MoversSectionHeader(label: 'GAINERS', color: c.positive, c: c),
+          const SizedBox(height: AppSpacing.s2),
+          for (final s in data.gainers)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+              child: _MoverTile(
+                stock: s,
+                pct: _pickPct(s),
+                displayPrice: _pickPrice(s),
+                isUp: true,
+                c: c,
+              ),
+            ),
+        ],
+        if (hasLosers) ...[
+          SizedBox(height: hasGainers ? AppSpacing.s3 : 0),
+          _MoversSectionHeader(label: 'LOSERS', color: c.danger, c: c),
+          const SizedBox(height: AppSpacing.s2),
+          for (final s in data.losers)
+            Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+              child: _MoverTile(
+                stock: s,
+                pct: _pickPct(s),
+                displayPrice: _pickPrice(s),
+                isUp: false,
+                c: c,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MoversSectionHeader extends StatelessWidget {
+  const _MoversSectionHeader(
+      {required this.label, required this.color, required this.c});
+  final String label;
+  final Color color;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 2),
+          decoration: BoxDecoration(
+            color: color.withAlpha(22),
+            borderRadius: BorderRadius.circular(AppRadius.xs),
+            border: Border.all(color: color.withAlpha(70)),
+          ),
+          child: Text(
+            label,
+            style: AppTypography.xs.copyWith(
+                color: color,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.8),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MoverTile extends StatelessWidget {
+  const _MoverTile({
+    required this.stock,
+    required this.pct,
+    required this.displayPrice,
+    required this.isUp,
+    required this.c,
+  });
+
+  final TreemapStock stock;
+  final double? pct;
+  final double displayPrice;
+  final bool isUp;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final changeColor = isUp ? c.positive : c.danger;
+    final pctText = pct == null
+        ? '—'
+        : '${isUp ? '+' : ''}${pct!.toStringAsFixed(2)}%';
+
+    return GestureDetector(
+      onTap: () => context.push(
+        '/asset/${Uri.encodeComponent(stock.symbol)}'
+        '?name=${Uri.encodeComponent(stock.name)}',
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: c.surfaceCard,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          border: Border.all(color: c.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(width: 3, color: changeColor),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.s3, AppSpacing.s3, AppSpacing.s3, AppSpacing.s3),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: c.surfaceElevated,
+                              borderRadius:
+                                  BorderRadius.circular(AppRadius.xs),
+                              border: Border.all(color: c.border),
+                            ),
+                            child: Text(
+                              stock.symbol,
+                              style: AppTypography.xs.copyWith(
+                                color: c.textPrimary,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.3,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.s2),
+                          Flexible(
+                            child: _SectorChip(
+                                sector: stock.sector, c: c),
+                          ),
+                          const Spacer(),
+                          Text(
+                            _fmtPrice(displayPrice),
+                            style: AppTypography.labelSm.copyWith(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              stock.name,
+                              style: AppTypography.xs.copyWith(
+                                  color: c.textSecondary,
+                                  fontWeight: FontWeight.w500),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.s2),
+                          Text(
+                            pctText,
+                            style: AppTypography.labelSm.copyWith(
+                              color: changeColor,
+                              fontWeight: FontWeight.w700,
+                              fontFeatures: const [
+                                FontFeature.tabularFigures()
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.s3),
+                      Container(height: 1, color: c.border),
+                      const SizedBox(height: AppSpacing.s2),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                              child: _StatCell(
+                                  label: 'MCap',
+                                  value: _fmtMcap(stock.marketCap),
+                                  c: c)),
+                          Expanded(
+                              child: _StatCell(
+                                  label: 'Day H',
+                                  value: _fmtPrice(stock.dayHigh),
+                                  c: c)),
+                          Expanded(
+                              child: _StatCell(
+                                  label: '52W H',
+                                  value: _fmtPrice(stock.fiftyTwoWeekHigh),
+                                  c: c)),
+                          Expanded(
+                              child: _StatCell(
+                                  label: '52W L',
+                                  value: _fmtPrice(stock.fiftyTwoWeekLow),
+                                  c: c)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectorChip extends StatelessWidget {
+  const _SectorChip({required this.sector, required this.c});
+  final String sector;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.surfaceElevated,
+        borderRadius: BorderRadius.circular(AppRadius.xs),
+        border: Border.all(color: c.border),
+      ),
+      child: Text(
+        sector,
+        style: AppTypography.xs.copyWith(
+          color: c.textSecondary,
+          fontWeight: FontWeight.w600,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+  }
+}
+
+class _StatCell extends StatelessWidget {
+  const _StatCell({required this.label, required this.value, required this.c});
+  final String label;
+  final String value;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: AppTypography.xs.copyWith(
+            color: c.textFaint,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.6,
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          value,
+          style: AppTypography.xs.copyWith(
+            color: c.textPrimary,
+            fontWeight: FontWeight.w600,
+            fontFeatures: const [FontFeature.tabularFigures()],
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 }
@@ -397,222 +1126,6 @@ class _FilterChip extends StatelessWidget {
             color: active ? c.accent : c.textSecondary,
             fontWeight: active ? FontWeight.w700 : FontWeight.w500,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-// ── Version Dot ───────────────────────────────────────────────────────────────
-
-class _VersionDot extends StatelessWidget {
-  const _VersionDot(
-      {required this.label, required this.active, required this.c});
-  final String label;
-  final bool active;
-  final AppPalette c;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: AppTypography.xs.copyWith(
-        color: active ? c.accent : c.textMuted,
-        fontWeight: active ? FontWeight.w700 : FontWeight.w400,
-      ),
-    );
-  }
-}
-
-// ── Best Setups Locked/Loading Bodies ─────────────────────────────────────────
-
-class _BestSetupsLockedBody extends StatelessWidget {
-  const _BestSetupsLockedBody(
-      {required this.c, required this.context});
-  final AppPalette c;
-  final BuildContext context;
-
-  @override
-  Widget build(BuildContext ctx) {
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.s4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  height: 10,
-                  width: 180,
-                  decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(AppRadius.xs),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.s2),
-                Container(
-                  height: 10,
-                  width: 120,
-                  decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(AppRadius.xs),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: AppSpacing.s3),
-          GestureDetector(
-            onTap: () => UpgradeSheet.show(context, feature: 'best_setups'),
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-              decoration: BoxDecoration(
-                color: c.accent,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-              ),
-              child: Text('Upgrade to Pro',
-                  style: AppTypography.xs.copyWith(
-                      color: Colors.black, fontWeight: FontWeight.w700)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _BestSetupsLoadingBody extends StatelessWidget {
-  const _BestSetupsLoadingBody({required this.c});
-  final AppPalette c;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(AppSpacing.s4),
-      child: Row(
-        children: [
-          SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(
-                  strokeWidth: 1.5, color: c.textMuted)),
-          const SizedBox(width: AppSpacing.s3),
-          Text("Checking today's setups…",
-              style: AppTypography.xs.copyWith(color: c.textMuted)),
-        ],
-      ),
-    );
-  }
-}
-
-// ── Setup Row ─────────────────────────────────────────────────────────────────
-
-TextSpan _wrSpan(String label, double rate, AppPalette c,
-    {bool muted = false}) {
-  final color = muted
-      ? c.textFaint
-      : rate >= 70
-          ? c.positive
-          : rate >= 55
-              ? c.warning
-              : c.danger;
-  return TextSpan(
-    text: '$label ${rate.toStringAsFixed(0)}%',
-    style: AppTypography.xs
-        .copyWith(color: color, fontWeight: FontWeight.w600),
-  );
-}
-
-TextSpan _dotSep(AppPalette c) => TextSpan(
-    text: ' · ',
-    style: AppTypography.xs.copyWith(color: c.textFaint));
-
-class _SetupRow extends StatelessWidget {
-  const _SetupRow(
-      {required this.setup, required this.version, required this.type});
-  final BestSetup setup;
-  final String version;
-  final String type;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return GestureDetector(
-      onTap: () =>
-          context.push('/trading/10x-backtest?version=$version&type=$type'),
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: c.border)),
-        ),
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
-        child: Row(
-          children: [
-            Text(setup.flag, style: const TextStyle(fontSize: 18)),
-            const SizedBox(width: AppSpacing.s3),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(setup.name,
-                      style: AppTypography.labelSm
-                          .copyWith(color: c.textPrimary),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis),
-                  Row(
-                    children: List.generate(4, (i) {
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 2),
-                        child: Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: i < setup.signalsActive
-                                ? c.accent
-                                : c.border,
-                          ),
-                        ),
-                      );
-                    })
-                      ..add(Padding(
-                        padding: const EdgeInsets.only(left: 4),
-                        child: Text(
-                          '${setup.signalsActive} signal${setup.signalsActive == 1 ? '' : 's'}',
-                          style: AppTypography.xs
-                              .copyWith(color: c.textMuted),
-                        ),
-                      )),
-                  ),
-                ],
-              ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                RichText(
-                  text: TextSpan(children: [
-                    _wrSpan('1m', setup.winRate1m, c),
-                    _dotSep(c),
-                    _wrSpan('3m', setup.winRate3m, c),
-                    _dotSep(c),
-                    _wrSpan('1y', setup.winRate1y, c),
-                    if (setup.sampleSize3y > 0) ...[
-                      _dotSep(c),
-                      _wrSpan('3y', setup.winRate3y, c,
-                          muted: setup.sampleSize3y < 10),
-                    ],
-                  ]),
-                ),
-                Text(
-                  'Avg ${setup.avgReturn3m >= 0 ? '+' : ''}${setup.avgReturn3m.toStringAsFixed(1)}% 3m',
-                  style: AppTypography.xs.copyWith(color: c.textMuted),
-                ),
-              ],
-            ),
-          ],
         ),
       ),
     );
@@ -1217,156 +1730,6 @@ String _fmtRelative(String iso) {
   }
 }
 
-void _showBestSetupsInfo(BuildContext context) {
-  final c = context.colors;
-  showModalBottomSheet(
-    context: context,
-    backgroundColor: c.surface,
-    isScrollControlled: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-    ),
-    builder: (_) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.75,
-      minChildSize: 0.4,
-      maxChildSize: 0.95,
-      builder: (ctx, scrollController) => ListView(
-        controller: scrollController,
-        padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
-            AppSpacing.s5, AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
-        children: [
-          Center(
-            child: Container(
-              width: 36, height: 4,
-              decoration: BoxDecoration(
-                  color: c.border, borderRadius: BorderRadius.circular(2)),
-            ),
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Row(
-            children: [
-              Icon(Icons.bolt_rounded, size: 18, color: c.warning),
-              const SizedBox(width: AppSpacing.s2),
-              Expanded(
-                child: Text('Best Setups Right Now',
-                    style: AppTypography.headingMd
-                        .copyWith(color: c.textPrimary)),
-              ),
-            ],
-          ),
-          const SizedBox(height: AppSpacing.s3),
-          Text(
-            'Surfaces assets that have at least one signal firing today and a historical 1-month win rate of ≥65% when that exact number of signals were active — ranked best-to-worst.',
-            style: AppTypography.sm
-                .copyWith(color: c.textSecondary, height: 1.55),
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Text('How to read each row',
-              style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-          const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
-            c: c,
-            label: '1m / 3m / 1y',
-            body: 'Historical win rate over those periods when the same number of signals were active. '
-                'Green = ≥65%, orange = 50–64%, red = below 50%.',
-          ),
-          const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
-            c: c,
-            label: 'Signal dots',
-            body: 'Filled green dots = active signals right now (Volume Spike, Heartbeat, Record Quarter, Trend). '
-                'More dots = stronger confluence.',
-          ),
-          const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
-            c: c,
-            label: 'Avg +X% 3m',
-            body: 'Average price return 3 months after previous setups with this many signals fired. '
-                'Positive means past occurrences were profitable on average.',
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.s4),
-            decoration: BoxDecoration(
-              color: c.accent.withAlpha(12),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              border: Border.all(color: c.accent.withAlpha(40)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('v1 vs v2',
-                    style: AppTypography.labelSm
-                        .copyWith(color: c.accent, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text(
-                  'v1 uses stricter accumulation rules (< 30% range over 2 years, up to 3 signals).\n'
-                  'v2 follows the Pine Script reference: ≤ 35% range over 200 bars, confirmed breakout above the 50-bar high, and adds a 4th Trend signal.\n\n'
-                  'Use v2 for assets closer to a confirmed breakout; v1 for early accumulation.',
-                  style: AppTypography.xs
-                      .copyWith(color: c.textSecondary, height: 1.55),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          Container(
-            padding: const EdgeInsets.all(AppSpacing.s4),
-            decoration: BoxDecoration(
-              color: c.warning.withAlpha(15),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              border: Border.all(color: c.warning.withAlpha(50)),
-            ),
-            child: Text(
-              'Past win rates are based on historical backtest data and do not guarantee future results. '
-              'Always use your own analysis and risk management.',
-              style: AppTypography.xs
-                  .copyWith(color: c.textSecondary, height: 1.55),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
-class _BestSetupsInfoRow extends StatelessWidget {
-  const _BestSetupsInfoRow(
-      {required this.c, required this.label, required this.body});
-  final AppPalette c;
-  final String label;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 3),
-          decoration: BoxDecoration(
-            color: c.surfaceCard,
-            borderRadius: BorderRadius.circular(AppRadius.xs),
-            border: Border.all(color: c.border),
-          ),
-          child: Text(label,
-              style: AppTypography.xs.copyWith(
-                  color: c.textPrimary, fontWeight: FontWeight.w600)),
-        ),
-        const SizedBox(width: AppSpacing.s3),
-        Expanded(
-          child: Text(body,
-              style: AppTypography.xs
-                  .copyWith(color: c.textSecondary, height: 1.55)),
-        ),
-      ],
-    );
-  }
-}
-
-
 // ── Sector Best Setups Card ───────────────────────────────────────────────────
 
 class _SectorBestSetupsCard extends ConsumerWidget {
@@ -1418,9 +1781,9 @@ class _SectorBestSetupsCard extends ConsumerWidget {
               border: Border.all(color: c.border),
             ),
             child: !isPro
-                ? _BestSetupsLockedBody(c: c, context: context)
+                ? BestSetupsLockedBody(c: c, context: context)
                 : async.when(
-                    loading: () => _BestSetupsLoadingBody(c: c),
+                    loading: () => BestSetupsLoadingBody(c: c),
                     error: (_, __) => Padding(
                       padding: const EdgeInsets.all(AppSpacing.s4),
                       child: Text('Unable to load sector setups',
@@ -1436,7 +1799,7 @@ class _SectorBestSetupsCard extends ConsumerWidget {
                               Icon(Icons.hourglass_top_rounded,
                                   size: 14, color: c.textMuted),
                               const SizedBox(width: 6),
-                              Text('Warming up — check back in ~2 min',
+                              Text('Computing best setups — refreshing automatically…',
                                   style: AppTypography.xs
                                       .copyWith(color: c.textMuted)),
                             ],
@@ -1708,13 +2071,13 @@ void _showSectorBestSetupsInfo(BuildContext context) {
           Text('RRG Quadrants',
               style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
           const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
+          BestSetupsInfoRow(
             c: c,
             label: 'Leading',
             body: 'Sector is outperforming the S&P 500 (RS Ratio > 100) AND gaining relative momentum (RS Momentum > 100). Strongest rotation zone.',
           ),
           const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
+          BestSetupsInfoRow(
             c: c,
             label: 'Improving',
             body: 'Sector is underperforming vs S&P 500 (RS Ratio < 100) but its momentum is rising (RS Momentum > 100). Early-rotation zone — setups here can be early-stage.',
@@ -1723,13 +2086,13 @@ void _showSectorBestSetupsInfo(BuildContext context) {
           Text('Within each sector',
               style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
           const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
+          BestSetupsInfoRow(
             c: c,
             label: 'Signal dots',
             body: 'Filled dots = signals active right now (Volume Spike, Heartbeat, Record Quarter, Trend). More dots = stronger confluence.',
           ),
           const SizedBox(height: AppSpacing.s4),
-          _BestSetupsInfoRow(
+          BestSetupsInfoRow(
             c: c,
             label: '% 1m',
             body: 'Historical win rate over 1 month when this many signals were active. Green ≥ 65%, orange 50–64%, red below 50%.',

@@ -23,6 +23,7 @@ import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/shimmer_list.dart';
 import '../../shared/widgets/theme_toggle.dart';
 import '../../providers/watchlist_provider.dart';
+import '../investing/best_setups_card.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -150,7 +151,7 @@ class _TradingScreenState extends State<TradingScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 4, vsync: this);
+    _tab = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -175,6 +176,7 @@ class _TradingScreenState extends State<TradingScreen>
           isScrollable: true,
           tabAlignment: TabAlignment.fill,
           tabs: const [
+            Tab(text: 'Instruments'),
             Tab(text: 'Dashboard'),
             Tab(text: 'Power Moves'),
             Tab(text: 'Signals'),
@@ -187,6 +189,7 @@ class _TradingScreenState extends State<TradingScreen>
           controller: _tab,
           children: const [
             _DashboardTab(),
+            _DashboardzTab(),
             _PowerMovesTab(),
             _SignalsTab(),
             _AlertsTab(),
@@ -208,11 +211,11 @@ class _DashboardTab extends ConsumerStatefulWidget {
 
 class _DashboardTabState extends ConsumerState<_DashboardTab>
     with WidgetsBindingObserver {
-  String _category = 'All';
+  String _category = 'Commodities';
   Timer? _refreshTimer;
   DateTime _lastQuotesUpdate = DateTime.now();
 
-  static const _categories = ['Watchlist', 'Commodities', 'Indices', 'Stocks', 'Forex', 'Crypto', 'All'];
+  static const _categories = ['Watchlist', 'Commodities', 'Indices', 'Stocks', 'Forex', 'Crypto'];
 
   @override
   void initState() {
@@ -310,7 +313,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
                       FilledButton.icon(
                         onPressed: () {
                           HapticFeedback.lightImpact();
-                          setState(() => _category = 'All');
+                          setState(() => _category = 'Commodities');
                         },
                         style: FilledButton.styleFrom(
                           backgroundColor: c.accentDim18,
@@ -374,9 +377,8 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
         onRetry: () => ref.invalidate(_quotesProvider),
       ),
       data: (quotes) {
-        final filtered = _category == 'All'
-            ? quotes
-            : quotes.where((q) => q.category == _category).toList();
+        final filtered =
+            quotes.where((q) => q.category == _category).toList();
 
         return Column(
           children: [
@@ -402,6 +404,50 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
           ],
         );
       },
+    );
+  }
+}
+
+// ── Dashboardz Tab (Best Setups — Assets) ─────────────────────────────────────
+
+class _DashboardzTab extends ConsumerStatefulWidget {
+  const _DashboardzTab();
+
+  @override
+  ConsumerState<_DashboardzTab> createState() => _DashboardzTabState();
+}
+
+class _DashboardzTabState extends ConsumerState<_DashboardzTab> {
+  String _version = 'v1';
+  static const String _type = 'assets';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      TradingRepository.instance
+          .fetchBestSetups(version: 'v1', type: _type)
+          .ignore();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.s5,
+        AppSpacing.s5,
+        AppSpacing.s5,
+        AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+      ),
+      children: [
+        BestSetupsCard(
+          type: _type,
+          version: _version,
+          onVersionChanged: (v) => setState(() => _version = v),
+        ),
+      ],
     );
   }
 }

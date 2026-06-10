@@ -76,6 +76,7 @@ const FEAR_GREED_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 
 export function registerVolatilityRoutes(app: Express): void {
   app.get("/api/volatility/assets", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=300, stale-while-revalidate=600"); // 5m / 10m SWR
     const cacheKey = "volatility-assets-v3";
     const cached = volatilityCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < VOLATILITY_CACHE_DURATION) {
@@ -150,6 +151,7 @@ export function registerVolatilityRoutes(app: Express): void {
 
     const cached = briefingCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < BRIEFING_CACHE_DURATION) {
+      res.set("Cache-Control", "private, max-age=900"); // 15m — POST is per-user, no SWR for AI
       return res.json({ briefing: cached.briefing, generatedAt: cached.generatedAt });
     }
 
@@ -197,6 +199,7 @@ export function registerVolatilityRoutes(app: Express): void {
       return res.status(400).json({ error: "symbol and name required" });
     }
     const cacheKey = `news-${symbol}`;
+    res.set("Cache-Control", "public, max-age=900, stale-while-revalidate=1800"); // 15m / 30m SWR
     const cached = newsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < NEWS_CACHE_DURATION) {
       return res.json(cached.data);
@@ -279,6 +282,7 @@ export function registerVolatilityRoutes(app: Express): void {
 
   // GET /api/volatility/fear-greed
   app.get("/api/volatility/fear-greed", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=1800, stale-while-revalidate=3600"); // 30m / 1h SWR
     if (fearGreedCache && Date.now() - fearGreedCache.timestamp < FEAR_GREED_CACHE_DURATION) {
       return res.json(fearGreedCache.data);
     }

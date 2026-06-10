@@ -182,6 +182,12 @@ class NewsArticle {
       );
 }
 
+class NewsResult {
+  const NewsResult({required this.articles, required this.aggregateSentiment});
+  final List<NewsArticle> articles;
+  final double aggregateSentiment;
+}
+
 class StockSearchResult {
   const StockSearchResult({
     required this.symbol,
@@ -986,5 +992,56 @@ class OgeTransactionsResponse {
         total:       (j['total'] as num?)?.toInt() ?? 0,
         lastUpdated: j['lastUpdated'] as String? ?? '',
         loading:     j['loading'] as bool? ?? false,
+      );
+}
+
+// ── Institutional Flow ────────────────────────────────────────────────────────
+
+class InstitutionalFlowStock {
+  const InstitutionalFlowStock({
+    required this.symbol,
+    required this.name,
+    required this.price,
+    required this.changePercent,
+    required this.volumeRatio,
+    this.vwapDeviation,
+  });
+
+  final String symbol;
+  final String name;
+  final double price;
+  final double changePercent;
+  final double volumeRatio;
+  final double? vwapDeviation;
+
+  factory InstitutionalFlowStock.fromJson(Map<String, dynamic> j) =>
+      InstitutionalFlowStock(
+        symbol:        j['symbol'] as String,
+        name:          j['name'] as String,
+        price:         (j['price'] as num).toDouble(),
+        changePercent: (j['changePercent'] as num).toDouble(),
+        volumeRatio:   (j['volumeRatio'] as num).toDouble(),
+        vwapDeviation: (j['vwapDeviation'] as num?)?.toDouble(),
+      );
+}
+
+class InstitutionalFlowResult {
+  const InstitutionalFlowResult({
+    required this.assets,
+    required this.type,
+    required this.lastUpdated,
+  });
+
+  final List<InstitutionalFlowStock> assets;
+  final String type;
+  final String lastUpdated;
+
+  factory InstitutionalFlowResult.fromJson(Map<String, dynamic> j) =>
+      InstitutionalFlowResult(
+        assets: (j['assets'] as List? ?? [])
+            .map((e) => InstitutionalFlowStock.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        type:        j['type'] as String? ?? '',
+        lastUpdated: j['lastUpdated'] as String? ?? '',
       );
 }

@@ -48,7 +48,7 @@ final _backtestProvider = FutureProvider.autoDispose
 );
 
 final _newsProvider = FutureProvider.autoDispose
-    .family<List<NewsArticle>, String>(
+    .family<NewsResult, String>(
   (ref, symbol) {
     ref.keepAlive();
     return TradingRepository.instance.fetchNews(symbol);
@@ -2192,19 +2192,245 @@ class _NewsTab extends ConsumerWidget {
     final async = ref.watch(_newsProvider(symbol));
 
     return async.when(
-      loading: () => Center(
-          child: CircularProgressIndicator(color: c.accent)),
-      error: (_, __) =>
-          const ErrorView(message: 'News unavailable'),
-      data: (articles) => ListView.builder(
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.s5,
-          AppSpacing.s5,
-          AppSpacing.s5,
-          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
-        ),
-        itemCount: articles.length,
-        itemBuilder: (ctx, i) => _NewsCard(article: articles[i]),
+      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+      error: (_, __) => const ErrorView(message: 'News unavailable'),
+      data: (result) => Column(
+        children: [
+          _NewsMoodBanner(
+            score: result.aggregateSentiment,
+            articleCount: result.articles.length,
+            c: c,
+          ),
+          Expanded(
+            child: ListView.builder(
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.s5,
+                AppSpacing.s3,
+                AppSpacing.s5,
+                AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+              ),
+              itemCount: result.articles.length,
+              itemBuilder: (ctx, i) => _NewsCard(article: result.articles[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NewsMoodBanner extends StatelessWidget {
+  const _NewsMoodBanner({
+    required this.score,
+    required this.articleCount,
+    required this.c,
+  });
+  final double score;
+  final int articleCount;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = score > 20
+        ? ('BULLISH', c.positive)
+        : score < -20
+            ? ('BEARISH', c.danger)
+            : ('NEUTRAL', c.warning);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(
+          AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Row(
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('News Mood',
+                      style: AppTypography.xs.copyWith(color: c.textMuted)),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: () => _showNewsMoodInfoModal(context, c),
+                    child: Icon(Icons.info_outline_rounded,
+                        size: 12, color: c.textFaint),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                'Based on $articleCount article${articleCount == 1 ? '' : 's'}',
+                style: AppTypography.xs.copyWith(color: c.textMuted),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: color.withAlpha(30),
+              borderRadius: BorderRadius.circular(AppRadius.full),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(label,
+                    style: AppTypography.labelSm.copyWith(
+                        color: color, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 6),
+                Text(
+                  '${score > 0 ? '+' : ''}${score.toStringAsFixed(0)}',
+                  style: AppTypography.labelSm
+                      .copyWith(color: color.withAlpha(180)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+void _showNewsMoodInfoModal(BuildContext context, AppPalette c) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.85,
+      builder: (ctx, scrollController) => Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: c.border,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.s5),
+                Text('How News Mood Works',
+                    style:
+                        AppTypography.headingMd.copyWith(color: c.textPrimary)),
+                const SizedBox(height: AppSpacing.s4),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView(
+              controller: scrollController,
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.s5,
+                0,
+                AppSpacing.s5,
+                AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom,
+              ),
+              children: [
+                _MoodInfoRow(
+                  c: c,
+                  title: 'What it measures',
+                  body:
+                      'The score averages the sentiment of the most recent headlines '
+                      'for this asset. Each headline is scored from −100 (very bearish) '
+                      'to +100 (very bullish), then averaged.',
+                ),
+                _MoodInfoRow(
+                  c: c,
+                  title: 'BULLISH / NEUTRAL / BEARISH thresholds',
+                  body:
+                      'Score above +20 → BULLISH. Score below −20 → BEARISH. '
+                      'Everything in between is NEUTRAL. The wide neutral band accounts '
+                      'for scoring noise.',
+                ),
+                _MoodInfoRow(
+                  c: c,
+                  title: 'Scoring method',
+                  body:
+                      'When a premium news data source is available, per-ticker NLP sentiment '
+                      'is used and is reasonably accurate for clear headline language. '
+                      'Without that source, scoring falls back to keyword matching '
+                      '(e.g. "surge", "rally" vs "crash", "plunge") with no negation '
+                      'handling — so "not rising" still scores as bullish. '
+                      'Accuracy on nuanced or compound headlines is lower in that mode.',
+                ),
+                _MoodInfoRow(
+                  c: c,
+                  title: 'Small sample caveat',
+                  body:
+                      'Only 3–8 headlines are analysed. A single strongly-worded '
+                      'headline can swing the score significantly. Treat the label as a '
+                      'rough directional signal, not a statistically stable reading.',
+                ),
+                _MoodInfoRow(
+                  c: c,
+                  title: 'Not a buy or sell signal',
+                  body:
+                      'News Mood reflects recent media framing of an asset, not a '
+                      'trading recommendation. Price action frequently diverges from '
+                      'headline sentiment. Use this alongside technical signals and '
+                      'your own analysis.',
+                  isLast: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _MoodInfoRow extends StatelessWidget {
+  const _MoodInfoRow({
+    required this.c,
+    required this.title,
+    required this.body,
+    this.isLast = false,
+  });
+  final AppPalette c;
+  final String title;
+  final String body;
+  final bool isLast;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : AppSpacing.s5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: AppTypography.labelMd
+                  .copyWith(color: c.textPrimary, fontWeight: FontWeight.w600)),
+          const SizedBox(height: AppSpacing.s2),
+          Text(body,
+              style:
+                  AppTypography.sm.copyWith(color: c.textSecondary, height: 1.5)),
+        ],
       ),
     );
   }

@@ -895,6 +895,7 @@ export function registerMarketsRoutes(app: Express): void {
   });
 
   app.get("/api/futures/cot-metals", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR (weekly upstream)
     if (cotMetalsCache && Date.now() - cotMetalsCache.timestamp < COT_CACHE_DURATION) {
       return res.json(cotMetalsCache.data);
     }
@@ -967,7 +968,8 @@ export function registerMarketsRoutes(app: Express): void {
   const CB_LAST_UPDATED = "2026-05-23T00:00:00.000Z";
 
   app.get("/api/central-bank-rates", (_req, res) => {
-    res.set("Cache-Control", "public, max-age=21600"); // 6h
+    // Editorial data, refreshes on deploy — long edge TTL is safe.
+    res.set("Cache-Control", "public, max-age=21600, stale-while-revalidate=43200"); // 6h / 12h SWR
     res.json({
       rates: CB_RATES,
       lastUpdated: CB_LAST_UPDATED,

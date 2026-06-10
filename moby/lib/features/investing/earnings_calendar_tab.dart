@@ -12,6 +12,7 @@ import '../../shared/widgets/shimmer_list.dart';
 
 final _earningsCalendarProvider =
     FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  ref.keepAlive(); // calendar data changes daily, fine for a session
   final data = await ApiClient.instance.get(ApiEndpoints.earningsCalendar)
       as Map<String, dynamic>;
   return (data['items'] as List?)?.cast<Map<String, dynamic>>() ?? [];

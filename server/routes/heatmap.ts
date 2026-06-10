@@ -155,6 +155,7 @@ const assetsInFlightMap = new Map<string, Promise<void>>();
 export function registerHeatmapRoutes(app: Express): void {
   app.get("/api/heatmap", async (_req, res) => {
     try {
+      res.set("Cache-Control", "public, max-age=450, stale-while-revalidate=900"); // 7.5m / 15m SWR
       if (heatmapCache && Date.now() - heatmapCache.timestamp < HEATMAP_CACHE_DURATION) {
         return res.json(heatmapCache.data);
       }
@@ -227,6 +228,7 @@ export function registerHeatmapRoutes(app: Express): void {
         ? INDIVIDUAL_ASSETS
         : INDIVIDUAL_ASSETS.filter((a) => a.category === category);
 
+      res.set("Cache-Control", "public, max-age=900, stale-while-revalidate=1800"); // 15m / 30m SWR
       const cached = assetsCacheMap.get(category);
       if (cached && Date.now() - cached.timestamp < ASSETS_CACHE_DURATION) {
         return res.json(cached.data);
@@ -255,6 +257,84 @@ export function registerHeatmapRoutes(app: Express): void {
     } catch (e) {
       console.error("Error fetching individual assets heatmap:", e);
       res.status(500).json({ error: "Failed to fetch assets heatmap" });
+    }
+  });
+
+  // ── Movers (Pro): top gainers/losers per US index in the active session ──
+  // GET /api/heatmap/movers?index=sp500|ndx|russell2000
+  // Auto-resolves session from marketState: PRE → pre-market %, REGULAR → today %,
+  // POST/POSTPOST → after-hours %. Reuses the treemap quote pipeline so cache hits
+  // are shared across both endpoints.
+  app.get("/api/heatmap/movers", async (req, res) => {
+    try {
+      if (!isPro(getDevicePlan(req))) {
+        return res.status(403).json({
+          error: "Movers requires Pro plan.",
+          code: "PLAN_REQUIRED",
+        });
+      }
+
+      const index = (req.query.index as string | undefined)?.toLowerCase() ?? "sp500";
+      const SUPPORTED_MOVER_INDICES = new Set(["sp500", "ndx", "russell2000"]);
+      if (!SUPPORTED_MOVER_INDICES.has(index)) {
+        return res.status(400).json({
+          error: `Unsupported index: ${index}. Supported: ${[...SUPPORTED_MOVER_INDICES].join(", ")}.`,
+        });
+      }
+
+      // Plan-gated → private; quote TTL on the upstream treemap cache is 5 min.
+      res.set("Cache-Control", "private, max-age=150, stale-while-revalidate=300");
+
+      // Reuse the treemap 1d cache — the underlying stock list already carries
+      // every field we need (regular changePercent, pre/postMarketChangePercent,
+      // marketState). limit=500 to surface the full universe before we filter.
+      const cacheKey = `${index}:1d`;
+      await ensureTreemapCacheFresh(cacheKey, index, "1d", 500);
+      const cached = treemapDataCache.get(cacheKey)!;
+      const marketState = cached.marketState ?? "REGULAR";
+
+      const session: "pre" | "regular" | "post" =
+        marketState === "PRE"
+          ? "pre"
+          : (marketState === "POST" || marketState === "POSTPOST")
+          ? "post"
+          : "regular";
+
+      const pickPct = (s: typeof cached.stocks[number]): number | null => {
+        if (session === "pre") return s.preMarketChangePercent;
+        if (session === "post") return s.postMarketChangePercent;
+        return s.changePercent;
+      };
+
+      const ranked = cached.stocks
+        .map((s) => ({ stock: s, pct: pickPct(s) }))
+        .filter((r): r is { stock: typeof cached.stocks[number]; pct: number } =>
+          r.pct != null && Number.isFinite(r.pct),
+        );
+
+      const gainers = ranked
+        .filter((r) => r.pct > 0)
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 10)
+        .map((r) => r.stock);
+
+      const losers = ranked
+        .filter((r) => r.pct < 0)
+        .sort((a, b) => a.pct - b.pct)
+        .slice(0, 10)
+        .map((r) => r.stock);
+
+      return res.json({
+        index,
+        session,
+        marketState,
+        gainers,
+        losers,
+        lastUpdated: cached.lastUpdated,
+      });
+    } catch (e) {
+      console.error("Error fetching movers data:", e);
+      res.status(500).json({ error: "Failed to fetch movers data" });
     }
   });
 
@@ -293,6 +373,8 @@ export function registerHeatmapRoutes(app: Express): void {
         });
       }
 
+      // Plan-gated → use `private`; quotes refresh every 5m, constituents 24h.
+      res.set("Cache-Control", "private, max-age=300, stale-while-revalidate=600"); // 5m / 10m SWR
       const cacheKey = `${index}:${timeframe}`;
       await ensureTreemapCacheFresh(cacheKey, index, timeframe, limit);
       const cached = treemapDataCache.get(cacheKey)!;
