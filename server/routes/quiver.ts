@@ -70,7 +70,7 @@ function mapNameToTicker(name: string): string | null {
 
 // ── Known company names (for snapshot data) ───────────────────────────────────
 
-const KNOWN_NAMES: Record<string, string> = {
+export const KNOWN_NAMES: Record<string, string> = {
   NVDA: "NVIDIA Corp", TSM: "Taiwan Semiconductor", META: "Meta Platforms",
   AMZN: "Amazon.com", MSFT: "Microsoft Corp", IBIT: "iShares Bitcoin ETF",
   MU: "Micron Technology", AAPL: "Apple Inc", AVGO: "Broadcom Inc",
@@ -588,6 +588,52 @@ async function fetchInsiderLive(daysBack: number): Promise<Array<{ ticker: strin
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([ticker, count]) => ({ ticker, count }));
+}
+
+// Distinct-insider clusters: tickers where ≥2 different insiders filed Form 4s
+// within the lookback window. Used by the institutional-flow scanner in
+// server/trading.ts (type=insider). Throws on EDGAR failure — caller handles.
+export async function fetchInsiderClusters(
+  daysBack: number,
+): Promise<Array<{ ticker: string; insiderCount: number; filingCount: number }>> {
+  const startdt = new Date(Date.now() - daysBack * 86_400_000).toISOString().slice(0, 10);
+  const url = `https://efts.sec.gov/LATEST/search-index?forms=4&dateRange=custom&startdt=${startdt}`;
+
+  const resp = await fetch(url, {
+    headers: { "User-Agent": "monysa-app/1.0 research@monysa.com" },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!resp.ok) throw new Error(`EDGAR ${resp.status}`);
+
+  const data = await resp.json() as { hits?: { hits?: Array<{ _source?: Record<string, unknown> }> } };
+  const hits = data.hits?.hits ?? [];
+  if (hits.length < 2) throw new Error("Insufficient EDGAR data");
+
+  // Per ticker: set of distinct insider (person) names + total filing count.
+  const clusters = new Map<string, { insiders: Set<string>; filings: number }>();
+  for (const h of hits) {
+    const src = h._source ?? {};
+    const displayNames = Array.isArray(src.display_names) ? (src.display_names as string[]) : [];
+    let ticker = "";
+    let person = "";
+    for (const entry of displayNames) {
+      const name = entry.split(/\s{2,}\(CIK/)[0].trim();
+      const mapped = mapNameToTicker(name.toUpperCase());
+      if (mapped && !ticker) ticker = mapped;
+      // Entries that don't resolve to a ticker are the individual filer(s).
+      else if (!mapped && !person) person = name.toUpperCase();
+    }
+    if (!ticker || ticker.length > 6 || !person) continue;
+    const entry = clusters.get(ticker) ?? { insiders: new Set<string>(), filings: 0 };
+    entry.insiders.add(person);
+    entry.filings += 1;
+    clusters.set(ticker, entry);
+  }
+
+  return Array.from(clusters.entries())
+    .map(([ticker, v]) => ({ ticker, insiderCount: v.insiders.size, filingCount: v.filings }))
+    .filter(c => c.insiderCount >= 2)
+    .sort((a, b) => b.insiderCount - a.insiderCount || b.filingCount - a.filingCount);
 }
 
 async function getInsiderPortfolio(): Promise<QuiverItem[]> {

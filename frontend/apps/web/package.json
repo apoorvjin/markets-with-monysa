@@ -1,0 +1,32 @@
+{
+  "name": "@monysa/web",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@monysa/api-client": "workspace:*",
+    "@monysa/charts": "workspace:*",
+    "@monysa/contracts": "workspace:*",
+    "@monysa/ui": "workspace:*",
+    "@tanstack/query-sync-storage-persister": "^5.62.0",
+    "@tanstack/react-query": "^5.62.0",
+    "@tanstack/react-query-persist-client": "^5.62.0",
+    "@tanstack/react-router": "^1.95.0",
+    "cmdk": "^1.0.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

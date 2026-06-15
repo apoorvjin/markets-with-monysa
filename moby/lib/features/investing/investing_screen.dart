@@ -257,6 +257,9 @@ class _InstitutionalFlowCardState
     (id: 'accumulation', label: 'Accumulation'),
     (id: 'distribution', label: 'Distribution'),
     (id: 'vwap', label: 'VWAP Break'),
+    (id: 'obv', label: 'OBV Divergence'),
+    (id: 'short', label: 'Short Squeeze'),
+    (id: 'insider', label: 'Insider Clusters'),
   ];
   String _selected = 'accumulation';
 
@@ -296,7 +299,7 @@ class _InstitutionalFlowCardState
           ),
           const SizedBox(height: AppSpacing.s2),
           Text(
-            'Top 10 US stocks with unusual volume indicating institutional activity',
+            'Top 10 US stocks showing institutional buying, selling, or squeeze pressure',
             style: AppTypography.xs.copyWith(color: c.textMuted),
           ),
           const SizedBox(height: AppSpacing.s4),
@@ -410,7 +413,7 @@ class _InstitutionalFlowCardState
             ]),
             const SizedBox(height: AppSpacing.s3),
             Text(
-              'Detects unusual volume activity consistent with large institutional orders. All modes require volume ≥ 2× the 3-month daily average.',
+              'Detects price, volume, short-interest, and insider-filing patterns consistent with large institutional positioning — often before the move is obvious.',
               style:
                   AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
             ),
@@ -434,6 +437,27 @@ class _InstitutionalFlowCardState
               label: 'VWAP Break',
               body:
                   'Price deviates ≥ 1.5% from the 20-day VWAP AND volumeRatio ≥ 3.0. Strong directional conviction from large players.',
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            BestSetupsInfoRow(
+              c: c,
+              label: 'OBV Divergence',
+              body:
+                  'On-Balance Volume rising over 14 days while price stays flat or down — volume flowing in before the price confirms. Quiet accumulation.',
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            BestSetupsInfoRow(
+              c: c,
+              label: 'Short Squeeze',
+              body:
+                  '≥ 10% of the float sold short while the price is already rising. Shorts forced to cover add fuel to the move. "SI" = short interest; "cover" = days to cover at average volume.',
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            BestSetupsInfoRow(
+              c: c,
+              label: 'Insider Clusters',
+              body:
+                  'Two or more different insiders filed SEC Form 4s on the same stock within 30 days. Multiple insiders acting together is a far stronger signal than a single filing.',
             ),
             const SizedBox(height: AppSpacing.s5),
             Container(
@@ -468,6 +492,73 @@ class _FlowStockRow extends StatelessWidget {
   final String type;
   final AppPalette c;
 
+  Widget _miniBadge(String text, Color color) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: color.withAlpha(18),
+          borderRadius: BorderRadius.circular(AppRadius.xs),
+          border: Border.all(color: color.withAlpha(55)),
+        ),
+        child: Text(
+          text,
+          style: AppTypography.xs.copyWith(
+            color: color,
+            fontSize: 9,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      );
+
+  List<Widget> _typeBadges() {
+    final badges = <Widget>[];
+    if (stock.volumeRatio > 0) {
+      badges.add(_miniBadge(
+          '${stock.volumeRatio.toStringAsFixed(1)}× vol', c.accent));
+    }
+    switch (type) {
+      case 'vwap':
+        final d = stock.vwapDeviation;
+        if (d != null) {
+          badges.add(_miniBadge(
+            '${d >= 0 ? '+' : ''}${d.toStringAsFixed(1)}% VWAP',
+            d >= 0 ? c.positive : c.danger,
+          ));
+        }
+      case 'obv':
+        final slope = stock.obvSlopeRatio;
+        if (slope != null) {
+          badges.add(_miniBadge('OBV +${slope.toStringAsFixed(1)}d', c.accent));
+        }
+        final pc = stock.periodChangePercent;
+        if (pc != null) {
+          badges.add(_miniBadge(
+            '${pc >= 0 ? '+' : ''}${pc.toStringAsFixed(1)}% 14d',
+            pc >= 0 ? c.positive : c.danger,
+          ));
+        }
+      case 'short':
+        final si = stock.shortPercentFloat;
+        if (si != null) {
+          badges.add(_miniBadge('${si.toStringAsFixed(1)}% SI', c.warning));
+        }
+        final cover = stock.shortRatio;
+        if (cover != null) {
+          badges.add(
+              _miniBadge('${cover.toStringAsFixed(1)}d cover', c.textMuted));
+        }
+      case 'insider':
+        final n = stock.insiderCount;
+        if (n != null) {
+          badges.add(_miniBadge('$n insiders', c.accent));
+        }
+        final f = stock.filingCount;
+        if (f != null && n != null && f > n) {
+          badges.add(_miniBadge('$f filings', c.textMuted));
+        }
+    }
+    return badges;
+  }
+
   @override
   Widget build(BuildContext context) {
     final isUp = stock.changePercent >= 0;
@@ -495,7 +586,10 @@ class _FlowStockRow extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
+                  Wrap(
+                    spacing: AppSpacing.s2,
+                    runSpacing: 3,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Container(
                         padding: const EdgeInsets.symmetric(
@@ -514,54 +608,7 @@ class _FlowStockRow extends StatelessWidget {
                           ),
                         ),
                       ),
-                      const SizedBox(width: AppSpacing.s2),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: c.accent.withAlpha(18),
-                          borderRadius: BorderRadius.circular(AppRadius.xs),
-                          border: Border.all(color: c.accent.withAlpha(55)),
-                        ),
-                        child: Text(
-                          '${stock.volumeRatio.toStringAsFixed(1)}× vol',
-                          style: AppTypography.xs.copyWith(
-                            color: c.accent,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      if (type == 'vwap' && stock.vwapDeviation != null) ...[
-                        const SizedBox(width: AppSpacing.s2),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 5, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: (stock.vwapDeviation! >= 0
-                                    ? c.positive
-                                    : c.danger)
-                                .withAlpha(18),
-                            borderRadius: BorderRadius.circular(AppRadius.xs),
-                            border: Border.all(
-                              color: (stock.vwapDeviation! >= 0
-                                      ? c.positive
-                                      : c.danger)
-                                  .withAlpha(55),
-                            ),
-                          ),
-                          child: Text(
-                            '${stock.vwapDeviation! >= 0 ? '+' : ''}${stock.vwapDeviation!.toStringAsFixed(1)}% VWAP',
-                            style: AppTypography.xs.copyWith(
-                              color: stock.vwapDeviation! >= 0
-                                  ? c.positive
-                                  : c.danger,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ],
+                      ..._typeBadges(),
                     ],
                   ),
                   const SizedBox(height: 3),
@@ -617,10 +664,12 @@ class _MoversCard extends ConsumerStatefulWidget {
 class _MoversCardState extends ConsumerState<_MoversCard> {
   static const List<({String id, String label})> _indices = [
     (id: 'sp500', label: 'S&P 500'),
-    (id: 'ndx', label: 'NDX'),
+    (id: 'ndx', label: 'Nasdaq'),
+    (id: 'dji', label: 'Dow Jones'),
     (id: 'russell2000', label: 'Russell 2000'),
   ];
   String _selected = 'sp500';
+  String _moversFilter = 'gainers'; // gainers | losers
 
   @override
   Widget build(BuildContext context) {
@@ -678,6 +727,22 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
               ],
             ),
           ),
+          const SizedBox(height: AppSpacing.s2),
+          Row(
+            children: [
+              _FilterChip(
+                label: 'Gainers',
+                active: _moversFilter == 'gainers',
+                onTap: () => setState(() => _moversFilter = 'gainers'),
+              ),
+              const SizedBox(width: AppSpacing.s2),
+              _FilterChip(
+                label: 'Losers',
+                active: _moversFilter == 'losers',
+                onTap: () => setState(() => _moversFilter = 'losers'),
+              ),
+            ],
+          ),
           const SizedBox(height: AppSpacing.s4),
           if (!isPro)
             Container(
@@ -709,7 +774,7 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
                     style:
                         AppTypography.xs.copyWith(color: c.textMuted)),
               ),
-              data: (data) => _MoversBody(data: data, c: c),
+              data: (data) => _MoversBody(data: data, filter: _moversFilter, c: c),
             ),
           if (isPro)
             async.whenOrNull(
@@ -768,8 +833,9 @@ String _fmtPrice(double? v) {
 }
 
 class _MoversBody extends StatelessWidget {
-  const _MoversBody({required this.data, required this.c});
+  const _MoversBody({required this.data, required this.filter, required this.c});
   final MoversData data;
+  final String filter; // gainers | losers
   final AppPalette c;
 
   double? _pickPct(TreemapStock s) => switch (data.session) {
@@ -786,13 +852,15 @@ class _MoversBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasGainers = data.gainers.isNotEmpty;
-    final hasLosers = data.losers.isNotEmpty;
-    if (!hasGainers && !hasLosers) {
+    final showGainers = filter == 'gainers';
+    final stocks = showGainers ? data.gainers : data.losers;
+    final isUp = showGainers;
+
+    if (stocks.isEmpty) {
       final empty = switch (data.session) {
-        'pre' => 'No pre-market data yet',
-        'post' => 'No after-hours data yet',
-        _ => 'No movers yet',
+        'pre' => showGainers ? 'No pre-market gainers yet' : 'No pre-market losers yet',
+        'post' => showGainers ? 'No after-hours gainers yet' : 'No after-hours losers yet',
+        _ => showGainers ? 'No gainers yet' : 'No losers yet',
       };
       return Container(
         padding: const EdgeInsets.all(AppSpacing.s4),
@@ -808,37 +876,17 @@ class _MoversBody extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (hasGainers) ...[
-          _MoversSectionHeader(label: 'GAINERS', color: c.positive, c: c),
-          const SizedBox(height: AppSpacing.s2),
-          for (final s in data.gainers)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.s2),
-              child: _MoverTile(
-                stock: s,
-                pct: _pickPct(s),
-                displayPrice: _pickPrice(s),
-                isUp: true,
-                c: c,
-              ),
+        for (final s in stocks)
+          Padding(
+            padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+            child: _MoverTile(
+              stock: s,
+              pct: _pickPct(s),
+              displayPrice: _pickPrice(s),
+              isUp: isUp,
+              c: c,
             ),
-        ],
-        if (hasLosers) ...[
-          SizedBox(height: hasGainers ? AppSpacing.s3 : 0),
-          _MoversSectionHeader(label: 'LOSERS', color: c.danger, c: c),
-          const SizedBox(height: AppSpacing.s2),
-          for (final s in data.losers)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.s2),
-              child: _MoverTile(
-                stock: s,
-                pct: _pickPct(s),
-                displayPrice: _pickPrice(s),
-                isUp: false,
-                c: c,
-              ),
-            ),
-        ],
+          ),
       ],
     );
   }

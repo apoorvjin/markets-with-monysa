@@ -1,0 +1,85 @@
+/* Design tokens ported 1:1 from moby/lib/core/theme/app_palette.dart.
+   Dart Color(0xAARRGGBB) alphas converted to rgba(). */
+
+:root,
+:root[data-theme="dark"] {
+  --bg: #000000;
+  --surface: #0a0a0a;
+  --surface-elevated: #141414;
+  --surface-card: rgba(255, 255, 255, 0.07);
+  --text-primary: #ffffff;
+  --text-secondary: #adb5bd;
+  --text-muted: rgba(255, 255, 255, 0.68);
+  --text-faint: rgba(255, 255, 255, 0.4);
+  --border: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  /* Brand: Teal (mirrors mobile AppPalette accent) */
+  --accent: #00d4aa;
+  --accent-dim: rgba(0, 212, 170, 0.12);
+  --accent-dim-18: rgba(0, 212, 170, 0.18);
+  --danger: #ff4d6a;
+  --danger-dim: rgba(255, 77, 106, 0.12);
+  --warning: #ffb84d;
+  --warning-dim: rgba(255, 184, 77, 0.12);
+  /* Positive (BUY/up) stays teal */
+  --positive: #00d4aa;
+  --positive-dim: rgba(0, 212, 170, 0.12);
+  --header-bg: rgba(0, 0, 0, 0.82);
+  --search-bg: rgba(255, 255, 255, 0.06);
+  --surface-panel: #0f0f0f;
+  --metric-bg: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f5f7fa;
+  --surface-elevated: #eceef2;
+  --surface-card: rgba(0, 0, 0, 0.04);
+  --text-primary: #0d1117;
+  --text-secondary: #6b7280;
+  --text-muted: rgba(13, 17, 23, 0.6);
+  --text-faint: rgba(13, 17, 23, 0.35);
+  --border: rgba(0, 0, 0, 0.1);
+  --border-strong: rgba(0, 0, 0, 0.18);
+  --accent: #00c49a;
+  --accent-dim: rgba(0, 196, 154, 0.12);
+  --accent-dim-18: rgba(0, 196, 154, 0.18);
+  --danger: #e8384f;
+  --danger-dim: rgba(232, 56, 79, 0.12);
+  --warning: #e6952a;
+  --warning-dim: rgba(230, 149, 42, 0.12);
+  --positive: #00c49a;
+  --positive-dim: rgba(0, 196, 154, 0.12);
+  --header-bg: rgba(255, 255, 255, 0.95);
+  --search-bg: rgba(0, 0, 0, 0.05);
+  --surface-panel: #f0f2f5;
+  --metric-bg: rgba(0, 0, 0, 0.03);
+}
+
+:root {
+  /* AppSpacing s1–s8 */
+  --s1: 4px;
+  --s2: 6px;
+  --s3: 8px;
+  --s4: 12px;
+  --s5: 16px;
+  --s6: 20px;
+  --s7: 24px;
+  --s8: 32px;
+  /* AppRadius */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+  --r-full: 100px;
+  /* AppTypography scale */
+  --fs-xs: 10px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-lg: 14px;
+  --fs-xl: 16px;
+  --fs-xl2: 18px;
+  --fs-xl3: 20px;
+  --fs-xl4: 24px;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}

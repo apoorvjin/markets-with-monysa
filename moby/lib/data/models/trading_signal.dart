@@ -1005,6 +1005,12 @@ class InstitutionalFlowStock {
     required this.changePercent,
     required this.volumeRatio,
     this.vwapDeviation,
+    this.obvSlopeRatio,
+    this.periodChangePercent,
+    this.shortPercentFloat,
+    this.shortRatio,
+    this.insiderCount,
+    this.filingCount,
   });
 
   final String symbol;
@@ -1013,6 +1019,12 @@ class InstitutionalFlowStock {
   final double changePercent;
   final double volumeRatio;
   final double? vwapDeviation;
+  final double? obvSlopeRatio;       // OBV 14-bar slope in days of avg volume
+  final double? periodChangePercent; // 14-bar price change (obv type)
+  final double? shortPercentFloat;   // % of float sold short (short type)
+  final double? shortRatio;          // days to cover (short type)
+  final int? insiderCount;           // distinct Form 4 filers (insider type)
+  final int? filingCount;            // total Form 4 filings (insider type)
 
   factory InstitutionalFlowStock.fromJson(Map<String, dynamic> j) =>
       InstitutionalFlowStock(
@@ -1022,6 +1034,12 @@ class InstitutionalFlowStock {
         changePercent: (j['changePercent'] as num).toDouble(),
         volumeRatio:   (j['volumeRatio'] as num).toDouble(),
         vwapDeviation: (j['vwapDeviation'] as num?)?.toDouble(),
+        obvSlopeRatio: (j['obvSlopeRatio'] as num?)?.toDouble(),
+        periodChangePercent: (j['periodChangePercent'] as num?)?.toDouble(),
+        shortPercentFloat:   (j['shortPercentFloat'] as num?)?.toDouble(),
+        shortRatio:    (j['shortRatio'] as num?)?.toDouble(),
+        insiderCount:  (j['insiderCount'] as num?)?.toInt(),
+        filingCount:   (j['filingCount'] as num?)?.toInt(),
       );
 }
 

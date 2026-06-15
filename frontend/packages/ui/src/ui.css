@@ -1,0 +1,168 @@
+.ui-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s5);
+}
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s2) var(--s4);
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+  font: 500 var(--fs-md) var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.ui-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+.ui-chip[data-active="true"] {
+  background: var(--accent-dim-18);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.ui-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--s3);
+  border-radius: var(--r-xs);
+  font: 600 var(--fs-sm) var(--font-sans);
+  letter-spacing: 0.04em;
+}
+.ui-badge[data-tone="buy"] {
+  background: var(--positive-dim);
+  color: var(--positive);
+}
+.ui-badge[data-tone="sell"] {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.ui-badge[data-tone="hold"] {
+  background: var(--warning-dim);
+  color: var(--warning);
+}
+.ui-badge[data-tone="neutral"] {
+  background: var(--surface-card);
+  color: var(--text-secondary);
+}
+
+.ui-skeleton {
+  background: var(--surface-card);
+  border-radius: var(--r-sm);
+  animation: ui-pulse 1.4s ease-in-out infinite;
+}
+@keyframes ui-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.ui-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+.ui-stat-label {
+  font: 500 var(--fs-sm) var(--font-sans);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ui-stat-value {
+  font: 600 var(--fs-xl2) var(--font-sans);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.ui-stat-sub {
+  font: 400 var(--fs-md) var(--font-sans);
+  color: var(--text-secondary);
+}
+
+.ui-freshness {
+  font: 400 var(--fs-sm) var(--font-sans);
+  color: var(--text-faint);
+}
+
+.ui-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s4);
+  padding: var(--s8);
+  color: var(--text-secondary);
+  font: 400 var(--fs-lg) var(--font-sans);
+  text-align: center;
+}
+.ui-error button {
+  padding: var(--s3) var(--s6);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  color: var(--text-primary);
+  font: 500 var(--fs-md) var(--font-sans);
+  cursor: pointer;
+}
+
+.num-up { color: var(--positive); }
+.num-down { color: var(--danger); }
+.num-flat { color: var(--text-secondary); }
+
+/* ── Dashboard metric card ─────────────────────────────────────────────── */
+
+.ui-metric-card {
+  background: var(--metric-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: var(--s5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+.ui-metric-label {
+  font: 500 var(--fs-sm) var(--font-sans);
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ui-metric-value {
+  font: 700 28px var(--font-sans);
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.ui-metric-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  flex-wrap: wrap;
+  margin-top: var(--s1);
+}
+
+.ui-delta-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px var(--s3);
+  border-radius: var(--r-full);
+  font: 600 var(--fs-sm) var(--font-sans);
+  letter-spacing: 0.02em;
+}
+.ui-delta-badge[data-dir="up"] {
+  background: var(--positive-dim);
+  color: var(--positive);
+}
+.ui-delta-badge[data-dir="down"] {
+  background: var(--danger-dim);
+  color: var(--danger);
+}
+.ui-delta-badge[data-dir="flat"] {
+  background: var(--surface-card);
+  color: var(--text-secondary);
+}

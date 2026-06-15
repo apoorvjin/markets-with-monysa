@@ -2,6 +2,8 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import rateLimit from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { registerRoutes } from "./routes";
 import { parseChartRenderer } from "./lib/chart-renderer";
 import { startLeaderElection, machineId } from "./lib/leader";
@@ -35,13 +37,16 @@ function setupCors(app: express.Application) {
 
     const origin = req.header("origin");
 
-    // Allow localhost origins only in local dev — never in production.
-    const isLocalhost =
+    // Allow localhost + common tunnel origins in local dev — never in production.
+    const isLocaldev =
       !isProd &&
       (origin?.startsWith("http://localhost:") ||
-        origin?.startsWith("http://127.0.0.1:"));
+        origin?.startsWith("http://127.0.0.1:") ||
+        origin?.includes(".ngrok.io") ||
+        origin?.includes(".ngrok-free.app") ||
+        origin?.includes(".ngrok.app"));
 
-    const isAllowed = origin && (allowedOrigins.has(origin) || isLocalhost);
+    const isAllowed = origin && (allowedOrigins.has(origin) || isLocaldev);
 
     if (isAllowed) {
       res.header("Access-Control-Allow-Origin", origin);
@@ -51,7 +56,7 @@ function setupCors(app: express.Application) {
       );
       res.header(
         "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Requested-With, Accept, Origin, User-Agent",
+        "Content-Type, Authorization, X-Requested-With, Accept, Origin, User-Agent, X-Device-ID, X-Signature, If-None-Match",
       );
       res.header("Access-Control-Allow-Credentials", "true");
       res.header("Access-Control-Expose-Headers", "Content-Type, X-Total-Count, X-Page-Count");
@@ -250,6 +255,18 @@ function setupErrorHandler(app: express.Application) {
   });
 
   const server = await registerRoutes(app);
+
+  // Serve the compiled web frontend when dist/ is present.
+  // API routes above always take priority. The SPA catch-all must come last.
+  // Build with: pnpm --filter @monysa/web build (VITE_API_BASE_URL empty → same-origin)
+  const webDist = join(process.cwd(), "frontend/apps/web/dist");
+  if (existsSync(webDist)) {
+    app.use(express.static(webDist));
+    app.get(/.*/, (_req: Request, res: Response) => {
+      res.sendFile(join(webDist, "index.html"));
+    });
+    log(`✓ Serving web frontend from ${webDist}`);
+  }
 
   setupErrorHandler(app);
 

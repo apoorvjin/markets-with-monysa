@@ -16,7 +16,9 @@ import { z } from "zod";
 import pLimit from "p-limit";
 import { yahooProvider } from "./providers";
 import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
-import { fetchSp500Constituents } from "./routes/heatmap";
+import { fetchSp500Constituents, fetchYahooQuoteSummary } from "./routes/heatmap";
+import { fetchInsiderClusters, KNOWN_NAMES } from "./routes/quiver";
+import { fetchBatch } from "./routes/shared";
 import { isLeader } from "./lib/leader";
 import {
   getSectorQuadrants,
@@ -739,12 +741,15 @@ class BoundedMap<K, V> extends Map<K, V> {
   }
 }
 
-// Keyed by the last candle's Unix timestamp — unbounded without a cap.
-const _obvCache = new BoundedMap<number, number[]>(200);
+// Keyed by a per-series fingerprint. The timestamp alone is NOT unique:
+// every US stock shares the same last daily-candle timestamp, so a
+// timestamp-only key serves symbol A's OBV array to symbol B.
+const _obvCache = new BoundedMap<string, number[]>(200);
 
 function _buildObvArr(candles: OHLCV[]): number[] {
-  const lastTs = candles[candles.length - 1].time;
-  const hit = _obvCache.get(lastTs);
+  const last = candles[candles.length - 1];
+  const key = `${last.time}:${candles.length}:${last.close}:${last.volume}`;
+  const hit = _obvCache.get(key);
   if (hit) return hit;
   let obv = 0;
   const arr: number[] = [];
@@ -753,7 +758,7 @@ function _buildObvArr(candles: OHLCV[]): number[] {
     else if (candles[i].close < candles[i - 1].close) obv -= candles[i].volume;
     arr.push(obv);
   }
-  _obvCache.set(lastTs, arr);
+  _obvCache.set(key, arr);
   return arr;
 }
 
@@ -2851,6 +2856,12 @@ interface FlowEntry {
   changePercent: number;
   volumeRatio: number;
   vwapDeviation?: number;
+  obvSlopeRatio?: number;       // OBV 14-bar slope in days of 20d avg volume
+  periodChangePercent?: number; // 14-bar price change (obv type)
+  shortPercentFloat?: number;   // % of float sold short (short type)
+  shortRatio?: number;          // days to cover (short type)
+  insiderCount?: number;        // distinct Form 4 filers in window (insider type)
+  filingCount?: number;         // total Form 4 filings in window (insider type)
 }
 
 interface InstFlowResponse {
@@ -3279,21 +3290,25 @@ async function runStockScanner(): Promise<TenXScanResponse> {
 // ─── Institutional Flow Scanner ──────────────────────────────────────────────
 
 async function runInstitutionalFlow(
-  type: "accumulation" | "distribution" | "vwap"
+  type: "accumulation" | "distribution" | "vwap" | "obv" | "short" | "insider"
 ): Promise<InstFlowResponse> {
   const cached = _instFlowCache.get(type);
   if (cached && Date.now() - cached.ts < INST_FLOW_TTL) return cached.data;
 
-  const universe = await fetchStockUniverse();
+  const screenerVolumeRatio = (q: ScreenerQuote): number | null => {
+    const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+    if (avgVol === 0) return null;
+    return Math.round((q.regularMarketVolume / avgVol) * 10) / 10;
+  };
 
   let assets: FlowEntry[];
 
-  if (type !== "vwap") {
+  if (type === "accumulation" || type === "distribution") {
+    const universe = await fetchStockUniverse();
     const entries: FlowEntry[] = [];
     for (const q of universe) {
-      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
-      if (avgVol === 0) continue;
-      const volumeRatio = Math.round((q.regularMarketVolume / avgVol) * 10) / 10;
+      const volumeRatio = screenerVolumeRatio(q);
+      if (volumeRatio === null) continue;
       const cp = q.regularMarketChangePercent;
       const pass = type === "accumulation" ? cp > 0 : cp < 0;
       if (pass && volumeRatio >= 2.0) {
@@ -3309,19 +3324,18 @@ async function runInstitutionalFlow(
     entries.sort((a, b) => b.volumeRatio - a.volumeRatio);
     assets = entries.slice(0, 10);
 
-  } else {
+  } else if (type === "vwap") {
+    const universe = await fetchStockUniverse();
     const candidates = universe.filter(q => {
-      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
-      if (avgVol === 0) return false;
-      return q.regularMarketVolume / avgVol >= 3.0;
+      const vr = screenerVolumeRatio(q);
+      return vr !== null && vr >= 3.0;
     }).slice(0, 100);
 
     const rows = await runWithConcurrency<ScreenerQuote, FlowEntry>(
       candidates,
       async (q) => {
         try {
-          const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
-          const volumeRatio = Math.round((q.regularMarketVolume / avgVol) * 10) / 10;
+          const volumeRatio = screenerVolumeRatio(q)!;
           const candles = (await yahooProvider.fetchHistoryCandles(q.symbol, "1d", "1mo")) as OHLCV[];
           const vwap = calcVwap(candles, 20);
           if (!vwap) return null;
@@ -3345,6 +3359,109 @@ async function runInstitutionalFlow(
     const filtered = rows.filter((r): r is FlowEntry => r !== null);
     filtered.sort((a, b) => Math.abs(b.vwapDeviation ?? 0) - Math.abs(a.vwapDeviation ?? 0));
     assets = filtered.slice(0, 10);
+
+  } else if (type === "obv") {
+    // OBV divergence: OBV rising over 14 bars while price is flat/down —
+    // volume flowing in without the price confirming yet (quiet accumulation).
+    const universe = await fetchStockUniverse();
+    const candidates = [...universe]
+      .sort((a, b) => b.regularMarketVolume - a.regularMarketVolume)
+      .slice(0, 100);
+
+    const rows = await runWithConcurrency<ScreenerQuote, FlowEntry>(
+      candidates,
+      async (q) => {
+        try {
+          const candles = (await yahooProvider.fetchHistoryCandles(q.symbol, "1d", "3mo")) as OHLCV[];
+          if (candles.length < 21) return null;
+          const obvSlope = calcObvSlope(candles, 14);
+          const volSma20 = calcVolumeSma(candles);
+          if (obvSlope === null || !volSma20) return null;
+          const past = candles[candles.length - 15]?.close;
+          const last = candles[candles.length - 1].close;
+          if (!past || !last) return null;
+          const periodChangePercent = Math.round(((last - past) / past) * 1000) / 10;
+          // Divergence: OBV up, price not up
+          if (obvSlope <= 0 || periodChangePercent > 1.0) return null;
+          const obvSlopeRatio = Math.round((obvSlope / volSma20) * 10) / 10;
+          return {
+            symbol: q.symbol,
+            name: q.shortName ?? q.longName ?? q.symbol,
+            price: q.regularMarketPrice,
+            changePercent: q.regularMarketChangePercent,
+            volumeRatio: screenerVolumeRatio(q) ?? 0,
+            obvSlopeRatio,
+            periodChangePercent,
+          };
+        } catch {
+          return null;
+        }
+      },
+      5
+    );
+
+    const filtered = rows.filter((r): r is FlowEntry => r !== null);
+    filtered.sort((a, b) => (b.obvSlopeRatio ?? 0) - (a.obvSlopeRatio ?? 0));
+    assets = filtered.slice(0, 10);
+
+  } else if (type === "short") {
+    // Short squeeze: high short % float + price already rising = covering fuel.
+    const universe = await fetchStockUniverse();
+    const candidates = universe
+      .filter(q => q.regularMarketChangePercent > 0 && screenerVolumeRatio(q) !== null)
+      .sort((a, b) => (screenerVolumeRatio(b) ?? 0) - (screenerVolumeRatio(a) ?? 0))
+      .slice(0, 50);
+
+    const rows = await runWithConcurrency<ScreenerQuote, FlowEntry>(
+      candidates,
+      async (q) => {
+        try {
+          const quote = await fetchYahooQuoteSummary(q.symbol, { includeKeyStats: true });
+          const si = quote?.shortPercentFloat;
+          if (si == null || si < 10) return null;
+          return {
+            symbol: q.symbol,
+            name: q.shortName ?? q.longName ?? q.symbol,
+            price: q.regularMarketPrice,
+            changePercent: q.regularMarketChangePercent,
+            volumeRatio: screenerVolumeRatio(q) ?? 0,
+            shortPercentFloat: Math.round(si * 10) / 10,
+            shortRatio: quote?.shortRatio != null
+              ? Math.round(quote.shortRatio * 10) / 10
+              : undefined,
+          };
+        } catch {
+          return null;
+        }
+      },
+      5
+    );
+
+    const filtered = rows.filter((r): r is FlowEntry => r !== null);
+    filtered.sort((a, b) => (b.shortPercentFloat ?? 0) - (a.shortPercentFloat ?? 0));
+    assets = filtered.slice(0, 10);
+
+  } else {
+    // Insider clusters: ≥2 distinct insiders filing Form 4s on the same ticker
+    // within 30 days (SEC EDGAR via quiver.ts).
+    const clusters = (await fetchInsiderClusters(30)).slice(0, 10);
+    const universe = await fetchStockUniverse().catch(() => [] as ScreenerQuote[]);
+    const bySymbol = new Map(universe.map(q => [q.symbol, q]));
+    const prices = await fetchBatch(clusters.map(c => c.ticker));
+
+    assets = clusters.map(c => {
+      const q = bySymbol.get(c.ticker);
+      const p = prices.get(c.ticker);
+      return {
+        symbol: c.ticker,
+        name: q?.shortName ?? q?.longName ?? KNOWN_NAMES[c.ticker] ?? c.ticker,
+        price: p?.price ?? q?.regularMarketPrice ?? 0,
+        changePercent: p?.changePercent ?? q?.regularMarketChangePercent ?? 0,
+        volumeRatio: q ? (screenerVolumeRatio(q) ?? 0) : 0,
+        insiderCount: c.insiderCount,
+        filingCount: c.filingCount,
+      };
+    });
   }
 
   const data: InstFlowResponse = { assets, type, lastUpdated: new Date().toISOString() };
@@ -5950,11 +6067,13 @@ export function createTradingRouter(): Router {
     }
   });
 
-  // GET /api/trading/scanner/institutional-flow?type=accumulation|distribution|vwap
+  // GET /api/trading/scanner/institutional-flow
+  //   ?type=accumulation|distribution|vwap|obv|short|insider
+  const INST_FLOW_TYPES = ["accumulation", "distribution", "vwap", "obv", "short", "insider"] as const;
   router.get("/scanner/institutional-flow", async (req: Request, res: Response) => {
-    const t = req.query.type as string;
-    if (t !== "accumulation" && t !== "distribution" && t !== "vwap") {
-      return res.status(400).json({ error: "type must be accumulation, distribution, or vwap" });
+    const t = req.query.type as (typeof INST_FLOW_TYPES)[number];
+    if (!INST_FLOW_TYPES.includes(t)) {
+      return res.status(400).json({ error: `type must be one of: ${INST_FLOW_TYPES.join(", ")}` });
     }
     try {
       const result = await runInstitutionalFlow(t);

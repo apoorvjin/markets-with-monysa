@@ -1,0 +1,14 @@
+{
+  "name": "monysa-frontend",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @monysa/web dev",
+    "build": "pnpm --filter @monysa/web build",
+    "preview": "pnpm --filter @monysa/web preview",
+    "typecheck": "pnpm -r typecheck"
+  }
+}

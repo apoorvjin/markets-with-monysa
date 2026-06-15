@@ -275,7 +275,7 @@ export function registerHeatmapRoutes(app: Express): void {
       }
 
       const index = (req.query.index as string | undefined)?.toLowerCase() ?? "sp500";
-      const SUPPORTED_MOVER_INDICES = new Set(["sp500", "ndx", "russell2000"]);
+      const SUPPORTED_MOVER_INDICES = new Set(["sp500", "ndx", "dji", "russell2000"]);
       if (!SUPPORTED_MOVER_INDICES.has(index)) {
         return res.status(400).json({
           error: `Unsupported index: ${index}. Supported: ${[...SUPPORTED_MOVER_INDICES].join(", ")}.`,
@@ -654,7 +654,7 @@ function parseCsvLine(line: string): string[] {
 // Yahoo gates /v10/finance/quoteSummary behind a session crumb. We fetch it once,
 // hold it module-scope, and refresh on 401.
 
-type YahooQuote = {
+export type YahooQuote = {
   marketCap: number | null;
   price: number | null;
   changePercent: number | null;
@@ -670,6 +670,8 @@ type YahooQuote = {
   preMarketChangePercent: number | null;
   postMarketPrice: number | null;
   postMarketChangePercent: number | null;
+  shortPercentFloat: number | null;
+  shortRatio: number | null;
 };
 
 let yahooCrumb: string | null = null;
@@ -710,16 +712,18 @@ async function refreshYahooCrumbInner(): Promise<void> {
   if (!yahooCrumb) throw new Error("Yahoo returned empty crumb");
 }
 
-async function fetchYahooQuoteSummary(
+export async function fetchYahooQuoteSummary(
   symbol: string,
-  opts: { includeAssetProfile?: boolean } = {},
+  opts: { includeAssetProfile?: boolean; includeKeyStats?: boolean } = {},
 ): Promise<YahooQuote | null> {
   if (!yahooCrumb) await refreshYahooCrumb();
   // summaryDetail carries 52-week high/low; price has marketCap + dayHigh/Low
-  // + pre/post-market fields; assetProfile carries sector + industry.
-  const modules = opts.includeAssetProfile
+  // + pre/post-market fields; assetProfile carries sector + industry;
+  // defaultKeyStatistics carries shortPercentOfFloat + shortRatio.
+  let modules = opts.includeAssetProfile
       ? "price,summaryDetail,assetProfile"
       : "price,summaryDetail";
+  if (opts.includeKeyStats) modules += ",defaultKeyStatistics";
   for (let attempt = 0; attempt < 3; attempt++) {
     const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=${modules}&crumb=${encodeURIComponent(yahooCrumb ?? "")}`;
     let resp: Response;
@@ -748,6 +752,7 @@ async function fetchYahooQuoteSummary(
     const price = result?.price;
     const detail = result?.summaryDetail;
     const profile = result?.assetProfile;
+    const keyStats = result?.defaultKeyStatistics;
     if (!price) return null;
     const rawNum = (v: any): number | null =>
       typeof v?.raw === "number" ? v.raw : null;
@@ -773,6 +778,10 @@ async function fetchYahooQuoteSummary(
       postMarketChangePercent: rawNum(price.postMarketChangePercent) != null
         ? rawNum(price.postMarketChangePercent)! * 100
         : null,
+      shortPercentFloat: rawNum(keyStats?.shortPercentOfFloat) != null
+        ? rawNum(keyStats?.shortPercentOfFloat)! * 100
+        : null,
+      shortRatio: rawNum(keyStats?.shortRatio),
     };
   }
   return null;

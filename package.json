@@ -4,7 +4,9 @@
   "scripts": {
     "server:dev": "NODE_ENV=development tsx watch --env-file=.env server/index.ts",
     "server:build": "esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=server_dist",
-    "server:prod": "NODE_ENV=production node server_dist/index.js"
+    "server:prod": "NODE_ENV=production node server_dist/index.js",
+    "web:build": "cd frontend && VITE_API_BASE_URL= pnpm --filter @monysa/web build",
+    "share": "npm run web:build && echo '\\n✓ Frontend built. Run: ngrok http 5001\\n  Then open the ngrok URL — app + API on one tunnel.'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.0",

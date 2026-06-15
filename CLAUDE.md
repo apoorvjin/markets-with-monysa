@@ -176,7 +176,7 @@ GET /api/volatility/assets    → { items: [...], vix: { price, ... } }
                                   ^^^^ NOT data['assets'], NOT data['vix'] directly
 GET /api/trading/backtest/:s  → { strategies: { "1": { winRate, totalReturn, maxDrawdown, sharpe, trades, tradeLog }, "2": ..., "3": ... } }
                                   ^^^^ nested under 'strategies', field is 'sharpe' not 'sharpeRatio', 'trades' not 'totalTrades'
-GET /api/trading/signals/:s   → TradingSignal object  (strategy query param: "1"/"2"/"3")
+GET /api/trading/signals/:s   → TradingSignal object  (strategy query param: "1"–"9"; S9 = Silver Liquidity Sweep, SI=F only)
 GET /api/trading/news/:s      → articles array  (field is 'url', NOT 'link')
 GET /api/search               → { results: [{ symbol, name, exchange, type }] }
 GET /api/bonds                → { us3m, us5y, us10y, us30y, spread3m10y, curveStatus, lastUpdated }
@@ -188,7 +188,11 @@ GET /api/tariffs              → { countries: [CountryTariff], dataAsOf: "April
                                   SectorTariff: { sectorName, tariffRate, sourceURL }
                                   DebtDetail: { category, amountBillions, notes }
                                   Data file: server/data/tariffs.json — update and bump TARIFFS_DATA_AS_OF in economy.ts to refresh without an app release
-GET /api/heatmap              → { tiles: [...], lastUpdated }
+GET /api/trading/quotes       → { quotes: [...], timestamp }
+                                  ^^^^ key is 'quotes', NOT 'items'
+GET /api/heatmap              → { regions: [tile], assetClasses: [tile], lastUpdated }
+                                  ^^^^ NOT 'tiles' — tile = { name, emoji, changePercent, perf1W…perf5Y }
+GET /api/heatmap/movers       → { index, session, marketState, gainers: [TreemapStock], losers: [TreemapStock], lastUpdated }
 GET /api/heatmap/assets       → { tiles: [...], category, lastUpdated }
 GET /api/heatmap/treemap      → { index, timeframe, limit, total, stocks: [TreemapStock], lastUpdated, marketState? }
                                   TreemapStock: { symbol, name, sector, marketCap, changePercent, price,
@@ -396,12 +400,14 @@ REDIRECTS (app_router.dart handles these automatically):
 
 **Markets** (`/markets`): 5 sub-tabs — **Heatmap** (default) / Indices / Commodities / Forex / CFTC. Each price tab has inline search; forex is grouped by region when not searching, flat list when searching; CFTC metals section hides during search; tap any row → `ChartModal` bottom sheet. The Heatmap tab is a market-cap-weighted treemap with index-selector chips (S&P 500 / NASDAQ 100 / Dow Jones / Russell 2000 / FTSE 100 / DAX 40 / Nikkei 225 / Hang Seng / Nifty 50) and timeframe chips (1D / 1W / 1M / YTD). Tile size = USD-normalised market cap (`effectiveMarketCap`), tile colour = % change for selected timeframe. Tap a tile → centred tooltip card. Plan-gated: Pro+ (`treemap_heatmap`).
 
-**Trading** (`/trading`): four sub-tabs — Dashboard / AI Signals / Alerts / Power Moves.
-- Dashboard category chips (in order): ★ Watchlist / Commodities / Indices / Stocks / Forex / Crypto / All. "Stocks" chip switches to full-text search (debounced 400ms, calls `/api/search`). Other chips show 49 live asset rows with 30s auto-refresh.
-- AI Signals: strategy selector row has `Icons.info_outline_rounded` (size 18) at right → opens `showModalBottomSheet` explaining S1/S2/S3.
+**Trading** (`/trading`): **five** sub-tabs — Instruments / Dashboard / Power Moves / Signals / Alerts.
+- Instruments (`_DashboardTab`): category chips (in order, NO "All"): ★ Watchlist / Commodities / Indices / Stocks / Forex / Crypto. "Stocks" chip switches to full-text search (debounced 400ms, calls `/api/search`). Other chips show 49 live asset rows with 30s auto-refresh.
+- Dashboard (`_DashboardzTab`): `BestSetupsCard` (scanner best-setups, type=assets, v1/v2 toggle).
+- Power Moves: see Power Moves note below.
+- Signals: type filter ALL/Commodities/Indices/Forex/Crypto + strategy selector **S1–S9** (`TradingStrategy` enum is s1…s9; S9 "Silver Liquidity Sweep" filters list to SI=F only). Info icon opens strategy explainer sheet.
 - Alerts: badge count on tab icon when alerts are active.
 
-**Investing** (`/investing`): 7 scrollable sub-tabs — **Exposure** (default) / Dashboard / Multibaggers / Presidential / Congress / Smart $ / House Trades.
+**Investing** (`/investing`): **8** scrollable sub-tabs — **Exposure** (default) / Dashboard / Multibaggers / Presidential / Congress / Smart $ / House Trades / **Earnings** (`earnings_calendar_tab.dart` — `/api/trading/earnings-calendar?days=`, items have `symbol/name/sector/earningsDate`).
 - Exposure: embeds `ExposureBody` from `exposure_screen.dart` — shows browsable/searchable/sortable list of 113+ countries with their US tariff rates (from `/api/tariffs`). Sort options: Market Size (GDP proxy, default) / Rate / Name. **Free, no plan gate.** This is tab index 0 — the default landing tab. (The AI analysis endpoint `/api/exposure/analysis` still exists on the server, plan-gated Insight+, but the Flutter tab no longer calls it.)
 - Dashboard: Best Setups (plan-gated: Pro+).
 - Multibaggers: full-screen push to `/trading/multibaggers?country=us` (default US). Country chips: 🇺🇸 US / 🇮🇳 India / 🇬🇧 UK / 🇯🇵 Japan / 🇭🇰 HK / 🇨🇳 China / 🇪🇺 Euronext. Has country-aware stock search (search bar filters results by country via Yahoo Finance symbol suffix + exchange code).
@@ -428,6 +434,31 @@ REDIRECTS (app_router.dart handles these automatically):
 **10X Backtest** (`/trading/10x-backtest`): scanner backtest viewer with v1/v2 selector, type toggle (assets/stocks), signal filter chips, sortable table.
 
 **Multibaggers** (`/trading/multibaggers`): country-specific multibagger stock screen. Pass `?country=us` (default). Pushed from Investing → Multibaggers tab. Three-mode build: normal list → search suggestions → single-stock scan. Country filter chips on own row above scrollable chip row (prevents overflow with 7 chips). Country-aware search uses Yahoo Finance suffix/exchange codes to filter results per country.
+
+---
+
+## Web Frontend (frontend/)
+
+pnpm monorepo (pnpm 9 — Node 20 can't run pnpm 11) for the browser client. Same Express API as mobile; **plan enforcement intentionally absent on web for now** — all features open.
+
+```
+frontend/
+  packages/contracts    # zod schemas for every API response — single source of truth for shapes.
+                        # Response-shape changes MUST update this first; web build fails at compile time.
+  packages/api-client   # typed fetch layer; every method parses with its contract schema.
+                        # Plain GETs, no custom headers → no CORS preflight; browser handles ETag/304.
+  packages/ui           # tokens.css = 1:1 port of AppPalette (dark+light via [data-theme]) + primitives + formatters
+  packages/charts       # lightweight-charts v4 candlesticks, canvas Sparkline, squarified CanvasTreemap
+  apps/web              # Vite + React 19 SPA — TanStack Router (code-based routes), TanStack Query, cmdk ⌘K palette
+```
+
+- **Run**: `pnpm install && pnpm dev` from `frontend/` → http://localhost:5173 (talks to localhost:5001 in dev; prod default `https://monysa-api.fly.dev`, override with `VITE_API_BASE_URL`).
+- **Internal-package pattern**: workspace packages export raw TS (`"main": "./src/index.ts"`); Vite compiles them — no per-package build step.
+- **Caching**: Query `staleTime` mirrors server TTLs; `persistQueryClient` (localStorage, `buster: "v1"`) replicates DiskCache hydrate-stale-then-refresh. Bump the buster when a persisted shape changes (mirror of `DiskCache._schemaVersion`).
+- **Routes** (mirror mobile tab structure): `/markets` (Heatmap/Indices/Commodities/Forex/CFTC), `/trading` (Instruments/Dashboard/Power Moves/Signals S1–S9/Alerts — watchlist+alerts in localStorage), `/investing` (Exposure/Dashboard/Multibaggers/Presidential/Congress/Smart $/House Trades/Earnings), `/macro` (Dashboard w/ regime+gauges+heatmaps+yield graph+RRG quadrants+AI briefing / Crisis / Debt / Calendar / Correlation), `/asset/$symbol?name=`.
+- **Parity rule**: the Flutter screens are the spec. When mobile gains/changes a tab, filter, or strategy, port it here in the same change (and vice versa) — and verify against the running screens, not this file alone.
+- **Data-display parity (hard requirement)**: web and mobile must show *identical data*, not just identical UI structure. That includes field-picking logic — e.g. session-aware prices (`pre` → `preMarketPrice`/`preMarketChangePercent`, `post` → `postMarketPrice`/`postMarketChangePercent`, fallback to `price`/`changePercent`), filter sets, sort orders, and null fallbacks. When changing what one client displays, port the same logic to the other in the same change. Regression example: web MoversCard once showed last-close prices during pre-market because it ignored the session fields mobile already used — a critical bug for a financial app.
+- **Prod CORS**: set `ALLOWED_ORIGINS=https://<web-domain>` on the API; `server/index.ts` already supports it. Custom headers `X-Device-ID`/`X-Signature` are in the CORS allow-list.
 
 ---
 
