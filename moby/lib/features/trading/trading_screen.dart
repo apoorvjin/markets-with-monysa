@@ -1630,6 +1630,7 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
   final _nameCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
   String _dir = 'above';
+  bool _alertSuccess = false;
 
   @override
   void dispose() {
@@ -1702,13 +1703,42 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
               const SizedBox(height: AppSpacing.s4),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
-                  onPressed: _addAlert,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: c.accent,
-                    foregroundColor: c.background,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  decoration: BoxDecoration(
+                    color: _alertSuccess ? c.positive : c.accent,
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
                   ),
-                  child: const Text('Set Alert'),
+                  child: FilledButton(
+                    onPressed: _alertSuccess ? null : _addAlert,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.transparent,
+                      foregroundColor: c.background,
+                      shadowColor: Colors.transparent,
+                      disabledBackgroundColor: Colors.transparent,
+                      disabledForegroundColor: c.background,
+                    ),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 250),
+                      child: _alertSuccess
+                          ? Row(
+                              key: const ValueKey('success'),
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.check_circle_outline_rounded,
+                                    size: 18),
+                                const SizedBox(width: AppSpacing.s2),
+                                Text('Alert Set',
+                                    style: AppTypography.labelLg
+                                        .copyWith(color: c.background)),
+                              ],
+                            )
+                          : Text('Set Alert',
+                              key: const ValueKey('idle'),
+                              style: AppTypography.labelLg
+                                  .copyWith(color: c.background)),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -1770,10 +1800,15 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
       if (mounted) UpgradeSheet.show(context, feature: 'alerts_unlimited');
       return;
     }
-    HapticFeedback.lightImpact();
+    HapticFeedback.mediumImpact();
     _symbolCtrl.clear();
     _nameCtrl.clear();
     _priceCtrl.clear();
+    if (!mounted) return;
+    setState(() => _alertSuccess = true);
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _alertSuccess = false);
+    });
   }
 }
 

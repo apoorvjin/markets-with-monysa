@@ -258,7 +258,42 @@
       "Bash(VITE_API_BASE_URL= pnpm --filter @monysa/web build)",
       "Bash(python3 -c \"import sys; d=sys.stdin.read\\(\\); print\\('SPA served' if '<!doctype html>' in d.lower\\(\\) else d[:200]\\)\")",
       "Bash(curl -si http://localhost:5001/)",
-      "Bash(curl -v http://localhost:5001/)"
+      "Bash(curl -v http://localhost:5001/)",
+      "Bash(mkdir -p ~/.claude/skills/karpathy ~/.claude/skills/gstack ~/.claude/skills/gsd ~/.claude/skills/obsidian-cli)",
+      "Bash(git clone *)",
+      "Bash(cp /tmp/gstack/SKILL.md ~/.claude/skills/gstack/SKILL.md)",
+      "Bash(echo \"gstack: $?\")",
+      "Bash(cp /tmp/obsidian-skills/skills/obsidian-cli/SKILL.md ~/.claude/skills/obsidian-cli/SKILL.md)",
+      "Bash(echo \"obsidian-cli: $?\")",
+      "Bash(cat)",
+      "Bash(echo \"CLAUDE.md: $?\")",
+      "Bash(echo \"cleanup: $?\")",
+      "Bash(echo \"=== Skills installed ===\" && ls ~/.claude/skills/ && echo && echo \"=== karpathy frontmatter ===\" && head -6 ~/.claude/skills/karpathy/SKILL.md && echo && echo \"=== gstack frontmatter ===\" && head -6 ~/.claude/skills/gstack/SKILL.md && echo && echo \"=== obsidian-cli frontmatter ===\" && head -4 ~/.claude/skills/obsidian-cli/SKILL.md && echo && echo \"=== CLAUDE.md ===\" && cat ~/.claude/CLAUDE.md)",
+      "Read(//Users/apoorvjin/.claude/**)",
+      "Bash(rmdir ~/.claude/skills/gsd && echo \"removed empty gsd dir\")",
+      "Bash(mkdir -p ~/.claude/skills/gsd)",
+      "Edit(~/.claude/skills/gsd/**)",
+      "Bash(grep -E \"const _|;\\\\$\")",
+      "Bash(gh api *)",
+      "Bash(FIGMA_API_KEY=\"figd_LdxCbeZCXebpGxhbiqe0g6g16mK9ZJ1P5tyfLhSg\" npx -y figma-developer-mcp --stdio)",
+      "Bash(node --check /Users/apoorvjin/markets-with-monysa/figma-plugin/code.js)",
+      "Bash(curl -s -H \"X-Figma-Token: figd_LdxCbeZCXebpGxhbiqe0g6g16mK9ZJ1P5tyfLhSg\" \"https://api.figma.com/v1/me\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d[k] for k in ['id','email','handle'] if k in d}, indent=2\\)\\)\")",
+      "Bash(curl -s -H \"X-Figma-Token: figd_LdxCbeZCXebpGxhbiqe0g6g16mK9ZJ1P5tyfLhSg\" \"https://api.figma.com/v1/me/files?page_size=10\")",
+      "Bash(curl -s -H \"X-Figma-Token: figd_LdxCbeZCXebpGxhbiqe0g6g16mK9ZJ1P5tyfLhSg\" \"https://api.figma.com/v1/me/drafts\")",
+      "Bash(curl -s -X POST -H 'X-Figma-Token: figd_LdxCbeZCXebpGxhbiqe0g6g16mK9ZJ1P5tyfLhSg' -H 'Content-Type: application/json' -d '{\"name\": \"Monysa — App Screens\"}' https://api.figma.com/v1/files)",
+      "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")",
+      "Bash(dart --version)",
+      "Bash(dart pub *)",
+      "Bash(firebase --version)"
+    ],
+    "additionalDirectories": [
+      "/Users/apoorvjin/.claude/skills",
+      "/Users/apoorvjin/.claude/skills/gsd",
+      "/Users/apoorvjin/.claude"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "figma"
+  ]
 }

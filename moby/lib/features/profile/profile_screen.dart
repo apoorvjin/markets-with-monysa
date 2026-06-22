@@ -1,13 +1,17 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/restart_widget.dart';
+import '../../providers/auth_provider.dart';
 import '../../providers/chart_provider_provider.dart';
 import '../../providers/font_size_provider.dart';
 import '../../providers/strategy_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../services/auth_service.dart';
 import '../../services/entitlement_service.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -32,7 +36,7 @@ class ProfileScreen extends ConsumerWidget {
           AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
         ),
         children: const [
-          _IdentityHeader(),
+          _IdentitySection(),
           SizedBox(height: AppSpacing.s5),
           _SubscriptionCard(),
           SizedBox(height: AppSpacing.s6),
@@ -44,6 +48,8 @@ class ProfileScreen extends ConsumerWidget {
           SizedBox(height: AppSpacing.s6),
           _DevPlanSection(),
           SizedBox(height: AppSpacing.s6),
+          _AccountActionsSection(),
+          SizedBox(height: AppSpacing.s6),
           _AboutSection(),
         ],
       ),
@@ -51,81 +57,80 @@ class ProfileScreen extends ConsumerWidget {
   }
 }
 
-// ── Identity Header ───────────────────────────────────────────────────────────
+// ── Identity Section ──────────────────────────────────────────────────────────
 
-class _IdentityHeader extends StatelessWidget {
-  const _IdentityHeader();
+class _IdentitySection extends ConsumerWidget {
+  const _IdentitySection();
 
-  void _comingSoon(BuildContext context) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Account features coming soon.'),
-        duration: Duration(seconds: 2),
-      ),
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userAsync = ref.watch(authStateProvider);
+    return userAsync.when(
+      data: (user) =>
+          user != null ? _LoggedInHeader(user: user) : const SizedBox.shrink(),
+      loading: () => const SizedBox(height: 80),
+      error: (_, __) => const SizedBox.shrink(),
     );
+  }
+}
+
+class _LoggedInHeader extends StatelessWidget {
+  const _LoggedInHeader({required this.user});
+  final User user;
+
+  String get _initials {
+    final email = user.email ?? '';
+    return email.isNotEmpty ? email[0].toUpperCase() : '?';
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final email = user.email ?? '';
+
     return Column(
       children: [
         CircleAvatar(
           radius: 40,
-          backgroundColor: c.surfaceCard,
-          child: Icon(Icons.person_rounded, size: 40, color: c.textMuted),
+          backgroundColor: c.accentDim,
+          child: Text(
+            _initials,
+            style: AppTypography.headingLg.copyWith(
+              color: c.accent,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
         const SizedBox(height: AppSpacing.s3),
-        Text(
-          'Guest',
-          style: AppTypography.headingSm.copyWith(color: c.textPrimary),
-        ),
-        const SizedBox(height: AppSpacing.s2),
-        Text(
-          'Sign in to sync your preferences and alerts',
-          style: AppTypography.sm.copyWith(color: c.textMuted),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: AppSpacing.s4),
         Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _comingSoon(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: c.accent,
-                  side: BorderSide(color: c.accent),
-                  padding:
-                      const EdgeInsets.symmetric(vertical: AppSpacing.s3),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                  ),
-                ),
-                child: Text('Sign In',
-                    style: AppTypography.labelMd
-                        .copyWith(color: c.accent)),
-              ),
+            Text(
+              email,
+              style: AppTypography.md.copyWith(color: c.textPrimary),
             ),
-            const SizedBox(width: AppSpacing.s3),
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => _comingSoon(context),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: c.textSecondary,
-                  side: BorderSide(color: c.border),
-                  padding:
-                      const EdgeInsets.symmetric(vertical: AppSpacing.s3),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                  ),
-                ),
-                child: Text('Create Account',
-                    style: AppTypography.labelMd
-                        .copyWith(color: c.textSecondary)),
-              ),
-            ),
+            if (user.emailVerified) ...[
+              const SizedBox(width: AppSpacing.s2),
+              Icon(Icons.verified_rounded, color: c.accent, size: 16),
+            ],
           ],
         ),
+        if (!user.emailVerified) ...[
+          const SizedBox(height: AppSpacing.s2),
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s3, vertical: 3),
+            decoration: BoxDecoration(
+              color: c.warning.withAlpha(25),
+              borderRadius: BorderRadius.circular(AppRadius.full),
+              border: Border.all(color: c.warning.withAlpha(80)),
+            ),
+            child: Text(
+              'Email not verified',
+              style: AppTypography.xs.copyWith(color: c.warning),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -339,7 +344,8 @@ class _FontSizeSection extends ConsumerWidget {
           padding: const EdgeInsets.all(AppSpacing.s2),
           child: Row(
             children: FontSizeScale.values
-                .map((scale) => _FontSizeChip(scale: scale, selected: current == scale))
+                .map((scale) =>
+                    _FontSizeChip(scale: scale, selected: current == scale))
                 .toList(),
           ),
         ),
@@ -526,7 +532,8 @@ Future<void> _switchSimulatedPlan(
 ) async {
   final c = context.colors;
   final prefs = ref.read(sharedPreferencesProvider);
-  final current = _planFromPrefs(prefs.getString('dev_simulated_plan')) ?? Plan.free;
+  final current =
+      _planFromPrefs(prefs.getString('dev_simulated_plan')) ?? Plan.free;
   if (plan == current) return;
 
   final confirmed = await showDialog<bool>(
@@ -535,7 +542,8 @@ Future<void> _switchSimulatedPlan(
       backgroundColor: c.surface,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md)),
-      title: Text('Switch to ${plan.name[0].toUpperCase()}${plan.name.substring(1)} Plan',
+      title: Text(
+          'Switch to ${plan.name[0].toUpperCase()}${plan.name.substring(1)} Plan',
           style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
       content: Text(
         'Simulating the ${plan.name} tier requires a restart. Continue?',
@@ -612,18 +620,8 @@ class _DevPlanSection extends ConsumerWidget {
           padding: const EdgeInsets.all(AppSpacing.s2),
           child: Row(
             children: [
-              _PlanChip(
-                  plan: Plan.free,
-                  label: 'Free',
-                  current: current),
-              _PlanChip(
-                  plan: Plan.pro,
-                  label: 'Pro',
-                  current: current),
-              _PlanChip(
-                  plan: Plan.insight,
-                  label: 'Insight',
-                  current: current),
+              _PlanChip(plan: Plan.free, label: 'Free', current: current),
+              _PlanChip(plan: Plan.pro, label: 'Pro', current: current),
             ],
           ),
         ),
@@ -670,9 +668,7 @@ class _PlanChip extends ConsumerWidget {
               Icon(
                 plan == Plan.free
                     ? Icons.lock_open_rounded
-                    : plan == Plan.pro
-                        ? Icons.star_rounded
-                        : Icons.diamond_rounded,
+                    : Icons.star_rounded,
                 size: 16,
                 color: selected ? c.background : c.textMuted,
               ),
@@ -686,6 +682,231 @@ class _PlanChip extends ConsumerWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Account Actions ───────────────────────────────────────────────────────────
+
+class _AccountActionsSection extends ConsumerWidget {
+  const _AccountActionsSection();
+
+  Future<void> _signOut(BuildContext context) async {
+    final c = context.colors;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md)),
+        title: Text('Sign Out',
+            style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+        content: Text(
+          'Are you sure you want to sign out?',
+          style: AppTypography.md.copyWith(color: c.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: AppTypography.labelMd.copyWith(color: c.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Sign Out',
+                style: AppTypography.labelMd.copyWith(color: c.danger)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await AuthService.signOut();
+    if (context.mounted) context.go('/auth');
+  }
+
+  Future<void> _resetPassword(BuildContext context) async {
+    final email = FirebaseAuth.instance.currentUser?.email;
+    if (email == null) return;
+    try {
+      await AuthService.resetPassword(email);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Password reset email sent to $email'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } on AuthException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message), behavior: SnackBarBehavior.floating),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteAccount(BuildContext context) async {
+    final c = context.colors;
+    final passwordCtrl = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: c.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.md)),
+        title: Text('Delete Account',
+            style: AppTypography.headingSm.copyWith(color: c.danger)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This permanently deletes your account and cannot be undone. Enter your password to confirm.',
+              style: AppTypography.sm.copyWith(color: c.textSecondary),
+            ),
+            const SizedBox(height: AppSpacing.s4),
+            TextField(
+              controller: passwordCtrl,
+              obscureText: true,
+              style: AppTypography.md.copyWith(color: c.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Password',
+                hintStyle: AppTypography.md.copyWith(color: c.textMuted),
+                filled: true,
+                fillColor: c.surfaceCard,
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  borderSide: BorderSide(color: c.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  borderSide: BorderSide(color: c.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                  borderSide: BorderSide(color: c.danger),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('Cancel',
+                style: AppTypography.labelMd.copyWith(color: c.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: Text('Delete',
+                style: AppTypography.labelMd.copyWith(color: c.danger)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    try {
+      await AuthService.deleteAccount(passwordCtrl.text);
+      if (context.mounted) context.go('/auth');
+    } on AuthException catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.message), behavior: SnackBarBehavior.floating),
+        );
+      }
+    } finally {
+      passwordCtrl.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'ACCOUNT',
+          style: AppTypography.labelSm.copyWith(
+            color: c.textMuted,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Container(
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: c.border),
+          ),
+          child: Column(
+            children: [
+              _ActionRow(
+                icon: Icons.lock_reset_rounded,
+                label: 'Reset Password',
+                onTap: () => _resetPassword(context),
+              ),
+              Divider(height: 1, color: c.border),
+              _ActionRow(
+                icon: Icons.logout_rounded,
+                label: 'Sign Out',
+                color: c.danger,
+                onTap: () => _signOut(context),
+              ),
+              Divider(height: 1, color: c.border),
+              _ActionRow(
+                icon: Icons.delete_forever_rounded,
+                label: 'Delete Account',
+                color: c.danger,
+                onTap: () => _deleteAccount(context),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ActionRow extends StatelessWidget {
+  const _ActionRow({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final effectiveColor = color ?? c.textPrimary;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s4, vertical: AppSpacing.s4),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: effectiveColor),
+            const SizedBox(width: AppSpacing.s3),
+            Text(label,
+                style: AppTypography.md.copyWith(color: effectiveColor)),
+            const Spacer(),
+            Icon(Icons.chevron_right_rounded, size: 18, color: c.textMuted),
+          ],
         ),
       ),
     );

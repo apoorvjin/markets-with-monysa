@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'strategy_provider.dart';
+import '../services/firestore_service.dart';
 
 class ThemeModeNotifier extends Notifier<ThemeMode> {
   static const _key = 'themeMode';
@@ -20,6 +21,7 @@ class ThemeModeNotifier extends Notifier<ThemeMode> {
     state = mode;
     final prefs = ref.read(sharedPreferencesProvider);
     await prefs.setString(_key, mode.name);
+    FirestoreService.updatePrefs({'theme': mode.name});
   }
 
   void toggle() =>

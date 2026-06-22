@@ -234,7 +234,7 @@ class _SectorRow extends StatelessWidget {
                   ),
                   const SizedBox(width: 3),
                   Text(
-                    EntitlementService.can('exposure_ai') ? 'AI' : 'Insight',
+                    EntitlementService.can('exposure_ai') ? 'AI' : 'Pro',
                     style: AppTypography.xs.copyWith(
                         color: c.accent, fontWeight: FontWeight.w700),
                   ),

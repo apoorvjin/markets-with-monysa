@@ -192,7 +192,7 @@ class _TenXBacktestScreenState extends ConsumerState<TenXBacktestScreen> {
             _SignalFilterRow(
               version: _version,
               requiredSignals: _requiredSignals,
-              isInsight: EntitlementService.can('backtest_filter'),
+              isPro: EntitlementService.can('backtest_filter'),
               onToggle: (key) => setState(() {
                 if (_requiredSignals.contains(key)) {
                   _requiredSignals = Set.from(_requiredSignals)..remove(key);
@@ -228,13 +228,13 @@ class _SignalFilterRow extends StatelessWidget {
   const _SignalFilterRow({
     required this.version,
     required this.requiredSignals,
-    required this.isInsight,
+    required this.isPro,
     required this.onToggle,
   });
 
   final String version;
   final Set<String> requiredSignals;
-  final bool isInsight;
+  final bool isPro;
   final void Function(String key) onToggle;
 
   @override
@@ -253,7 +253,7 @@ class _SignalFilterRow extends StatelessWidget {
             label: 'Heartbeat',
             chipKey: 'heartbeat',
             isActive: requiredSignals.contains('heartbeat'),
-            isInsight: isInsight,
+            isPro: isPro,
             onToggle: onToggle,
             context: context,
           ),
@@ -262,7 +262,7 @@ class _SignalFilterRow extends StatelessWidget {
             label: 'Rec. Qtr',
             chipKey: 'rec_quarter',
             isActive: requiredSignals.contains('rec_quarter'),
-            isInsight: isInsight,
+            isPro: isPro,
             onToggle: onToggle,
             context: context,
           ),
@@ -273,7 +273,7 @@ class _SignalFilterRow extends StatelessWidget {
               label: 'Trend ↑',
               chipKey: 'trend_up',
               isActive: requiredSignals.contains('trend_up'),
-              isInsight: isInsight,
+              isPro: isPro,
               onToggle: onToggle,
               context: context,
               unavailable: version != 'v2',
@@ -290,7 +290,7 @@ class _FilterChip extends StatelessWidget {
     required this.label,
     required this.chipKey,
     required this.isActive,
-    required this.isInsight,
+    required this.isPro,
     required this.onToggle,
     required this.context,
     this.unavailable = false,
@@ -299,7 +299,7 @@ class _FilterChip extends StatelessWidget {
   final String label;
   final String chipKey;
   final bool isActive;
-  final bool isInsight;
+  final bool isPro;
   final void Function(String) onToggle;
   final BuildContext context;
   final bool unavailable;
@@ -307,7 +307,7 @@ class _FilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext ctx) {
     final c = ctx.colors;
-    final locked = !unavailable && !isInsight;
+    final locked = !unavailable && !isPro;
     return GestureDetector(
       onTap: () {
         if (unavailable) return;

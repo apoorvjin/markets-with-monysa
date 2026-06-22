@@ -18,21 +18,24 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   static const _slides = [
     _Slide(
-      icon: Icons.public_rounded,
-      title: 'Global Markets',
-      body: 'Live indices, commodities, and forex pairs from 46 countries — all in one place. Candlestick charts, CFTC positioning, and real-time quotes at a glance.',
+      emoji: '🌍',
+      title: 'Live Global Markets',
+      body: 'Real-time indices, commodities, and forex pairs from around the world — with candlestick charts and CFTC positioning data at a glance.',
+      bullets: ['46 indices · 23 commodities', '44 forex pairs by region', 'Market-cap treemap heatmap'],
       accentHex: 0xFF00D4AA,
     ),
     _Slide(
-      icon: Icons.psychology_rounded,
+      emoji: '🤖',
       title: 'AI Trading Signals',
-      body: '9 strategies — from pure technical to ensemble and APEX — generate BUY/HOLD/SELL signals with entry, stop-loss, and take-profit levels for 49 assets.',
+      body: 'Nine strategies — from pure technical to sentiment-hybrid — generate BUY/HOLD/SELL signals with entry, stop-loss, and take-profit levels.',
+      bullets: ['49 assets across all classes', 'Entry · SL · TP on every signal', 'Walk-forward backtesting'],
       accentHex: 0xFFFFB84D,
     ),
     _Slide(
-      icon: Icons.travel_explore_rounded,
+      emoji: '🧭',
       title: 'Macro Intelligence',
-      body: 'Tariff exposure across 113 countries, US debt visualised, volatility monitor with AI briefings, and yield curve analysis — everything a macro investor needs.',
+      body: 'Everything a macro investor needs — tariff exposure, market stress gauges, yield curve analysis, and AI-powered global briefings.',
+      bullets: ['113-country tariff exposure', 'Fear & Greed · VIX · Stress Meter', 'Congress & insider flow data'],
       accentHex: 0xFFFF4D6A,
     ),
   ];
@@ -40,7 +43,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Future<void> _finish() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('hasSeenOnboarding', true);
-    if (mounted) context.go('/markets');
+    if (mounted) context.go('/auth');
   }
 
   void _next() {
@@ -141,14 +144,16 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
 class _Slide {
   const _Slide({
-    required this.icon,
+    required this.emoji,
     required this.title,
     required this.body,
+    required this.bullets,
     required this.accentHex,
   });
-  final IconData icon;
+  final String emoji;
   final String title;
   final String body;
+  final List<String> bullets;
   final int accentHex;
 }
 
@@ -165,15 +170,25 @@ class _SlideView extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // Large emoji in a tinted glow circle
           Container(
-            width: 96,
-            height: 96,
+            width: 112,
+            height: 112,
             decoration: BoxDecoration(
-              color: accent.withAlpha(30),
+              color: accent.withAlpha(22),
               shape: BoxShape.circle,
-              border: Border.all(color: accent.withAlpha(80), width: 1.5),
+              border: Border.all(color: accent.withAlpha(60), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: accent.withAlpha(30),
+                  blurRadius: 32,
+                  spreadRadius: 4,
+                ),
+              ],
             ),
-            child: Icon(slide.icon, size: 44, color: accent),
+            child: Center(
+              child: Text(slide.emoji, style: const TextStyle(fontSize: 52)),
+            ),
           ),
           const SizedBox(height: AppSpacing.s7),
           Text(
@@ -184,9 +199,31 @@ class _SlideView extends StatelessWidget {
           const SizedBox(height: AppSpacing.s4),
           Text(
             slide.body,
-            style: AppTypography.md.copyWith(
-                color: c.textSecondary, height: 1.55),
+            style: AppTypography.md.copyWith(color: c.textSecondary, height: 1.55),
             textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: AppSpacing.s6),
+          // Feature bullet chips
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            alignment: WrapAlignment.center,
+            children: slide.bullets.map((b) => Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s4, vertical: AppSpacing.s1),
+              decoration: BoxDecoration(
+                color: accent.withAlpha(16),
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                border: Border.all(color: accent.withAlpha(45)),
+              ),
+              child: Text(
+                b,
+                style: AppTypography.sm.copyWith(
+                  color: accent,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            )).toList(),
           ),
         ],
       ),

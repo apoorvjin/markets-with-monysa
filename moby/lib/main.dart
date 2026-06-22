@@ -1,4 +1,7 @@
 import 'dart:io';
+import 'package:firebase_analytics/firebase_analytics.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,11 +12,16 @@ import 'app.dart';
 import 'core/network/chart_renderer_interceptor.dart';
 import 'core/network/device_id.dart';
 import 'core/restart_widget.dart';
+import 'firebase_options.dart';
 import 'providers/strategy_provider.dart';
 import 'services/entitlement_service.dart';
+import 'services/firestore_service.dart';
+import 'services/push_notification_service.dart';
+import 'services/remote_config_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -23,7 +31,21 @@ void main() async {
     statusBarIconBrightness: Brightness.light,
     systemNavigationBarColor: Colors.black,
   ));
+
+  // Initialise Remote Config early so typed accessors return live values
+  // (not just hard-coded defaults) as soon as the first widget builds.
+  await RemoteConfigService.init();
+
   final prefs = await SharedPreferences.getInstance();
+
+  // If a user is already signed in (returning launch), seed local SharedPreferences
+  // from Firestore before the ProviderScope mounts so synchronous providers
+  // (theme, chartProvider) reflect any cross-device preference changes.
+  final firebaseUser = FirebaseAuth.instance.currentUser;
+  if (firebaseUser != null) {
+    await FirestoreService.seedPrefsFromFirestore(firebaseUser.uid, prefs)
+        .catchError((_) {});
+  }
 
   // Seed the chart renderer so the Dio interceptor stamps the correct
   // X-Chart-Renderer header on the very first request, before any widget
@@ -44,7 +66,6 @@ void main() async {
   }
 
   // Configure RevenueCat when platform API keys are provided.
-  // Pass --dart-define=REVENUECAT_IOS_KEY=... and REVENUECAT_ANDROID_KEY=...
   const rcIosKey = String.fromEnvironment('REVENUECAT_IOS_KEY');
   const rcAndroidKey = String.fromEnvironment('REVENUECAT_ANDROID_KEY');
   final rcKey = Platform.isIOS ? rcIosKey : rcAndroidKey;
@@ -55,15 +76,18 @@ void main() async {
     await Purchases.configure(configuration);
     EntitlementService.markRevenueCatConfigured();
 
-    // Seed the initial plan from RevenueCat on launch.
     try {
       final customerInfo = await Purchases.getCustomerInfo();
       EntitlementService.updateFromCustomerInfo(customerInfo);
     } catch (_) {}
 
-    // Keep the plan in sync whenever the subscription state changes.
     Purchases.addCustomerInfoUpdateListener(
         EntitlementService.updateFromCustomerInfo);
+  }
+
+  // Initialise push notifications for already-signed-in users (returning launch).
+  if (firebaseUser != null) {
+    PushNotificationService.init().catchError((_) {});
   }
 
   const sentryDsn = String.fromEnvironment('SENTRY_DSN');
@@ -80,4 +104,7 @@ void main() async {
       ),
     )),
   );
+
+  // Log app_open event after the widget tree is running.
+  FirebaseAnalytics.instance.logAppOpen().catchError((_) {});
 }

@@ -1,3 +1,4 @@
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
@@ -5,6 +6,7 @@ import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../services/entitlement_service.dart';
+import '../../services/remote_config_service.dart';
 
 class UpgradeSheet extends StatefulWidget {
   const UpgradeSheet({super.key, required this.feature});
@@ -13,6 +15,10 @@ class UpgradeSheet extends StatefulWidget {
   final String feature;
 
   static Future<void> show(BuildContext context, {required String feature}) {
+    FirebaseAnalytics.instance.logEvent(
+      name: 'feature_gated',
+      parameters: {'feature': feature},
+    ).catchError((_) {});
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -29,10 +35,6 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
   bool _loading = false;
   String? _error;
 
-  bool get _isInsightFeature =>
-      widget.feature == 'exposure_ai' ||
-      widget.feature == 'api_access' ||
-      widget.feature == 'backtest_filter';
 
   Future<void> _onPurchaseTap() async {
     if (!EntitlementService.isRevenueCatConfigured) {
@@ -48,9 +50,7 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
 
     try {
       final offerings = await Purchases.getOfferings();
-      final offering = _isInsightFeature
-          ? offerings.getOffering('insight') ?? offerings.current
-          : offerings.current;
+      final offering = offerings.current;
       final package = offering?.monthly;
       if (package == null) {
         setState(() {
@@ -61,6 +61,10 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
       }
       final info = await Purchases.purchasePackage(package);
       EntitlementService.updateFromCustomerInfo(info);
+      FirebaseAnalytics.instance.logEvent(
+        name: 'plan_upgrade',
+        parameters: {'plan': 'pro', 'feature': widget.feature},
+      ).catchError((_) {});
       if (mounted) Navigator.of(context).pop();
     } on PlatformException catch (e) {
       final code = PurchasesErrorHelper.getErrorCode(e);
@@ -116,14 +120,12 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
           ),
           const SizedBox(height: AppSpacing.s4),
           Text(
-            _isInsightFeature ? 'Insight Feature' : 'Pro Feature',
+            'Pro Feature',
             style: AppTypography.headingMd.copyWith(color: c.textPrimary),
           ),
           const SizedBox(height: AppSpacing.s2),
           Text(
-            _isInsightFeature
-                ? 'This feature is available on the Insight plan.'
-                : 'This feature is available on the Pro plan.',
+            'This feature is available on the Pro plan.',
             style: AppTypography.md.copyWith(color: c.textSecondary),
             textAlign: TextAlign.center,
           ),
@@ -136,7 +138,7 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
             ),
           ],
           const SizedBox(height: AppSpacing.s6),
-          _TierComparison(highlightInsight: _isInsightFeature),
+          const _TierComparison(),
           const SizedBox(height: AppSpacing.s6),
           SizedBox(
             width: double.infinity,
@@ -180,8 +182,7 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
 }
 
 class _TierComparison extends StatelessWidget {
-  const _TierComparison({required this.highlightInsight});
-  final bool highlightInsight;
+  const _TierComparison();
 
   @override
   Widget build(BuildContext context) {
@@ -191,10 +192,10 @@ class _TierComparison extends StatelessWidget {
         _TierColumn(
           label: 'Free',
           price: '\$0',
-          features: const [
+          features: [
             'Live quotes',
             'S1-S3 signals',
-            '3 alerts',
+            '${RemoteConfigService.alertLimitFree} alerts',
             '3 AI notes/day',
             'Tariff map',
           ],
@@ -204,29 +205,16 @@ class _TierComparison extends StatelessWidget {
         const SizedBox(width: AppSpacing.s3),
         _TierColumn(
           label: 'Pro',
-          price: '\$12.99/mo',
+          price: '\$${RemoteConfigService.proMonthlyPriceUsd}/mo',
           features: const [
             'All 9 strategies',
             'Unlimited alerts',
             'Unlimited AI notes',
             'AI macro briefing',
-            'Full COT data',
-          ],
-          isHighlighted: !highlightInsight,
-          c: c,
-        ),
-        const SizedBox(width: AppSpacing.s3),
-        _TierColumn(
-          label: 'Insight',
-          price: '\$29.99/mo',
-          features: const [
-            'Everything in Pro',
-            'AI Tariff Analysis',
             'Sector heatmap',
             'API access',
-            'PDF export',
           ],
-          isHighlighted: highlightInsight,
+          isHighlighted: true,
           c: c,
         ),
       ],

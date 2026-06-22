@@ -5,6 +5,7 @@ import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../shared/widgets/empty_view.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
@@ -35,22 +36,10 @@ class EarningsCalendarTab extends ConsumerWidget {
       ),
       data: (items) {
         if (items.isEmpty) {
-          return Center(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.s8),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.event_outlined, size: 40, color: c.textMuted),
-                  const SizedBox(height: AppSpacing.s3),
-                  Text(
-                    'No earnings in the next 15 days',
-                    style: AppTypography.md.copyWith(color: c.textMuted),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            ),
+          return const EmptyView(
+            icon: Icons.event_outlined,
+            title: 'No upcoming earnings',
+            body: 'No major earnings reports are scheduled for the next 15 days. Check back closer to end of quarter.',
           );
         }
 

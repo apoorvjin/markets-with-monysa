@@ -27,17 +27,14 @@ echo -e "${BOLD}  Select Dev Plan${NC}"
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 echo -e "  ${BOLD}1) Free${NC}    — All paywalls active; simulate a new user with no subscription"
-echo -e "             Gated: AI Signals, Analyst Notes, Alerts, Best Setups, AI Exposure,"
-echo -e "             Backtest Filter"
+echo -e "             Gated: AI Signals, Analyst Notes, Alerts, Best Setups, Heatmap,"
+echo -e "             AI Tariff Exposure, Backtest Filter, API Access"
 echo ""
-echo -e "  ${BOLD}2) Pro${NC}     — Unlocks: AI Signals, Analyst Notes (unlimited), Alerts (unlimited),"
-echo -e "             Best Setups, Push Notifications"
-echo -e "             Still gated: AI Tariff Exposure, Backtest Filter ${YELLOW}(Insight only)${NC}"
+echo -e "  ${BOLD}2) Pro${NC}     — Unlocks everything: AI Signals, Analyst Notes (unlimited),"
+echo -e "             Alerts (unlimited), Best Setups, Heatmap, AI Tariff Exposure,"
+echo -e "             Backtest Filter, API Access, Push Notifications"
 echo ""
-echo -e "  ${BOLD}3) Insight${NC} — Unlocks everything: all Pro features + AI Tariff Exposure Analysis,"
-echo -e "             Backtest Filter, API Access"
-echo ""
-echo -e -n "  ${BOLD}Enter plan [1/2/3]:${NC} "
+echo -e -n "  ${BOLD}Enter plan [1/2]:${NC} "
 
 DEV_PLAN_VALUE=""
 DEV_PLAN_LABEL=""
@@ -54,19 +51,13 @@ while true; do
       ;;
     2)
       DEV_PLAN_VALUE="pro"
-      DEV_PLAN_LABEL="Pro"
+      DEV_PLAN_LABEL="Pro (all features unlocked)"
       DEV_PLAN_DART_DEFINE="--dart-define=DEV_PLAN=pro"
       break
       ;;
-    3)
-      DEV_PLAN_VALUE="insight"
-      DEV_PLAN_LABEL="Insight (all features unlocked)"
-      DEV_PLAN_DART_DEFINE="--dart-define=DEV_PLAN=insight"
-      break
-      ;;
     *)
-      echo -e "  ${RED}Invalid choice '${PLAN_CHOICE}'. Please enter 1, 2, or 3:${NC} "
-      echo -e -n "  ${BOLD}Enter plan [1/2/3]:${NC} "
+      echo -e "  ${RED}Invalid choice '${PLAN_CHOICE}'. Please enter 1 or 2:${NC} "
+      echo -e -n "  ${BOLD}Enter plan [1/2]:${NC} "
       ;;
   esac
 done

@@ -138,20 +138,7 @@ class _AssetDetailScreenState extends State<AssetDetailScreen>
         ),
         backgroundColor: c.headerBg,
         actions: [
-          // Watchlist star button
-          Consumer(
-            builder: (ctx, ref, _) {
-              final watched = ref.watch(watchlistProvider).contains(widget.symbol);
-              return IconButton(
-                icon: Icon(
-                  watched ? Icons.bookmark : Icons.bookmark_border,
-                  color: watched ? c.accent : c.textMuted,
-                ),
-                tooltip: watched ? 'Remove from watchlist' : 'Add to watchlist',
-                onPressed: () => ref.read(watchlistProvider.notifier).toggle(widget.symbol),
-              );
-            },
-          ),
+          _WatchlistButton(symbol: widget.symbol),
           // TradingView deep link
           IconButton(
             icon: Icon(Icons.open_in_browser_rounded, color: context.colors.textMuted, size: 20),
@@ -205,6 +192,63 @@ class _AssetDetailScreenState extends State<AssetDetailScreen>
           _BacktestTab(symbol: widget.symbol),
           _NewsTab(symbol: widget.symbol),
         ],
+      ),
+    );
+  }
+}
+
+// ── Watchlist Button with bounce animation ────────────────────────────────────
+
+class _WatchlistButton extends ConsumerStatefulWidget {
+  const _WatchlistButton({required this.symbol});
+  final String symbol;
+
+  @override
+  ConsumerState<_WatchlistButton> createState() => _WatchlistButtonState();
+}
+
+class _WatchlistButtonState extends ConsumerState<_WatchlistButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _scale = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 1.45), weight: 40),
+      TweenSequenceItem(tween: Tween(begin: 1.45, end: 0.9), weight: 30),
+      TweenSequenceItem(tween: Tween(begin: 0.9, end: 1.0), weight: 30),
+    ]).animate(CurvedAnimation(parent: _ctrl, curve: Curves.easeOut));
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final watched = ref.watch(watchlistProvider).contains(widget.symbol);
+    return ScaleTransition(
+      scale: _scale,
+      child: IconButton(
+        icon: Icon(
+          watched ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
+          color: watched ? c.accent : c.textMuted,
+        ),
+        tooltip: watched ? 'Remove from watchlist' : 'Add to watchlist',
+        onPressed: () {
+          ref.read(watchlistProvider.notifier).toggle(widget.symbol);
+          HapticFeedback.lightImpact();
+          _ctrl.forward(from: 0);
+        },
       ),
     );
   }

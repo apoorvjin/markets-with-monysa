@@ -244,12 +244,12 @@ class _SectorImpactSheet extends ConsumerWidget {
                                   color: c.accent, size: 28),
                             ),
                             const SizedBox(height: AppSpacing.s4),
-                            Text('Insight Feature',
+                            Text('Pro Feature',
                                 style: AppTypography.headingSm
                                     .copyWith(color: c.textPrimary)),
                             const SizedBox(height: AppSpacing.s2),
                             Text(
-                              'AI Tariff Analysis is available on the Insight plan.',
+                              'AI Tariff Analysis is available on the Pro plan.',
                               style: AppTypography.md
                                   .copyWith(color: c.textSecondary),
                               textAlign: TextAlign.center,

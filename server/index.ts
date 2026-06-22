@@ -254,6 +254,13 @@ function setupErrorHandler(app: express.Application) {
     res.json({ status: "ok", name: "Markets API", version: "1.0.0" });
   });
 
+  // Seed in-process plan cache from Firestore so plans survive server restarts.
+  const { loadPlansFromFirestore } = await import("./plan-enforcement");
+  await loadPlansFromFirestore();
+
+  const { registerAdminRoutes } = await import("./routes/admin");
+  registerAdminRoutes(app);
+
   const server = await registerRoutes(app);
 
   // Serve the compiled web frontend when dist/ is present.
@@ -274,6 +281,10 @@ function setupErrorHandler(app: express.Application) {
   // isLeader() as soon as they fire. Safe to call when Redis is absent
   // (becomes a no-op and isLeader() returns true).
   startLeaderElection();
+
+  // Start price-alert checker (leader-only; requires Firestore + FCM via firebase-admin).
+  const { startAlertChecker } = await import("./lib/alert-checker");
+  startAlertChecker();
 
   const port = parseInt(process.env.PORT || "5001", 10);
   server.listen(

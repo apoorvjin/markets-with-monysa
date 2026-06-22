@@ -8,9 +8,10 @@ abstract final class AppTypography {
         letterSpacing: -0.1,
       );
 
-  // Font sizes (xs=10, sm=11, md=12, lg=14, xl=16, 2xl=18, 3xl=20, 4xl=24)
-  static TextStyle get xs => _base.copyWith(fontSize: 10, height: 1.4);
+  // Font sizes (caption=11, md=12, lg=14, xl=16, 2xl=18, 3xl=20, 4xl=24)
+  // xs is an alias for sm (both 11px) — the 10px size was too close and created drift.
   static TextStyle get sm => _base.copyWith(fontSize: 11, height: 1.4);
+  static TextStyle get xs => sm; // alias — use sm directly for new code
   static TextStyle get md => _base.copyWith(fontSize: 12, height: 1.5);
   static TextStyle get lg => _base.copyWith(fontSize: 14, height: 1.5);
   static TextStyle get xl => _base.copyWith(fontSize: 16, height: 1.5);

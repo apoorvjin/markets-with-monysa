@@ -7,6 +7,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/trading_repository.dart';
+import '../../shared/widgets/empty_view.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
@@ -326,16 +327,11 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                       .where((r) => _isStockForCountry(r, _country))
                       .toList();
                   if (filtered.isEmpty) {
-                    return Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(AppSpacing.s8),
-                        child: Text(
-                          'No ${_countryLabel(_country)} results for "$_debouncedQuery".',
-                          style:
-                              AppTypography.xs.copyWith(color: c.textMuted),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
+                    return EmptyView(
+                      icon: Icons.search_off_rounded,
+                      title: 'No results',
+                      body: 'No ${_countryLabel(_country)} stocks matched "$_debouncedQuery". Try a shorter or different name.',
+                      iconColor: context.colors.textMuted,
                     );
                   }
                   return ListView.builder(
@@ -456,16 +452,11 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                     return ref.refresh(_multibaggersProvider(_args).future);
                   },
                   child: filtered.isEmpty
-                      ? Center(
-                          child: Padding(
-                            padding: const EdgeInsets.all(AppSpacing.s8),
-                            child: Text(
-                              'No stocks match the current filter.\nTry lowering the signal count.',
-                              style: AppTypography.sm
-                                  .copyWith(color: c.textMuted),
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
+                      ? EmptyView(
+                          icon: Icons.filter_list_off_rounded,
+                          title: 'No matches',
+                          body: 'No stocks cleared the signal filter. Try lowering the minimum signal count.',
+                          iconColor: context.colors.textMuted,
                         )
                       : ListView.builder(
                           padding: EdgeInsets.only(

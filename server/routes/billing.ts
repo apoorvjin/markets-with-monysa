@@ -1,12 +1,11 @@
 import type { Express } from "express";
-import { devicePlanMap, type DevicePlan } from "../plan-enforcement";
+import { devicePlanMap, persistPlan, type DevicePlan } from "../plan-enforcement";
 
 const REVENUECAT_WEBHOOK_SECRET = process.env.REVENUECAT_WEBHOOK_SECRET;
 
 function entitlementsToPlan(entitlementIds: string[]): DevicePlan {
   if (entitlementIds.includes("enterprise")) return "enterprise";
-  if (entitlementIds.includes("insight")) return "insight";
-  if (entitlementIds.includes("pro")) return "pro";
+  if (entitlementIds.includes("pro") || entitlementIds.includes("insight")) return "pro";
   return "free";
 }
 
@@ -41,6 +40,7 @@ export function registerBillingRoutes(app: Express): void {
       case "UNCANCELLATION": {
         const plan = entitlementsToPlan(entitlement_ids ?? []);
         devicePlanMap.set(deviceId, plan);
+        persistPlan(deviceId, plan, type);
         console.log(`[billing] ${type}: device=${deviceId} plan=${plan}`);
         break;
       }
@@ -48,6 +48,7 @@ export function registerBillingRoutes(app: Express): void {
       case "EXPIRATION":
       case "BILLING_ISSUE": {
         devicePlanMap.set(deviceId, "free");
+        persistPlan(deviceId, "free", type);
         console.log(`[billing] ${type}: device=${deviceId} → free`);
         break;
       }

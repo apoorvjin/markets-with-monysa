@@ -1,0 +1,8 @@
+{
+  "name": "Monysa — Generate App Screens",
+  "id": "monysa-screens-export-2025",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"]
+}

@@ -1,9 +1,9 @@
 import 'package:purchases_flutter/purchases_flutter.dart';
 
-enum Plan { free, pro, insight, enterprise }
+enum Plan { free, pro, enterprise }
 
 abstract final class EntitlementService {
-  // Pass --dart-define=DEV_PLAN=pro (or insight/enterprise) to bypass gates
+  // Pass --dart-define=DEV_PLAN=pro (or enterprise) to bypass gates
   // during development and TestFlight builds. Production builds ship without it.
   static const _devPlan = String.fromEnvironment('DEV_PLAN');
 
@@ -20,8 +20,6 @@ abstract final class EntitlementService {
     switch (_devPlan) {
       case 'pro':
         return Plan.pro;
-      case 'insight':
-        return Plan.insight;
       case 'enterprise':
         return Plan.enterprise;
     }
@@ -38,9 +36,7 @@ abstract final class EntitlementService {
     final active = info.entitlements.active;
     if (active.containsKey('enterprise')) {
       newPlan = Plan.enterprise;
-    } else if (active.containsKey('insight')) {
-      newPlan = Plan.insight;
-    } else if (active.containsKey('pro')) {
+    } else if (active.containsKey('pro') || active.containsKey('insight')) {
       newPlan = Plan.pro;
     }
     _runtimePlan = newPlan;
@@ -53,18 +49,16 @@ abstract final class EntitlementService {
   }
 
   static const _rules = <String, Set<Plan>>{
-    'signals_advanced': {Plan.pro, Plan.insight, Plan.enterprise},
-    'analyst_notes_unlimited': {Plan.pro, Plan.insight, Plan.enterprise},
-    'alerts_unlimited': {Plan.pro, Plan.insight, Plan.enterprise},
-    'push_notifications': {Plan.pro, Plan.insight, Plan.enterprise},
-    'exposure_ai': {Plan.insight, Plan.enterprise},
-    'api_access': {Plan.insight, Plan.enterprise},
-    'best_setups': {Plan.pro, Plan.insight, Plan.enterprise},
-    'backtest_filter': {Plan.insight, Plan.enterprise},
-    'treemap_heatmap': {Plan.pro, Plan.insight, Plan.enterprise},
+    'signals_advanced': {Plan.pro, Plan.enterprise},
+    'analyst_notes_unlimited': {Plan.pro, Plan.enterprise},
+    'alerts_unlimited': {Plan.pro, Plan.enterprise},
+    'push_notifications': {Plan.pro, Plan.enterprise},
+    'exposure_ai': {Plan.pro, Plan.enterprise},
+    'api_access': {Plan.pro, Plan.enterprise},
+    'best_setups': {Plan.pro, Plan.enterprise},
+    'backtest_filter': {Plan.pro, Plan.enterprise},
+    'treemap_heatmap': {Plan.pro, Plan.enterprise},
   };
 
-  static String get requiredPlanLabel {
-    return current == Plan.free ? 'Pro' : 'Insight';
-  }
+  static String get requiredPlanLabel => 'Pro';
 }

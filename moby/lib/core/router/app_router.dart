@@ -1,4 +1,8 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:go_router/go_router.dart';
+import '../../features/auth/auth_screen.dart';
+import '../../features/auth/email_auth_screen.dart';
+import '../../features/auth/email_verification_screen.dart';
 import '../../features/onboarding/onboarding_screen.dart';
 import '../../features/splash/splash_screen.dart';
 import '../../features/markets/markets_screen.dart';
@@ -17,11 +21,37 @@ import '../../app.dart';
 final appRouter = GoRouter(
   initialLocation: '/splash',
   redirect: (context, state) {
-    // Redirect old standalone routes to their new homes
     final loc = state.matchedLocation;
+
+    User? user;
+    try {
+      user = FirebaseAuth.instance.currentUser;
+    } catch (_) {}
+
+    final isPublicRoute = loc == '/splash' || loc == '/onboarding';
+    final isSignInRoute = loc == '/auth' || loc == '/auth/email';
+    final isVerifyRoute = loc == '/auth/verify-email';
+
+    if (user == null) {
+      // Not logged in: only splash, onboarding, and sign-in screens allowed.
+      if (!isPublicRoute && !isSignInRoute) return '/auth';
+      return null;
+    }
+
+    if (!user.emailVerified) {
+      // Logged in but unverified: lock to verify-email screen only.
+      if (!isVerifyRoute) return '/auth/verify-email';
+      return null;
+    }
+
+    // Fully authenticated: bounce away from all auth screens.
+    if (isSignInRoute || isVerifyRoute) return '/markets';
+
+    // Legacy redirects for old deep links.
     if (loc == '/volatility') return '/macro';
     if (loc == '/exposure') return '/investing';
     if (loc == '/debt') return '/macro';
+
     return null;
   },
   routes: [
@@ -32,6 +62,20 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/onboarding',
       builder: (_, __) => const OnboardingScreen(),
+    ),
+    GoRoute(
+      path: '/auth',
+      builder: (_, __) => const AuthScreen(),
+    ),
+    GoRoute(
+      path: '/auth/email',
+      builder: (_, state) => EmailAuthScreen(
+        initialMode: (state.extra as String?) ?? 'signin',
+      ),
+    ),
+    GoRoute(
+      path: '/auth/verify-email',
+      builder: (_, __) => const EmailVerificationScreen(),
     ),
     ShellRoute(
       builder: (context, state, child) => AppShell(child: child),

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { margin: 0; background: #1a1a1a; color: #fff; font-family: sans-serif;
+         display: flex; align-items: center; justify-content: center;
+         height: 72px; flex-direction: column; gap: 8px; }
+  #msg  { font-size: 13px; color: #ccc; }
+  #bar  { width: 220px; height: 4px; background: #333; border-radius: 2px; overflow: hidden; }
+  #fill { height: 100%; width: 0%; background: #00D4AA; border-radius: 2px;
+          transition: width 0.3s ease; }
+</style>
+</head>
+<body>
+  <div id="msg">⏳ Starting…</div>
+  <div id="bar"><div id="fill"></div></div>
+  <script>
+    window.onmessage = ({ data: { pluginMessage: m } }) => {
+      if (!m) return;
+      document.getElementById('msg').textContent = m.text;
+      document.getElementById('fill').style.width = m.pct + '%';
+    };
+  </script>
+</body>
+</html>

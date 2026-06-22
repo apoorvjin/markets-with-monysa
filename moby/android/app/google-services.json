@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "234828339364",
+    "project_id": "monysa-prod",
+    "storage_bucket": "monysa-prod.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:234828339364:android:f0af831dd5b722165cee31",
+        "android_client_info": {
+          "package_name": "com.monysa.moby"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCpocvwJtCpM3GDg38imgUMOy-cPMFn4_0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
