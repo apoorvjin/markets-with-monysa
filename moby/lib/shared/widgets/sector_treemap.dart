@@ -5,10 +5,13 @@ import 'sparkline_chart.dart';
 
 class SectorTreemap extends StatefulWidget {
   final List<TreemapStock> stocks;
+  /// Raw Yahoo marketState: REGULAR / PRE / POST / POSTPOST / CLOSED.
+  /// Used by the tooltip to show the correct extended-hours price row.
+  final String? marketState;
   /// Fires when a sector header is tapped. When null, sector headers are not
   /// tappable (used by the already-focused sector view to avoid recursive drill-in).
   final void Function(String sector)? onSectorTap;
-  const SectorTreemap({super.key, required this.stocks, this.onSectorTap});
+  const SectorTreemap({super.key, required this.stocks, this.marketState, this.onSectorTap});
 
   @override
   State<SectorTreemap> createState() => _SectorTreemapState();
@@ -74,7 +77,7 @@ class _SectorTreemapState extends State<SectorTreemap> {
             width: cardWidth,
             child: Material(
               color: Colors.transparent,
-              child: _TooltipCard(stock: stock, onClose: _hideTooltip),
+              child: _TooltipCard(stock: stock, marketState: widget.marketState, onClose: _hideTooltip),
             ),
           ),
         ],
@@ -396,8 +399,9 @@ class _StockTile extends StatelessWidget {
 
 class _TooltipCard extends StatelessWidget {
   final TreemapStock stock;
+  final String? marketState;
   final VoidCallback onClose;
-  const _TooltipCard({required this.stock, required this.onClose});
+  const _TooltipCard({required this.stock, this.marketState, required this.onClose});
 
   @override
   Widget build(BuildContext context) {
@@ -408,9 +412,14 @@ class _TooltipCard extends StatelessWidget {
         stock.fiftyTwoWeekHigh != null && stock.fiftyTwoWeekLow != null;
     final hasSparkline =
         stock.sparkline != null && stock.sparkline!.length >= 2;
-    final hasExtended = stock.preMarketPrice != null &&
-            stock.preMarketChangePercent != null ||
-        stock.postMarketPrice != null && stock.postMarketChangePercent != null;
+    final sessionPost = marketState == 'POST' || marketState == 'POSTPOST';
+    final sessionPre = marketState == 'PRE';
+    final hasExtended = (sessionPost &&
+            stock.postMarketPrice != null &&
+            stock.postMarketChangePercent != null) ||
+        (sessionPre &&
+            stock.preMarketPrice != null &&
+            stock.preMarketChangePercent != null);
     return GestureDetector(
       onTap: () {}, // absorb taps so background dismiss doesn't fire.
       child: Container(
@@ -601,12 +610,12 @@ class _TooltipCard extends StatelessWidget {
   }
 
   Widget _extendedRow(AppPalette c) {
-    final isPre = stock.preMarketPrice != null;
-    final price = isPre ? stock.preMarketPrice! : stock.postMarketPrice!;
-    final pct = isPre
-        ? (stock.preMarketChangePercent ?? 0)
-        : (stock.postMarketChangePercent ?? 0);
-    final label = isPre ? 'Pre-market' : 'After-hours';
+    final isPost = marketState == 'POST' || marketState == 'POSTPOST';
+    final price = isPost ? stock.postMarketPrice! : stock.preMarketPrice!;
+    final pct = isPost
+        ? (stock.postMarketChangePercent ?? 0)
+        : (stock.preMarketChangePercent ?? 0);
+    final label = isPost ? 'After-hours' : 'Pre-market';
     final up = pct >= 0;
     return Row(
       children: [

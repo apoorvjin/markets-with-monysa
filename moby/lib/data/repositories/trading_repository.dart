@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import '../models/trading_signal.dart';
 import '../models/candle.dart';
+import '../models/adv_correlation_models.dart';
 import '../../core/cache/disk_cache.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
@@ -33,6 +34,30 @@ class _InstFlowEntry {
   bool get isValid => DateTime.now().difference(_cachedAt).inMinutes < 30;
 }
 
+// Adv Correlation — new, additive tab (see adv_correlation_tab.dart). Fully
+// separate cache from any of the above; matches server TTLs (base matrix 4h,
+// custom basket 45m, pair history 4h).
+class _AdvCorrelationEntry {
+  _AdvCorrelationEntry(this.data) : _cachedAt = DateTime.now();
+  final AdvCorrelationData data;
+  final DateTime _cachedAt;
+  bool get isValid => DateTime.now().difference(_cachedAt).inHours < 4;
+}
+
+class _AdvCorrelationCustomEntry {
+  _AdvCorrelationCustomEntry(this.data) : _cachedAt = DateTime.now();
+  final AdvCorrelationData data;
+  final DateTime _cachedAt;
+  bool get isValid => DateTime.now().difference(_cachedAt).inMinutes < 45;
+}
+
+class _AdvCorrelationHistoryEntry {
+  _AdvCorrelationHistoryEntry(this.data) : _cachedAt = DateTime.now();
+  final CorrelationHistoryData data;
+  final DateTime _cachedAt;
+  bool get isValid => DateTime.now().difference(_cachedAt).inHours < 4;
+}
+
 class TradingRepository {
   const TradingRepository();
 
@@ -58,6 +83,13 @@ class TradingRepository {
   // Institutional flow cache — keyed by type ("accumulation"|"distribution"|"vwap").
   static final _instFlowCache = <String, _InstFlowEntry>{};
   static final _instFlowInFlight = <String, Future<InstitutionalFlowResult>>{};
+
+  // Adv Correlation caches — keyed by window ("1m"|"3m"|"6m"|"1y"), by
+  // "window:sortedSymbolsCsv" for custom baskets, and by "SYM1|SYM2" for
+  // pair-history drill-downs.
+  static final _advCorrelationCache = <String, _AdvCorrelationEntry>{};
+  static final _advCorrelationCustomCache = <String, _AdvCorrelationCustomEntry>{};
+  static final _advCorrelationHistoryCache = <String, _AdvCorrelationHistoryEntry>{};
 
   Future<List<TenXScanResult>> _cachedFetch(
       String cacheKey, String endpoint) {
@@ -151,6 +183,21 @@ class TradingRepository {
     }
   }
 
+  Future<List<SignalTracePair>> fetchSignalsCompare(
+    String symbol, {
+    String timeframe = '1d',
+    CancelToken? cancelToken,
+  }) async {
+    final data = await ApiClient.instance.get(
+      ApiEndpoints.tradingSignalsCompare(symbol),
+      params: {'timeframe': timeframe},
+      cancelToken: cancelToken,
+    );
+    return (data['pairs'] as List)
+        .map((p) => SignalTracePair.fromJson(p as Map<String, dynamic>))
+        .toList();
+  }
+
   Future<List<Candle>> fetchHistory(String symbol, {String timeframe = '1d'}) async {
     final data = await ApiClient.instance.get(
       ApiEndpoints.tradingHistory(symbol),
@@ -174,18 +221,22 @@ class TradingRepository {
     return ChartPayload.fromJson(data);
   }
 
-  Future<List<BacktestResult>> fetchBacktest(String symbol) async {
-    final data = await ApiClient.instance.get(ApiEndpoints.tradingBacktest(symbol)) as Map<String, dynamic>;
+  Future<List<BacktestResult>> fetchBacktest(String symbol, {String? timeframe}) async {
+    final data = await ApiClient.instance.get(ApiEndpoints.tradingBacktest(symbol, timeframe: timeframe)) as Map<String, dynamic>;
     // Server returns { symbol, timeframe, strategies: { "1": {...}, ... }, backtestNotes: { "3": "...", "6": "..." }, timestamp }
     final strategies = data['strategies'] as Map<String, dynamic>;
     final notes = (data['backtestNotes'] as Map<String, dynamic>?) ?? {};
-    return ['1', '2', '3', '4', '5', '6', '7', '8', '9']
+    return ['1','2','3','4','5','6','7','8','9','10','11','12','13','14','15','16','17','18']
         .where((k) => strategies.containsKey(k))
-        .map((k) => BacktestResult.fromJson({
-              ...(strategies[k] as Map<String, dynamic>),
-              'strategy': 'S$k',
-              if (notes.containsKey(k)) 'backtestNote': notes[k],
-            }))
+        .map((k) {
+          final n = int.parse(k);
+          final label = n <= 9 ? 'S$k' : 'S${n - 9}+';
+          return BacktestResult.fromJson({
+            ...(strategies[k] as Map<String, dynamic>),
+            'strategy': label,
+            if (notes.containsKey(k)) 'backtestNote': notes[k],
+          });
+        })
         .toList();
   }
 
@@ -390,11 +441,6 @@ class TradingRepository {
 
   void clearBestSectorCache(String key) => _bestSectorCache.remove(key);
 
-  Future<QuiverScanResponse> fetchQuiverCongress() async {
-    final data = await ApiClient.instance.get(ApiEndpoints.quiverCongress) as Map<String, dynamic>;
-    return QuiverScanResponse.fromJson(data);
-  }
-
   Future<QuiverScanResponse> fetchQuiverLobbying() async {
     final data = await ApiClient.instance.get(ApiEndpoints.quiverLobbying) as Map<String, dynamic>;
     return QuiverScanResponse.fromJson(data);
@@ -403,11 +449,6 @@ class TradingRepository {
   Future<QuiverScanResponse> fetchQuiverInsider() async {
     final data = await ApiClient.instance.get(ApiEndpoints.quiverInsider) as Map<String, dynamic>;
     return QuiverScanResponse.fromJson(data);
-  }
-
-  Future<CongressTradesResponse> fetchCongressTrades() async {
-    final data = await ApiClient.instance.get(ApiEndpoints.quiverCongressTrades) as Map<String, dynamic>;
-    return CongressTradesResponse.fromJson(data);
   }
 
   Future<OgeTransactionsResponse> fetchTrumpTransactions() async {
@@ -435,6 +476,101 @@ class TradingRepository {
     return results
         .map((e) => StockSearchResult.fromJson(e as Map<String, dynamic>))
         .toList();
+  }
+
+  // The base matrix returns 503 { cacheWarm: false } for the ~2.5 minutes
+  // right after a fresh deploy/restart, before the leader-gated warm job (and
+  // its Redis snapshot) is populated. The global Dio retry interceptor
+  // doesn't retry 503s (by design, for other endpoints), so this endpoint
+  // gets its own short, bounded retry rather than surfacing a scary "failed
+  // to load" the first time someone opens the tab right after a deploy.
+  Future<Map<String, dynamic>> _fetchAdvCorrelationWithWarmupRetry(
+    String window,
+  ) async {
+    const delays = [Duration(seconds: 5), Duration(seconds: 10)];
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await ApiClient.instance.get(
+          ApiEndpoints.advCorrelation(window: window),
+        ) as Map<String, dynamic>;
+      } on DioException catch (e) {
+        final isWarmingUp = e.response?.statusCode == 503;
+        if (!isWarmingUp || attempt >= delays.length) rethrow;
+        await Future<void>.delayed(delays[attempt]);
+      }
+    }
+  }
+
+  Future<AdvCorrelationData> fetchAdvCorrelation({String window = '3m'}) async {
+    final cached = _advCorrelationCache[window];
+    if (cached != null && cached.isValid) return cached.data;
+
+    final diskKey = 'adv_correlation.$window';
+    AdvCorrelationData? diskHydrated;
+    if (cached == null) {
+      final disk = await DiskCache.instance.read<Map<String, dynamic>>(
+        diskKey,
+        ttl: const Duration(hours: 6),
+        decode: (j) => Map<String, dynamic>.from(j as Map),
+      );
+      if (disk != null) {
+        diskHydrated = AdvCorrelationData.fromJson(disk);
+        _advCorrelationCache[window] = _AdvCorrelationEntry(diskHydrated);
+      }
+    }
+
+    try {
+      final raw = await _fetchAdvCorrelationWithWarmupRetry(window);
+      final data = AdvCorrelationData.fromJson(raw);
+      _advCorrelationCache[window] = _AdvCorrelationEntry(data);
+      await DiskCache.instance.write(diskKey, raw);
+      return data;
+    } catch (e) {
+      if (diskHydrated != null) return diskHydrated;
+      final stale = await DiskCache.instance.readStale<Map<String, dynamic>>(
+        diskKey,
+        decode: (j) => Map<String, dynamic>.from(j as Map),
+      );
+      if (stale != null) {
+        final data = AdvCorrelationData.fromJson(stale);
+        _advCorrelationCache[window] = _AdvCorrelationEntry(data);
+        return data;
+      }
+      rethrow;
+    }
+  }
+
+  Future<AdvCorrelationData> fetchAdvCorrelationCustom({
+    required List<String> symbols,
+    String window = '3m',
+  }) async {
+    final sorted = List<String>.from(symbols)..sort();
+    final key = '$window:${sorted.join(",")}';
+    final cached = _advCorrelationCustomCache[key];
+    if (cached != null && cached.isValid) return cached.data;
+
+    final raw = await ApiClient.instance.get(
+      ApiEndpoints.advCorrelationCustom(symbols: symbols, window: window),
+    ) as Map<String, dynamic>;
+    final data = AdvCorrelationData.fromJson(raw);
+    _advCorrelationCustomCache[key] = _AdvCorrelationCustomEntry(data);
+    return data;
+  }
+
+  Future<CorrelationHistoryData> fetchAdvCorrelationHistory({
+    required String a,
+    required String b,
+  }) async {
+    final key = ([a, b]..sort()).join('|');
+    final cached = _advCorrelationHistoryCache[key];
+    if (cached != null && cached.isValid) return cached.data;
+
+    final raw = await ApiClient.instance.get(
+      ApiEndpoints.advCorrelationHistory(a: a, b: b),
+    ) as Map<String, dynamic>;
+    final data = CorrelationHistoryData.fromJson(raw);
+    _advCorrelationHistoryCache[key] = _AdvCorrelationHistoryEntry(data);
+    return data;
   }
 
   Future<InstitutionalFlowResult> fetchInstitutionalFlow(String type) {

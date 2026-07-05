@@ -560,6 +560,8 @@ class _BacktestDataView extends StatelessWidget {
         const SizedBox(height: AppSpacing.s4),
         // Aggregate stats table
         _AggregateTable(stats: agg),
+        const SizedBox(height: AppSpacing.s3),
+        _BacktestBreakdownSection(stats: agg),
         const SizedBox(height: AppSpacing.s5),
         // Sort row
         Padding(
@@ -686,11 +688,25 @@ class _AggregateTable extends StatelessWidget {
                               textAlign: TextAlign.center)),
                       Expanded(
                           flex: 2,
-                          child: Text('${s.winRate1m.toStringAsFixed(0)}%',
-                              style: AppTypography.sm.copyWith(
-                                  color: wrColor,
-                                  fontWeight: FontWeight.w600),
-                              textAlign: TextAlign.center)),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text('${s.winRate1m.toStringAsFixed(0)}%',
+                                  style: AppTypography.sm.copyWith(
+                                      color: wrColor,
+                                      fontWeight: FontWeight.w600),
+                                  textAlign: TextAlign.center),
+                              if (s.winRateLower95 != null &&
+                                  s.winRateUpper95 != null)
+                                Text(
+                                  '[${s.winRateLower95!.toStringAsFixed(0)}–${s.winRateUpper95!.toStringAsFixed(0)}]',
+                                  style: AppTypography.xs.copyWith(
+                                      color: c.textMuted,
+                                      fontSize: 9),
+                                  textAlign: TextAlign.center,
+                                ),
+                            ],
+                          )),
                       Expanded(
                           flex: 2,
                           child: Text(
@@ -729,6 +745,219 @@ class _AggregateTable extends StatelessWidget {
             );
           }),
         ],
+      ),
+    );
+  }
+}
+
+// ── Breakdown analytics (DOW + VIX bucket) ───────────────────────────────────
+
+class _BacktestBreakdownSection extends StatefulWidget {
+  const _BacktestBreakdownSection({required this.stats});
+  final Map<String, BacktestSummaryStats> stats;
+
+  @override
+  State<_BacktestBreakdownSection> createState() =>
+      _BacktestBreakdownSectionState();
+}
+
+class _BacktestBreakdownSectionState
+    extends State<_BacktestBreakdownSection> {
+  bool _expanded = false;
+
+  // Aggregate DOW and VIX breakdowns across all signal-count buckets
+  Map<String, Map<String, dynamic>> _mergeBreakdown(
+      Map<String, Map<String, dynamic>>? Function(BacktestSummaryStats) getter) {
+    final result = <String, Map<String, dynamic>>{};
+    for (final s in widget.stats.values) {
+      final src = getter(s);
+      if (src == null) continue;
+      for (final entry in src.entries) {
+        final existing = result[entry.key];
+        if (existing == null) {
+          result[entry.key] = Map<String, dynamic>.from(entry.value as Map);
+        } else {
+          final ev = (existing['events'] as num).toInt() +
+              (entry.value['events'] as num).toInt();
+          // Weighted average of win rates
+          final w1 = (existing['events'] as num).toDouble();
+          final w2 = (entry.value['events'] as num).toDouble();
+          final wr = w1 + w2 > 0
+              ? (w1 * (existing['winRate1m'] as num).toDouble() +
+                      w2 * (entry.value['winRate1m'] as num).toDouble()) /
+                  (w1 + w2)
+              : 0.0;
+          result[entry.key] = {
+            'events': ev,
+            'winRate1m': double.parse(wr.toStringAsFixed(1)),
+          };
+        }
+      }
+    }
+    return result;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+
+    // Check if any stats have breakdown data
+    final hasDow =
+        widget.stats.values.any((s) => s.byDayOfWeek?.isNotEmpty == true);
+    final hasVix =
+        widget.stats.values.any((s) => s.byVixBucket?.isNotEmpty == true);
+    if (!hasDow && !hasVix) return const SizedBox.shrink();
+
+    final dowData = hasDow
+        ? _mergeBreakdown((s) => s.byDayOfWeek)
+        : <String, Map<String, dynamic>>{};
+    final vixData = hasVix
+        ? _mergeBreakdown((s) => s.byVixBucket)
+        : <String, Map<String, dynamic>>{};
+
+    const dowOrder = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+    const vixOrder = ['0-15', '15-25', '25+'];
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5),
+      child: Container(
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              onTap: () => setState(() => _expanded = !_expanded),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+                child: Row(
+                  children: [
+                    Text('Breakdown Analytics',
+                        style: AppTypography.labelSm
+                            .copyWith(color: c.textPrimary)),
+                    const Spacer(),
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: c.textMuted,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (_expanded) ...[
+              Divider(height: 1, color: c.border),
+              if (hasDow) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Day of Week',
+                        style: AppTypography.xs
+                            .copyWith(color: c.textMuted, letterSpacing: 0.4)),
+                  ),
+                ),
+                _BreakdownTable(
+                  rows: dowOrder
+                      .where((d) => dowData.containsKey(d))
+                      .map((d) => _BreakdownRow(
+                            label: d,
+                            events:
+                                (dowData[d]!['events'] as num).toInt(),
+                            winRate1m: (dowData[d]!['winRate1m'] as num)
+                                .toDouble(),
+                          ))
+                      .toList(),
+                ),
+              ],
+              if (hasVix) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, 0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('VIX Environment',
+                        style: AppTypography.xs
+                            .copyWith(color: c.textMuted, letterSpacing: 0.4)),
+                  ),
+                ),
+                _BreakdownTable(
+                  rows: vixOrder
+                      .where((v) => vixData.containsKey(v))
+                      .map((v) => _BreakdownRow(
+                            label: v == '0-15'
+                                ? 'VIX < 15 (Calm)'
+                                : v == '15-25'
+                                    ? 'VIX 15–25'
+                                    : 'VIX > 25 (Fear)',
+                            events:
+                                (vixData[v]!['events'] as num).toInt(),
+                            winRate1m: (vixData[v]!['winRate1m'] as num)
+                                .toDouble(),
+                          ))
+                      .toList(),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.s3),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BreakdownRow {
+  const _BreakdownRow(
+      {required this.label, required this.events, required this.winRate1m});
+  final String label;
+  final int events;
+  final double winRate1m;
+}
+
+class _BreakdownTable extends StatelessWidget {
+  const _BreakdownTable({required this.rows});
+  final List<_BreakdownRow> rows;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
+      child: Column(
+        children: rows.map((r) {
+          final wrColor = r.winRate1m >= 60 ? c.positive : c.textSecondary;
+          return Padding(
+            padding:
+                const EdgeInsets.symmetric(vertical: AppSpacing.s1),
+            child: Row(
+              children: [
+                Expanded(
+                    child: Text(r.label,
+                        style:
+                            AppTypography.sm.copyWith(color: c.textPrimary))),
+                Text('${r.events} events',
+                    style: AppTypography.xs.copyWith(color: c.textMuted)),
+                const SizedBox(width: AppSpacing.s3),
+                SizedBox(
+                  width: 48,
+                  child: Text('${r.winRate1m.toStringAsFixed(0)}%',
+                      style: AppTypography.sm.copyWith(
+                          color: wrColor, fontWeight: FontWeight.w600),
+                      textAlign: TextAlign.right),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
       ),
     );
   }

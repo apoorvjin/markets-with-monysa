@@ -60,12 +60,60 @@ const TICKER_MAP: Record<string, string> = {
   "ADVANCED MICRO": "AMD", AMD: "AMD",
 };
 
-function mapNameToTicker(name: string): string | null {
+function mapNameToTickerStatic(name: string): string | null {
   const upper = name.toUpperCase();
   for (const [key, ticker] of Object.entries(TICKER_MAP)) {
     if (upper.includes(key)) return ticker;
   }
   return null;
+}
+
+// Static map only covers ~25 mega-caps — real EDGAR/LDA filers are overwhelmingly
+// outside that list. Fall back to Yahoo's fuzzy company search (same endpoint
+// /api/search already uses) for anything the static map misses, cached in-memory
+// since company↔ticker doesn't change often.
+const _tickerLookupCache = new Map<string, string | null>();
+// ticker -> real company name, populated whenever resolveTickerForName finds a Yahoo
+// match. Lets callers show "Qualcomm Incorporated" instead of falling back to the
+// bare ticker when a name isn't in the small curated KNOWN_NAMES map.
+const _resolvedNames = new Map<string, string>();
+
+async function resolveTickerForName(rawName: string): Promise<string | null> {
+  const upper = rawName.toUpperCase().trim();
+  if (!upper) return null;
+  const staticHit = mapNameToTickerStatic(upper);
+  if (staticHit) return staticHit;
+  if (_tickerLookupCache.has(upper)) return _tickerLookupCache.get(upper)!;
+
+  let resolved: string | null = null;
+  try {
+    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(rawName)}&quotesCount=3&newsCount=0&lang=en-US&region=US`;
+    const resp = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      signal: AbortSignal.timeout(6_000),
+    });
+    if (resp.ok) {
+      const data = await resp.json() as { quotes?: Array<Record<string, unknown>> };
+      const firstToken = upper.split(/\s+/).find((t) => t.length >= 3) ?? "";
+      const match = (data.quotes ?? []).find((q) => {
+        if (!q.isYahooFinance || q.quoteType !== "EQUITY") return false;
+        const label = String(q.longname ?? q.shortname ?? "").toUpperCase();
+        // Guard against wildly unrelated fuzzy matches (e.g. non-company lobbying
+        // clients like trade associations) by requiring some token overlap.
+        return firstToken ? label.includes(firstToken) : false;
+      });
+      const symbol = match?.symbol as string | undefined;
+      resolved = symbol && symbol.length <= 6 ? symbol : null;
+      if (resolved) {
+        const fullName = match?.longname ?? match?.shortname;
+        if (typeof fullName === "string" && fullName) _resolvedNames.set(resolved, fullName);
+      }
+    }
+  } catch {
+    resolved = null;
+  }
+  _tickerLookupCache.set(upper, resolved);
+  return resolved;
 }
 
 // ── Known company names (for snapshot data) ───────────────────────────────────
@@ -81,21 +129,92 @@ export const KNOWN_NAMES: Record<string, string> = {
   PFE: "Pfizer Inc", RTX: "RTX Corp",
 };
 
-// ── Fallback snapshots (curated real-world data, refreshed periodically) ──────
-
-const CONGRESS_SNAPSHOT: Array<{ ticker: string; amount: number }> = [
-  { ticker: "NVDA",  amount: 3_375_000 },
-  { ticker: "TSM",   amount: 1_297_000 },
-  { ticker: "META",  amount: 1_289_000 },
-  { ticker: "AMZN",  amount:   900_000 },
-  { ticker: "MSFT",  amount:   750_000 },
-  { ticker: "IBIT",  amount:   270_000 },
-  { ticker: "MU",    amount:   175_000 },
-  { ticker: "AAPL",  amount:   175_000 },
-  { ticker: "AVGO",  amount:   175_000 },
-  { ticker: "GOOGL", amount:   175_000 },
+// ── Lobbying universe ─────────────────────────────────────────────────────────
+// Which real, publicly-traded companies to check for lobbying-spend growth — not
+// fabricated data, just a "which securities to look up" list (same pattern as
+// ETF_UNIVERSE / index_constituents.ts elsewhere in this codebase). Senate LDA's
+// `client_name` filter is a substring match, so registrant-name variants (" INC"
+// vs " INCORPORATED", outside counsel filing "on behalf of X") all still match.
+const LOBBYING_UNIVERSE: Array<{ name: string; ticker: string; fullName: string }> = [
+  { name: "APPLE",          ticker: "AAPL",  fullName: "Apple Inc" },
+  { name: "MICROSOFT",      ticker: "MSFT",  fullName: "Microsoft Corp" },
+  { name: "ALPHABET",       ticker: "GOOGL", fullName: "Alphabet Inc" },
+  { name: "AMAZON",         ticker: "AMZN",  fullName: "Amazon.com" },
+  { name: "META PLATFORMS", ticker: "META",  fullName: "Meta Platforms" },
+  { name: "QUALCOMM",       ticker: "QCOM",  fullName: "Qualcomm Inc" },
+  { name: "INTEL",          ticker: "INTC",  fullName: "Intel Corp" },
+  { name: "CISCO",          ticker: "CSCO",  fullName: "Cisco Systems" },
+  { name: "ORACLE",         ticker: "ORCL",  fullName: "Oracle Corp" },
+  { name: "IBM",            ticker: "IBM",   fullName: "IBM Corp" },
+  { name: "NVIDIA",         ticker: "NVDA",  fullName: "NVIDIA Corp" },
+  { name: "BROADCOM",       ticker: "AVGO",  fullName: "Broadcom Inc" },
+  { name: "SALESFORCE",     ticker: "CRM",   fullName: "Salesforce Inc" },
+  { name: "UBER TECHNOLOGIES", ticker: "UBER", fullName: "Uber Technologies" },
+  { name: "COINBASE",       ticker: "COIN",  fullName: "Coinbase Global" },
+  { name: "PFIZER",         ticker: "PFE",   fullName: "Pfizer Inc" },
+  { name: "MERCK",          ticker: "MRK",   fullName: "Merck & Co" },
+  { name: "JOHNSON & JOHNSON", ticker: "JNJ", fullName: "Johnson & Johnson" },
+  { name: "ABBVIE",         ticker: "ABBV",  fullName: "AbbVie Inc" },
+  { name: "BRISTOL-MYERS",  ticker: "BMY",   fullName: "Bristol-Myers Squibb" },
+  { name: "ELI LILLY",      ticker: "LLY",   fullName: "Eli Lilly and Co" },
+  { name: "AMGEN",          ticker: "AMGN",  fullName: "Amgen Inc" },
+  { name: "GILEAD SCIENCES",ticker: "GILD",  fullName: "Gilead Sciences" },
+  { name: "UNITEDHEALTH",   ticker: "UNH",   fullName: "UnitedHealth Group" },
+  { name: "CVS HEALTH",     ticker: "CVS",   fullName: "CVS Health Corp" },
+  { name: "CIGNA",          ticker: "CI",    fullName: "Cigna Group" },
+  { name: "HUMANA",         ticker: "HUM",   fullName: "Humana Inc" },
+  { name: "LOCKHEED MARTIN",ticker: "LMT",   fullName: "Lockheed Martin" },
+  { name: "BOEING",         ticker: "BA",    fullName: "Boeing Co" },
+  { name: "RTX CORP",       ticker: "RTX",   fullName: "RTX Corp" },
+  { name: "NORTHROP GRUMMAN",ticker: "NOC",  fullName: "Northrop Grumman" },
+  { name: "GENERAL DYNAMICS",ticker: "GD",   fullName: "General Dynamics" },
+  { name: "L3HARRIS",       ticker: "LHX",   fullName: "L3Harris Technologies" },
+  { name: "AT&T",           ticker: "T",     fullName: "AT&T Inc" },
+  { name: "VERIZON",        ticker: "VZ",    fullName: "Verizon Communications" },
+  { name: "COMCAST",        ticker: "CMCSA", fullName: "Comcast Corp" },
+  { name: "T-MOBILE",       ticker: "TMUS",  fullName: "T-Mobile US" },
+  { name: "CHARTER COMMUNICATIONS", ticker: "CHTR", fullName: "Charter Communications" },
+  { name: "EXXON MOBIL",    ticker: "XOM",   fullName: "Exxon Mobil Corp" },
+  { name: "CHEVRON",        ticker: "CVX",   fullName: "Chevron Corp" },
+  { name: "CONOCOPHILLIPS", ticker: "COP",   fullName: "ConocoPhillips" },
+  { name: "OCCIDENTAL PETROLEUM", ticker: "OXY", fullName: "Occidental Petroleum" },
+  { name: "JPMORGAN",       ticker: "JPM",   fullName: "JPMorgan Chase" },
+  { name: "BANK OF AMERICA",ticker: "BAC",   fullName: "Bank of America" },
+  { name: "GOLDMAN SACHS",  ticker: "GS",    fullName: "Goldman Sachs Group" },
+  { name: "MORGAN STANLEY", ticker: "MS",    fullName: "Morgan Stanley" },
+  { name: "CITIGROUP",      ticker: "C",     fullName: "Citigroup Inc" },
+  { name: "WELLS FARGO",    ticker: "WFC",   fullName: "Wells Fargo & Co" },
+  { name: "BLACKROCK",      ticker: "BLK",   fullName: "BlackRock Inc" },
+  { name: "VISA INC",       ticker: "V",     fullName: "Visa Inc" },
+  { name: "MASTERCARD",     ticker: "MA",    fullName: "Mastercard Inc" },
+  { name: "PAYPAL",         ticker: "PYPL",  fullName: "PayPal Holdings" },
+  { name: "WALMART",        ticker: "WMT",   fullName: "Walmart Inc" },
+  { name: "HOME DEPOT",     ticker: "HD",    fullName: "Home Depot Inc" },
+  { name: "TARGET CORP",    ticker: "TGT",   fullName: "Target Corp" },
+  { name: "COSTCO",         ticker: "COST",  fullName: "Costco Wholesale" },
+  { name: "MCDONALD'S",     ticker: "MCD",   fullName: "McDonald's Corp" },
+  { name: "STARBUCKS",      ticker: "SBUX",  fullName: "Starbucks Corp" },
+  { name: "GENERAL ELECTRIC",ticker: "GE",   fullName: "GE Aerospace" },
+  { name: "HONEYWELL",      ticker: "HON",   fullName: "Honeywell International" },
+  { name: "CATERPILLAR",    ticker: "CAT",   fullName: "Caterpillar Inc" },
+  { name: "DEERE & COMPANY",ticker: "DE",    fullName: "Deere & Co" },
+  { name: "3M COMPANY",     ticker: "MMM",   fullName: "3M Co" },
+  { name: "UNITED PARCEL SERVICE", ticker: "UPS", fullName: "United Parcel Service" },
+  { name: "FEDEX",          ticker: "FDX",   fullName: "FedEx Corp" },
+  { name: "DELTA AIR LINES",ticker: "DAL",   fullName: "Delta Air Lines" },
+  { name: "UNITED AIRLINES",ticker: "UAL",   fullName: "United Airlines Holdings" },
+  { name: "AMERICAN AIRLINES", ticker: "AAL", fullName: "American Airlines Group" },
+  { name: "SOUTHWEST AIRLINES", ticker: "LUV", fullName: "Southwest Airlines" },
+  { name: "FORD MOTOR",     ticker: "F",     fullName: "Ford Motor Co" },
+  { name: "GENERAL MOTORS", ticker: "GM",    fullName: "General Motors" },
+  { name: "TESLA, INC.",    ticker: "TSLA",  fullName: "Tesla Inc" },
+  { name: "WALT DISNEY",    ticker: "DIS",   fullName: "Walt Disney Co" },
+  { name: "NETFLIX",        ticker: "NFLX",  fullName: "Netflix Inc" },
+  { name: "ADVANCED MICRO DEVICES", ticker: "AMD", fullName: "Advanced Micro Devices" },
+  { name: "MICRON TECHNOLOGY", ticker: "MU", fullName: "Micron Technology" },
+  { name: "ARCHER-DANIELS-MIDLAND", ticker: "ADM", fullName: "Archer-Daniels-Midland" },
+  { name: "DOW INC",        ticker: "DOW",   fullName: "Dow Inc" },
 ];
-
 
 // ── Shared response item type ─────────────────────────────────────────────────
 
@@ -108,6 +227,7 @@ interface QuiverItem {
   rank: number;
   badge: string;
   badgeLabel: string;
+  lobbyingGrowth?: string | null;
 }
 
 // ── Congress trade type (raw individual trades) ────────────────────────────────
@@ -125,6 +245,7 @@ interface CongressTrade {
   amountMidpoint?: number;
   party?: string;
   state?: string;
+  lobbyingGrowth?: string | null;
 }
 
 // ── Price enrichment ──────────────────────────────────────────────────────────
@@ -339,11 +460,13 @@ async function getCongressPortfolio(): Promise<QuiverItem[]> {
   const cached = getCached<QuiverItem[]>("congress");
   if (cached) return cached;
 
-  let ranked: Array<{ ticker: string; amount: number }>;
-  let source = "snapshot";
+  let ranked: Array<{ ticker: string; amount: number }> | undefined;
+  let source = "";
 
-  // Cascade: Quiver (free public) → FMP (key required) → snapshot
-  const attempts: Array<[string, () => Promise<typeof ranked>]> = [
+  // Cascade: Quiver (free public) → FMP (key required). No hardcoded snapshot —
+  // if both live sources fail, the route returns an honest error instead of
+  // silently serving stale fabricated numbers.
+  const attempts: Array<[string, () => Promise<NonNullable<typeof ranked>>]> = [
     ["quiver", fetchCongressQuiver],
     ["fmp",    fetchCongressFMP],
   ];
@@ -357,7 +480,7 @@ async function getCongressPortfolio(): Promise<QuiverItem[]> {
       console.warn(`[quiver/congress] ${name} failed:`, (e as Error).message);
     }
   }
-  ranked ??= CONGRESS_SNAPSHOT;
+  if (!ranked) throw new Error("All congress-buys data sources failed");
 
   const total = ranked.reduce((s, r) => s + r.amount, 0);
   const prepared = ranked.map(r => ({
@@ -456,65 +579,51 @@ async function getCongressTrades(): Promise<CongressTrade[]> {
 
 // ── STRATEGY 2: Lobbying Spending Growth ─────────────────────────────────────
 
-async function fetchLobbyingLive(): Promise<Array<{ ticker: string; thisQ: number; lastQ: number }>> {
-  // Senate LDA public API — no key required
-  // Iterate last 4 quarters: LD2 is not a valid filing_type; valid types are Q1/Q2/Q3/Q4
-  const now = new Date();
-  let q = Math.ceil((now.getMonth() + 1) / 3);
-  let y = now.getFullYear();
+interface LobbyingResult { ticker: string; name: string; thisQ: number; lastQ: number }
 
-  const allFilings: Array<{ ticker: string; amount: number; period: string }> = [];
+async function fetchLobbyingLive(): Promise<LobbyingResult[]> {
+  // Query Senate LDA directly by company name for a curated universe of major public
+  // lobbying spenders (LOBBYING_UNIVERSE) instead of randomly sampling pages of *all*
+  // filers and hoping a recognizable public company happens to land on the page —
+  // in practice it almost never did (see 2026-07 fix notes in CLAUDE.md). `client_name`
+  // is a real, working LDA filter (confirmed live); `ordering=-dt_posted` returns
+  // most-recent filings first; each row's own `filing_year`/`filing_type` fields give
+  // an unambiguous period key (the API's `filing_period_display` text has no year and
+  // is identical across years — do not group by that again).
+  const settled = await Promise.allSettled(
+    LOBBYING_UNIVERSE.map(async (co): Promise<LobbyingResult | null> => {
+      const url = `https://lda.senate.gov/api/v1/filings/?client_name=${encodeURIComponent(co.name)}&ordering=-dt_posted&format=json&limit=40`;
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+      if (!resp.ok) throw new Error(`LDA ${resp.status}`);
+      const data = await resp.json() as { results?: Array<Record<string, unknown>> };
 
-  for (let attempt = 0; attempt < 4; attempt++) {
-    try {
-      const resp = await fetch(
-        `https://lda.senate.gov/api/v1/filings/?filing_type=Q${q}&format=json&limit=100&page=1`,
-        { signal: AbortSignal.timeout(15_000) },
-      );
-      if (resp.ok) {
-        const data = await resp.json() as { results?: Array<Record<string, unknown>> };
-        for (const item of data.results ?? []) {
-          // Field is `name`, not `client_name`
-          const clientName = ((item.client as Record<string, string> | null)?.name ?? "").toUpperCase();
-          const ticker = mapNameToTicker(clientName);
-          if (!ticker) continue;
-          const amount = parseFloat(String(item.income ?? item.expenses ?? "0"));
-          if (!amount) continue;
-          const period = String(item.filing_period_display ?? `Q${q} ${y}`);
-          allFilings.push({ ticker, amount, period });
-        }
+      const byPeriod = new Map<string, number>();
+      for (const row of data.results ?? []) {
+        const year = row.filing_year as number | undefined;
+        const type = String(row.filing_type ?? "");
+        if (!year || !/^Q[1-4]/.test(type)) continue; // skip non-quarterly filing types (registrations, terminations, etc.)
+        const amount = parseFloat(String(row.income ?? row.expenses ?? "0"));
+        if (!amount) continue;
+        const period = `${year}-${type.slice(0, 2)}`;
+        byPeriod.set(period, (byPeriod.get(period) ?? 0) + amount);
       }
-    } catch { /* continue with next quarter */ }
 
-    q--;
-    if (q === 0) { q = 4; y--; }
-    await new Promise(r => setTimeout(r, 300));
-  }
+      const periods = Array.from(byPeriod.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+      if (periods.length < 2) return null;
+      const lastQ = periods[periods.length - 1][1];
+      const prevQ = periods[periods.length - 2][1];
+      if (prevQ === 0) return null;
+      return { ticker: co.ticker, name: co.fullName, thisQ: lastQ, lastQ: prevQ };
+    }),
+  );
 
-  if (allFilings.length < 5) throw new Error("Insufficient LDA data");
+  const ranked = settled
+    .filter((r): r is PromiseFulfilledResult<LobbyingResult> => r.status === "fulfilled" && r.value !== null)
+    .map((r) => r.value);
 
-  // Group by ticker → sort periods → compute QoQ growth
-  const byTicker = new Map<string, Array<{ amount: number; period: string }>>();
-  for (const f of allFilings) {
-    if (!byTicker.has(f.ticker)) byTicker.set(f.ticker, []);
-    byTicker.get(f.ticker)!.push({ amount: f.amount, period: f.period });
-  }
+  if (ranked.length < 3) throw new Error("Insufficient LDA data");
 
-  const results: Array<{ ticker: string; thisQ: number; lastQ: number }> = [];
-  for (const [ticker, filings] of byTicker) {
-    const byPeriod = new Map<string, number>();
-    for (const f of filings) {
-      byPeriod.set(f.period, (byPeriod.get(f.period) ?? 0) + f.amount);
-    }
-    const periods = Array.from(byPeriod.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-    if (periods.length < 2) continue;
-    const lastQ = periods[periods.length - 1][1];
-    const prevQ = periods[periods.length - 2][1];
-    if (prevQ === 0) continue;
-    results.push({ ticker, thisQ: lastQ, lastQ: prevQ });
-  }
-
-  return results.sort((a, b) => {
+  return ranked.sort((a, b) => {
     const ga = (a.thisQ - a.lastQ) / a.lastQ;
     const gb = (b.thisQ - b.lastQ) / b.lastQ;
     return gb - ga;
@@ -525,7 +634,7 @@ async function getLobbyingPortfolio(): Promise<QuiverItem[]> {
   const cached = getCached<QuiverItem[]>("lobbying");
   if (cached) return cached;
 
-  let ranked: Array<{ ticker: string; thisQ: number; lastQ: number }> = [];
+  let ranked: LobbyingResult[] = [];
   try {
     ranked = await fetchLobbyingLive();
   } catch (e) {
@@ -537,9 +646,9 @@ async function getLobbyingPortfolio(): Promise<QuiverItem[]> {
     const growth = r.lastQ > 0 ? (r.thisQ - r.lastQ) / r.lastQ : 0;
     return {
       symbol:     r.ticker,
-      name:       KNOWN_NAMES[r.ticker] ?? r.ticker,
+      name:       r.name,
       weight:     1 / n,
-      badge:      `+${(growth * 100).toFixed(0)}%`,
+      badge:      `${growth >= 0 ? "+" : ""}${(growth * 100).toFixed(0)}%`,
       badgeLabel: "QoQ spend",
     };
   });
@@ -548,6 +657,13 @@ async function getLobbyingPortfolio(): Promise<QuiverItem[]> {
   console.log(`[quiver/lobbying] source=live items=${items.length}`);
   setCached("lobbying", items);
   return items;
+}
+
+// Ticker → QoQ lobbying-growth badge (e.g. "+42%"), for cross-linking against
+// congress buys/trades. Reuses getLobbyingPortfolio's own cache — no extra fetch.
+async function getLobbyingBadgeMap(): Promise<Map<string, string>> {
+  const items = await getLobbyingPortfolio();
+  return new Map(items.map((i) => [i.symbol, i.badge]));
 }
 
 // ── STRATEGY 3: Insider Buys ──────────────────────────────────────────────────
@@ -566,18 +682,24 @@ async function fetchInsiderLive(daysBack: number): Promise<Array<{ ticker: strin
   const hits = data.hits?.hits ?? [];
   if (hits.length < 3) throw new Error("Insufficient EDGAR data");
 
+  // display_names format: ["Person Name  (CIK 0001234567)", "COMPANY NAME  (CIK 0001022321)"]
+  // ticker/entity_name fields don't exist in EDGAR search-index responses. The issuer
+  // (company) is consistently the last entry — resolve that one per hit via
+  // resolveTickerForName (static map + Yahoo search fallback) rather than the tiny
+  // static-only map, which almost never matched real (non-mega-cap) filers.
+  const companyNames = hits.map((h) => {
+    const displayNames = (h._source?.display_names as string[] | undefined) ?? [];
+    const last = displayNames[displayNames.length - 1] ?? "";
+    return last.split(/\s{2,}\(CIK/)[0].trim().toUpperCase();
+  });
+  const resolved = await Promise.all(
+    [...new Set(companyNames)].map(async (n) => [n, await resolveTickerForName(n)] as const),
+  );
+  const tickerByName = new Map(resolved);
+
   const counts = new Map<string, number>();
-  for (const h of hits) {
-    const src = h._source ?? {};
-    // display_names format: ["Person Name  (CIK 0001234567)", "COMPANY NAME  (CIK 0001022321)"]
-    // ticker/entity_name fields don't exist in EDGAR search-index responses
-    const displayNames = Array.isArray(src.display_names) ? (src.display_names as string[]) : [];
-    let ticker = "";
-    for (const entry of displayNames) {
-      const name = entry.split(/\s{2,}\(CIK/)[0].trim();
-      const mapped = mapNameToTicker(name.toUpperCase());
-      if (mapped) { ticker = mapped; break; }
-    }
+  for (const name of companyNames) {
+    const ticker = tickerByName.get(name);
     if (!ticker || ticker.length > 6) continue;
     counts.set(ticker, (counts.get(ticker) ?? 0) + 1);
   }
@@ -609,21 +731,24 @@ export async function fetchInsiderClusters(
   const hits = data.hits?.hits ?? [];
   if (hits.length < 2) throw new Error("Insufficient EDGAR data");
 
+  // display_names: issuer (company) is consistently the last entry, filer(s) precede it.
+  const hitNames = hits.map((h) => {
+    const displayNames = (h._source?.display_names as string[] | undefined) ?? [];
+    return displayNames.map((entry) => entry.split(/\s{2,}\(CIK/)[0].trim().toUpperCase());
+  });
+  const companyNames = hitNames.map((names) => names[names.length - 1] ?? "");
+  const resolved = await Promise.all(
+    [...new Set(companyNames)].map(async (n) => [n, await resolveTickerForName(n)] as const),
+  );
+  const tickerByName = new Map(resolved);
+
   // Per ticker: set of distinct insider (person) names + total filing count.
   const clusters = new Map<string, { insiders: Set<string>; filings: number }>();
-  for (const h of hits) {
-    const src = h._source ?? {};
-    const displayNames = Array.isArray(src.display_names) ? (src.display_names as string[]) : [];
-    let ticker = "";
-    let person = "";
-    for (const entry of displayNames) {
-      const name = entry.split(/\s{2,}\(CIK/)[0].trim();
-      const mapped = mapNameToTicker(name.toUpperCase());
-      if (mapped && !ticker) ticker = mapped;
-      // Entries that don't resolve to a ticker are the individual filer(s).
-      else if (!mapped && !person) person = name.toUpperCase();
-    }
-    if (!ticker || ticker.length > 6 || !person) continue;
+  for (const names of hitNames) {
+    const companyName = names[names.length - 1] ?? "";
+    const ticker = tickerByName.get(companyName);
+    const person = names[0];
+    if (!ticker || ticker.length > 6 || !person || person === companyName) continue;
     const entry = clusters.get(ticker) ?? { insiders: new Set<string>(), filings: 0 };
     entry.insiders.add(person);
     entry.filings += 1;
@@ -650,7 +775,7 @@ async function getInsiderPortfolio(): Promise<QuiverItem[]> {
   const n = ranked.length;
   const prepared = ranked.map(r => ({
     symbol:     r.ticker,
-    name:       KNOWN_NAMES[r.ticker] ?? r.ticker,
+    name:       _resolvedNames.get(r.ticker) ?? KNOWN_NAMES[r.ticker] ?? r.ticker,
     weight:     1 / n,
     badge:      `${r.count} buy${r.count === 1 ? "" : "s"}`,
     badgeLabel: "insiders",
@@ -767,13 +892,19 @@ async function getHouseTrades(): Promise<HouseTradeRow[]> {
 export function registerQuiverRoutes(app: Express) {
   // S1 — Congress Buys (FMP → Quiver → snapshot)
   app.get("/api/quiver/congress", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
     try {
-      res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
       const items = await getCongressPortfolio();
-      reply(res, items, { label: "Congress Buys", rebalance: "Weekly" });
+      const lobbyingBadges = await getLobbyingBadgeMap();
+      const enriched = items.map((i) => ({ ...i, lobbyingGrowth: lobbyingBadges.get(i.symbol) ?? null }));
+      reply(res, enriched, { label: "Congress Buys", rebalance: "Weekly" });
     } catch (e) {
+      // Respond 200 + empty list, not 500 — a non-2xx here throws a client-side
+      // exception (Dio) whose handling can't be verified against every already-shipped
+      // app build. Empty data is unambiguously safe for any client to render as
+      // "nothing to show" without depending on that build having an error branch.
       console.error("[quiver/congress]", e);
-      res.status(500).json({ error: "Failed to load congress data" });
+      reply(res, [], { label: "Congress Buys", rebalance: "Weekly" });
     }
   });
 
@@ -790,9 +921,12 @@ export function registerQuiverRoutes(app: Express) {
       if (type)       filtered = filtered.filter(t => t.type === type.toLowerCase());
       if (memberName) filtered = filtered.filter(t => t.memberName.toLowerCase().includes(memberName.toLowerCase()));
 
+      const lobbyingBadges = await getLobbyingBadgeMap();
+      const enriched = filtered.map(t => ({ ...t, lobbyingGrowth: lobbyingBadges.get(t.ticker) ?? null }));
+
       res.json({
-        trades: filtered,
-        total: filtered.length,
+        trades: enriched,
+        total: enriched.length,
         lastUpdated: new Date().toISOString(),
       });
     } catch (e) {

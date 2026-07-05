@@ -1,4 +1,5 @@
 import { type App, initializeApp, getApps, cert } from "firebase-admin/app";
+import { type Auth, getAuth } from "firebase-admin/auth";
 import { type Firestore, getFirestore } from "firebase-admin/firestore";
 import { type Messaging, getMessaging } from "firebase-admin/messaging";
 import { type RemoteConfig, getRemoteConfig } from "firebase-admin/remote-config";
@@ -23,9 +24,21 @@ function app(): App | null {
   return _app;
 }
 
+let _db: Firestore | null = null;
+
 export function adminFirestore(): Firestore | null {
+  if (_db) return _db;
   const a = app();
-  return a ? getFirestore(a) : null;
+  if (!a) return null;
+  const dbId = process.env.FIRESTORE_DATABASE_ID ?? "(default)";
+  console.log(`[firebase-admin] Connecting to Firestore database: "${dbId}"`);
+  _db = getFirestore(a, dbId);
+  return _db;
+}
+
+export function adminAuth(): Auth | null {
+  const a = app();
+  return a ? getAuth(a) : null;
 }
 
 export function adminMessaging(): Messaging | null {

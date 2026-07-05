@@ -296,6 +296,144 @@ class IchimokuConfig {
       );
 }
 
+class StochasticConfig {
+  const StochasticConfig({
+    required this.kPeriod,
+    required this.smooth,
+    required this.dPeriod,
+    required this.overbought,
+    required this.oversold,
+    required this.kColorValue,
+    required this.dColorValue,
+    required this.visible,
+  });
+  final int kPeriod;
+  final int smooth;
+  final int dPeriod;
+  final double overbought;
+  final double oversold;
+  final int kColorValue;
+  final int dColorValue;
+  final bool visible;
+  Color get kColor => Color(kColorValue);
+  Color get dColor => Color(dColorValue);
+  StochasticConfig copyWith(
+          {int? kPeriod,
+          int? smooth,
+          int? dPeriod,
+          double? overbought,
+          double? oversold,
+          int? kColorValue,
+          int? dColorValue,
+          bool? visible}) =>
+      StochasticConfig(
+        kPeriod: kPeriod ?? this.kPeriod,
+        smooth: smooth ?? this.smooth,
+        dPeriod: dPeriod ?? this.dPeriod,
+        overbought: overbought ?? this.overbought,
+        oversold: oversold ?? this.oversold,
+        kColorValue: kColorValue ?? this.kColorValue,
+        dColorValue: dColorValue ?? this.dColorValue,
+        visible: visible ?? this.visible,
+      );
+  Map<String, dynamic> toJson() => {
+        'kPeriod': kPeriod,
+        'smooth': smooth,
+        'dPeriod': dPeriod,
+        'overbought': overbought,
+        'oversold': oversold,
+        'kColor': kColorValue,
+        'dColor': dColorValue,
+        'visible': visible,
+      };
+  factory StochasticConfig.fromJson(Map<String, dynamic> j) =>
+      StochasticConfig(
+        kPeriod: (j['kPeriod'] as num?)?.toInt() ?? 14,
+        smooth: (j['smooth'] as num?)?.toInt() ?? 3,
+        dPeriod: (j['dPeriod'] as num?)?.toInt() ?? 3,
+        overbought: (j['overbought'] as num?)?.toDouble() ?? 80,
+        oversold: (j['oversold'] as num?)?.toDouble() ?? 20,
+        kColorValue: (j['kColor'] as num?)?.toInt() ?? 0xFF5B9CFF,
+        dColorValue: (j['dColor'] as num?)?.toInt() ?? 0xFFFFA56B,
+        visible: j['visible'] as bool? ?? false,
+      );
+}
+
+class AtrConfig {
+  const AtrConfig({
+    required this.period,
+    required this.colorValue,
+    required this.visible,
+  });
+  final int period;
+  final int colorValue;
+  final bool visible;
+  Color get color => Color(colorValue);
+  AtrConfig copyWith({int? period, int? colorValue, bool? visible}) =>
+      AtrConfig(
+        period: period ?? this.period,
+        colorValue: colorValue ?? this.colorValue,
+        visible: visible ?? this.visible,
+      );
+  Map<String, dynamic> toJson() =>
+      {'period': period, 'color': colorValue, 'visible': visible};
+  factory AtrConfig.fromJson(Map<String, dynamic> j) => AtrConfig(
+        period: (j['period'] as num?)?.toInt() ?? 14,
+        colorValue: (j['color'] as num?)?.toInt() ?? 0xFF9C88FF,
+        visible: j['visible'] as bool? ?? false,
+      );
+}
+
+class AdxConfig {
+  const AdxConfig({
+    required this.period,
+    required this.colorValue,
+    required this.visible,
+  });
+  final int period;
+  final int colorValue; // ADX line; DI+ / DI− use palette positive/danger
+  final bool visible;
+  Color get color => Color(colorValue);
+  AdxConfig copyWith({int? period, int? colorValue, bool? visible}) =>
+      AdxConfig(
+        period: period ?? this.period,
+        colorValue: colorValue ?? this.colorValue,
+        visible: visible ?? this.visible,
+      );
+  Map<String, dynamic> toJson() =>
+      {'period': period, 'color': colorValue, 'visible': visible};
+  factory AdxConfig.fromJson(Map<String, dynamic> j) => AdxConfig(
+        period: (j['period'] as num?)?.toInt() ?? 14,
+        colorValue: (j['color'] as num?)?.toInt() ?? 0xFFFFB84D,
+        visible: j['visible'] as bool? ?? false,
+      );
+}
+
+class PivotConfig {
+  const PivotConfig({
+    required this.camarilla,
+    required this.colorValue,
+    required this.visible,
+  });
+  final bool camarilla; // false = classic
+  final int colorValue;
+  final bool visible;
+  Color get color => Color(colorValue);
+  PivotConfig copyWith({bool? camarilla, int? colorValue, bool? visible}) =>
+      PivotConfig(
+        camarilla: camarilla ?? this.camarilla,
+        colorValue: colorValue ?? this.colorValue,
+        visible: visible ?? this.visible,
+      );
+  Map<String, dynamic> toJson() =>
+      {'camarilla': camarilla, 'color': colorValue, 'visible': visible};
+  factory PivotConfig.fromJson(Map<String, dynamic> j) => PivotConfig(
+        camarilla: j['camarilla'] as bool? ?? false,
+        colorValue: (j['color'] as num?)?.toInt() ?? 0xFF8B5CF6,
+        visible: j['visible'] as bool? ?? false,
+      );
+}
+
 // ─── Aggregate config ────────────────────────────────────────────────────────
 
 class IndicatorConfig {
@@ -310,6 +448,10 @@ class IndicatorConfig {
     required this.ichimoku,
     required this.srVisible,
     required this.srLookback,
+    required this.stochastic,
+    required this.atr,
+    required this.adx,
+    required this.pivots,
   });
 
   final List<SmaConfig> smas;
@@ -322,6 +464,10 @@ class IndicatorConfig {
   final IchimokuConfig ichimoku;
   final bool srVisible;
   final int srLookback;
+  final StochasticConfig stochastic;
+  final AtrConfig atr;
+  final AdxConfig adx;
+  final PivotConfig pivots;
 
   static const defaults = IndicatorConfig(
     // Cohesive blue→purple ladder — shorter SMAs lighter, longer ones darker.
@@ -372,6 +518,20 @@ class IndicatorConfig {
     ),
     srVisible: false,
     srLookback: 5,
+    stochastic: StochasticConfig(
+      kPeriod: 14,
+      smooth: 3,
+      dPeriod: 3,
+      overbought: 80,
+      oversold: 20,
+      kColorValue: 0xFF5B9CFF,
+      dColorValue: 0xFFFFA56B,
+      visible: false,
+    ),
+    atr: AtrConfig(period: 14, colorValue: 0xFF9C88FF, visible: false),
+    adx: AdxConfig(period: 14, colorValue: 0xFFFFB84D, visible: false),
+    pivots: PivotConfig(
+        camarilla: false, colorValue: 0xFF8B5CF6, visible: false),
   );
 
   IndicatorConfig copyWith({
@@ -385,6 +545,10 @@ class IndicatorConfig {
     IchimokuConfig? ichimoku,
     bool? srVisible,
     int? srLookback,
+    StochasticConfig? stochastic,
+    AtrConfig? atr,
+    AdxConfig? adx,
+    PivotConfig? pivots,
   }) =>
       IndicatorConfig(
         smas: smas ?? this.smas,
@@ -397,6 +561,10 @@ class IndicatorConfig {
         ichimoku: ichimoku ?? this.ichimoku,
         srVisible: srVisible ?? this.srVisible,
         srLookback: srLookback ?? this.srLookback,
+        stochastic: stochastic ?? this.stochastic,
+        atr: atr ?? this.atr,
+        adx: adx ?? this.adx,
+        pivots: pivots ?? this.pivots,
       );
 
   Map<String, dynamic> toJson() => {
@@ -410,6 +578,10 @@ class IndicatorConfig {
         'ichimoku': ichimoku.toJson(),
         'sr': srVisible,
         'srLookback': srLookback,
+        'stochastic': stochastic.toJson(),
+        'atr': atr.toJson(),
+        'adx': adx.toJson(),
+        'pivots': pivots.toJson(),
       };
 
   factory IndicatorConfig.fromJson(Map<String, dynamic> j) => IndicatorConfig(
@@ -437,6 +609,18 @@ class IndicatorConfig {
             : defaults.ichimoku,
         srVisible: j['sr'] as bool? ?? false,
         srLookback: (j['srLookback'] as num?)?.toInt() ?? 5,
+        stochastic: j['stochastic'] is Map<String, dynamic>
+            ? StochasticConfig.fromJson(j['stochastic'] as Map<String, dynamic>)
+            : defaults.stochastic,
+        atr: j['atr'] is Map<String, dynamic>
+            ? AtrConfig.fromJson(j['atr'] as Map<String, dynamic>)
+            : defaults.atr,
+        adx: j['adx'] is Map<String, dynamic>
+            ? AdxConfig.fromJson(j['adx'] as Map<String, dynamic>)
+            : defaults.adx,
+        pivots: j['pivots'] is Map<String, dynamic>
+            ? PivotConfig.fromJson(j['pivots'] as Map<String, dynamic>)
+            : defaults.pivots,
       );
 }
 
@@ -609,6 +793,47 @@ class IndicatorPrefsNotifier extends Notifier<IndicatorConfig> {
   Future<void> setSrVisible(bool v) => _save(state.copyWith(srVisible: v));
   Future<void> setSrLookback(int lookback) =>
       _save(state.copyWith(srLookback: lookback.clamp(3, 15)));
+
+  // Stochastic
+  Future<void> setStochasticVisible(bool v) =>
+      _save(state.copyWith(stochastic: state.stochastic.copyWith(visible: v)));
+  Future<void> setStochasticKPeriod(int p) {
+    if (p < 2) return Future.value();
+    return _save(
+        state.copyWith(stochastic: state.stochastic.copyWith(kPeriod: p)));
+  }
+  Future<void> setStochasticSmooth(int p) {
+    if (p < 1) return Future.value();
+    return _save(
+        state.copyWith(stochastic: state.stochastic.copyWith(smooth: p)));
+  }
+  Future<void> setStochasticDPeriod(int p) {
+    if (p < 1) return Future.value();
+    return _save(
+        state.copyWith(stochastic: state.stochastic.copyWith(dPeriod: p)));
+  }
+
+  // ATR
+  Future<void> setAtrVisible(bool v) =>
+      _save(state.copyWith(atr: state.atr.copyWith(visible: v)));
+  Future<void> setAtrPeriod(int p) {
+    if (p < 2) return Future.value();
+    return _save(state.copyWith(atr: state.atr.copyWith(period: p)));
+  }
+
+  // ADX
+  Future<void> setAdxVisible(bool v) =>
+      _save(state.copyWith(adx: state.adx.copyWith(visible: v)));
+  Future<void> setAdxPeriod(int p) {
+    if (p < 2) return Future.value();
+    return _save(state.copyWith(adx: state.adx.copyWith(period: p)));
+  }
+
+  // Pivot Points
+  Future<void> setPivotsVisible(bool v) =>
+      _save(state.copyWith(pivots: state.pivots.copyWith(visible: v)));
+  Future<void> setPivotsCamarilla(bool camarilla) =>
+      _save(state.copyWith(pivots: state.pivots.copyWith(camarilla: camarilla)));
 }
 
 final indicatorPrefsProvider =

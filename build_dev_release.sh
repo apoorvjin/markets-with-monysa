@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Flags ─────────────────────────────────────────────────────────────────────
+DO_CLEAN=false
+for arg in "$@"; do
+  case "$arg" in
+    --clean) DO_CLEAN=true ;;
+  esac
+done
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'
 RED='\033[0;31m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -19,6 +27,7 @@ echo "  ╚═╝     ╚═╝ ╚═════╝ ╚═════╝    �
 echo -e "${NC}"
 echo -e "${BOLD}  Moby — iPhone Dev Release Builder${NC}"
 echo -e "  Backend: ${CYAN}https://monysa-api.fly.dev${NC}"
+echo -e "  Pass ${CYAN}--clean${NC} to wipe build artifacts (slow, for dep changes)"
 echo ""
 
 # ── Plan Selection ────────────────────────────────────────────────────────────
@@ -102,16 +111,20 @@ echo -e "${BOLD}  Building dev release [${DEV_PLAN_LABEL}] and installing on ${D
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-flutter clean
+if [ "$DO_CLEAN" = true ]; then
+  echo -e "${YELLOW}▶ Full clean requested — wiping build artifacts...${NC}"
+  flutter clean
+  echo ""
+fi
 
-echo ""
 echo -e "${BLUE}▶ Fetching Dart dependencies...${NC}"
 # pod install reads Flutter/Generated.xcconfig which only exists after pub get.
 flutter pub get
 
 echo ""
-echo -e "${BLUE}▶ Reinstalling CocoaPods...${NC}"
-cd ios && pod deintegrate --quiet && pod install --silent && cd ..
+echo -e "${BLUE}▶ Syncing CocoaPods...${NC}"
+# pod install is a no-op when nothing changed; deintegrate is only needed for a full clean.
+cd ios && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 pod install --silent && cd ..
 
 echo ""
 flutter run --release -d "$DEVICE_ID" \

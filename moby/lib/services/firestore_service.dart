@@ -1,11 +1,21 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Thin Firestore helpers. All methods are fire-and-forget unless noted.
 /// Returns silently when user is not signed in or Firestore is unavailable.
 abstract final class FirestoreService {
-  static FirebaseFirestore get _db => FirebaseFirestore.instance;
+  // Uses the named database (monysa-db-id); overridable via --dart-define=FIRESTORE_DATABASE_ID.
+  // instanceFor() caches per app+databaseId, so this getter is safe to call on every access.
+  static FirebaseFirestore get _db {
+    const dbId = String.fromEnvironment(
+      'FIRESTORE_DATABASE_ID',
+      defaultValue: 'monysa-db-id',
+    );
+    if (dbId == '(default)') return FirebaseFirestore.instance;
+    return FirebaseFirestore.instanceFor(app: Firebase.app(), databaseId: dbId);
+  }
   static String? get _uid => FirebaseAuth.instance.currentUser?.uid;
 
   // ── User document ────────────────────────────────────────────────────────

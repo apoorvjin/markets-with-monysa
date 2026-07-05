@@ -7,6 +7,7 @@ import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
+import 'chart_overlay_models.dart';
 
 /// WebView-backed Lightweight Charts renderer. Drives both the `yahoo` and
 /// `tradingview` chart providers — the only difference is whether to overlay
@@ -22,6 +23,8 @@ class LwcWebViewChart extends StatefulWidget {
     this.showRangeBar = true,
     this.showFullscreenButton = false,
     this.onFullscreen,
+    this.signalLevels,
+    this.tradeMarkers,
   });
 
   final String symbol;
@@ -36,6 +39,11 @@ class LwcWebViewChart extends StatefulWidget {
   final bool showRangeBar;
   final bool showFullscreenButton;
   final VoidCallback? onFullscreen;
+
+  /// Signal entry/SL/TP price lines and backtest trade markers, rendered via
+  /// Lightweight Charts' createPriceLine / setMarkers APIs.
+  final SignalLevels? signalLevels;
+  final List<TradeMarker>? tradeMarkers;
 
   @override
   State<LwcWebViewChart> createState() => _LwcWebViewChartState();
@@ -82,7 +90,9 @@ class _LwcWebViewChartState extends State<LwcWebViewChart> {
   void didUpdateWidget(covariant LwcWebViewChart old) {
     super.didUpdateWidget(old);
     if (old.tvWatermarkLabel != widget.tvWatermarkLabel ||
-        old.withVwap != widget.withVwap) {
+        old.withVwap != widget.withVwap ||
+        old.signalLevels != widget.signalLevels ||
+        old.tradeMarkers != widget.tradeMarkers) {
       _load();
     }
   }
@@ -138,6 +148,33 @@ class _LwcWebViewChartState extends State<LwcWebViewChart> {
     final watermarkJs = tvLabel != null
         ? "chart.applyOptions({ watermark: { color: '$wmColor', visible: true, text: '$tvLabel', fontSize: 18, horzAlign: 'center', vertAlign: 'center' } });"
         : '';
+    final signal = widget.signalLevels;
+    final signalJs = signal != null
+        ? '''
+const mkLine = (price, color, title) => candleSeries.createPriceLine({
+  price, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+  axisLabelVisible: true, title,
+});
+mkLine(${signal.entry}, '$upColor', 'ENTRY');
+mkLine(${signal.stopLoss}, '$downColor', 'SL');
+mkLine(${signal.takeProfit}, '${isDark ? '#4ADE80' : '#16A34A'}', 'TP');
+'''
+        : '';
+
+    final markers = widget.tradeMarkers;
+    String markersJs = '';
+    if (markers != null && markers.isNotEmpty) {
+      final sorted = [...markers]..sort((a, b) => a.date.compareTo(b.date));
+      final items = sorted.map((m) {
+        final day = m.date.toIso8601String().split('T')[0];
+        final isBuy = m.direction == 'BUY';
+        return "{ time: '$day', position: '${isBuy ? 'belowBar' : 'aboveBar'}', "
+            "color: '${isBuy ? upColor : downColor}', "
+            "shape: '${isBuy ? 'arrowUp' : 'arrowDown'}', text: '${isBuy ? 'B' : 'S'}' }";
+      }).join(',');
+      markersJs = 'candleSeries.setMarkers([$items]);';
+    }
+
     final vwapJs = widget.withVwap
         ? '''
 const vwapData = [];
@@ -199,6 +236,8 @@ candleSeries.setData(raw.map(c => ({ time: c.time, open: c.open, high: c.high, l
 volumeSeries.setData(raw.map(c => ({ time: c.time, value: c.volume || 0, color: c.close >= c.open ? '$upVol' : '$downVol' })));
 
 $vwapJs
+$signalJs
+$markersJs
 $watermarkJs
 chart.timeScale().fitContent();
 

@@ -35,6 +35,19 @@ export const VolatilityAssetsResponse = z.object({
 });
 export type VolatilityAssetsResponse = z.infer<typeof VolatilityAssetsResponse>;
 
+export const VixTermStructureResponse = z
+  .object({
+    vix: z.number().nullable(),
+    vix3m: z.number().nullable(),
+    ratio: z.number().nullable(),
+    termLabel: z.enum(["strong_contango", "contango", "flat", "backwardation"]).nullable(),
+    optionsEnvScore: z.number().nullable(),
+    optionsEnvLabel: z.enum(["Favorable", "Caution", "Unfavorable"]).nullable(),
+    lastUpdated: z.string().nullish(),
+  })
+  .passthrough();
+export type VixTermStructureResponse = z.infer<typeof VixTermStructureResponse>;
+
 export const FearGreedResponse = z.object({
   value: z.number(),
   classification: z.string(),
@@ -110,8 +123,11 @@ export const EconomyEvent = z
     country: z.string().nullish(),
     event: z.string(),
     impact: z.string().nullish(),
+    category: z.string().nullish(),
     previous: z.string().nullish(),
     forecast: z.string().nullish(),
+    estimated: z.boolean().nullish(),
+    dateLabel: z.string().nullish(),
   })
   .passthrough();
 export type EconomyEvent = z.infer<typeof EconomyEvent>;
@@ -147,10 +163,13 @@ export const UsaDebtResponse = z
     totalDebt: z.number().nullish(),
     totalDebtFormatted: z.string().nullish(),
     debtPerCitizen: z.string().nullish(),
-    debtPerTaxpayer: z.string().nullish(),
     debtToGdpRatio: z.string().nullish(),
     dailyIncrease: z.string().nullish(),
+    debtGrowth20yr: z.string().nullish(),
+    /** e.g. "FY2026 year-to-date (through May)" — all *YTD fields below are fiscal-year-to-date, not full-year. */
+    fiscalYtdLabel: z.string().nullish(),
     annualDeficit: z.string().nullish(),
+    revenueVsSpending: z.string().nullish(),
     interestPayments: z.string().nullish(),
   })
   .passthrough();

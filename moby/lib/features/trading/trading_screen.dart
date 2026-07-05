@@ -84,6 +84,19 @@ final _signalProvider = FutureProvider.autoDispose
   },
 );
 
+final _compareSymbolProvider = StateProvider.autoDispose<String>((_) => 'GC=F');
+final _compareTfProvider = StateProvider.autoDispose<String>((_) => '1d');
+
+final _compareProvider = FutureProvider.autoDispose
+    .family<Map<String, dynamic>, ({String symbol, String tf})>(
+  (_, args) async {
+    final data = await ApiClient.instance.get(
+      '${ApiEndpoints.tradingSignalsCompare(args.symbol)}?interval=${args.tf}',
+    );
+    return data as Map<String, dynamic>;
+  },
+);
+
 // ── Strategy definitions (fetched from server, fallback to hardcoded) ─────────
 
 class _StrategyDef {
@@ -124,6 +137,16 @@ const _fallbackStrategies = [
   _StrategyDef(label: 'S7', title: 'APEX — Adaptive Probabilistic EXecution', description: 'Five-regime classifier with regime-specific direction engines, divergence veto, higher-timeframe permission layer, and a 0–100 quality gate that must hit 60 before any trade fires.', detail: 'Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade) · VWAP · OBV · Divergence veto · HTF alignment · Cross-asset confirmation · Regime-aware SL/TP (1:1.8 → 2:4.5)', accentHex: 'FF4D6A'),
   _StrategyDef(label: 'S8', title: 'Ensemble — S4 + S5 + S7 Weighted Consensus', description: 'Runs three strategies simultaneously and weights their votes by per-regime historical accuracy. Requires 2 of 3 to agree before firing — when engines split, the answer is HOLD.', detail: 'Strong Trend: S7 50% · S4 35% · S5 15% · Ranging: S5 45% · S7 35% · S4 20% · Volatile Break: S7 55% · S4 35% · S5 10% · Full position on 3/3 · 60% size on 2/3 · No trade on 1/3 or split', accentHex: '00C49A'),
   _StrategyDef(label: 'S9', title: 'Silver Liquidity Sweep', description: 'Session-gated stop-hunt entries at Fibonacci confluence — optimised for Silver (SI=F) intraday. Fires only when all four conditions align simultaneously.', detail: 'London KZ (02:00–05:00 ET) · NY KZ (07:00–10:00 ET) · Liquidity sweep (wick beyond recent H/L, close back inside) · 9 EMA power candle (body >60% of range) · Fib 0.618/0.786 long · Fib 0.236/0.382 short', accentHex: 'C0C0C0'),
+  // ── Enhanced strategies ─────────────────────────────────────────────────────
+  _StrategyDef(label: 'S1+', title: 'Technical Analysis+', description: 'S1 enhanced with OBV institutional flow scoring and volume-participation gate.', detail: 'All S1 indicators + OBV slope + volume gate (sub-50% avg → 0.55×) + MACD near-crossover bonus · Threshold 0.35', accentHex: '00D4AA'),
+  _StrategyDef(label: 'S2+', title: 'Multi-Factor+', description: 'S2 with regime-aware weight shifting and candle-body direction lock.', detail: 'S1+ base + ADX regime weights + candle direction lock (opposing body ≥30% → 0.72×) · Threshold 0.35', accentHex: 'FFB84D'),
+  _StrategyDef(label: 'S3+', title: 'Hybrid+', description: 'S3 with stricter news quality gate and adaptive blend that shifts when news is stale.', detail: 'S1+ (65%) + enhanced sentiment (35%) · Relevance ≥0.5 · Min 3 articles · Stale >6h → 80/20 split', accentHex: 'FF4D6A'),
+  _StrategyDef(label: 'S4+', title: 'Regime-Adaptive+', description: 'S4 with fixed neutral-zone engine, BB-width amplifier in MR mode, and volume scoring in Trend.', detail: 'ADX 18–25 → Weak Trend (0.70×) · MR + BB-width amp (compressed 1.30×) · Vol confirms trend · Trend 0.45 / MR 0.65', accentHex: '00C49A'),
+  _StrategyDef(label: 'S5+', title: 'Professional Systematic+', description: 'S5 with volume-spike gate, weighted consensus gate, and EMA200 stretch penalty.', detail: 'S5 + vol ≥1.5× for Volatile Trend · Weighted consensus ≥60% · EMA200 stretch >4%/8% → penalty', accentHex: 'FFB84D'),
+  _StrategyDef(label: 'S6+', title: 'Adaptive Hybrid+', description: 'S6 with stricter source credibility, stale-news penalty, and minimum article gate.', detail: 'S2+ tech + S6+ sentiment · Unknown sources 0.35 · Stale low-vol → 80/20 · Min 3 articles gate', accentHex: '00D4AA'),
+  _StrategyDef(label: 'S7+', title: 'APEX+ — 2-Bar HTF · Expanded Cross-Asset', description: 'APEX with 2-bar HTF persistence, VWAP in ranging engine, EMA50 direction lock, and 25-pair cross-asset map.', detail: 'All S7 + 2-bar HTF confirmation + Range: VWAP (0.8×) + Breakout: EMA50 lock + 25 cross-asset pairs', accentHex: 'FF4D6A'),
+  _StrategyDef(label: 'S8+', title: 'Ensemble+ — Regime-Shared · S7 Abstention', description: 'S8 with S7+ abstaining on quality fail, shared regime across sub-strategies, and differentiated sizing.', detail: 'S4+ + S5+ + S7+ · S7+ abstains (not HOLD) when quality <60 · Full/50% risk by agreement set · Threshold 0.38', accentHex: '00C49A'),
+  _StrategyDef(label: 'S9+', title: 'Silver Liquidity Sweep+', description: 'S9 with extended sweep lookback (20 bars) and wider Fibonacci structure (50 bars).', detail: 'Sweep: 20-bar range (was 10) · Fib POI: 50-bar swing (was 20) · Captures deeper institutional liquidity levels', accentHex: 'C0C0C0'),
 ];
 
 final _strategiesProvider = FutureProvider<List<_StrategyDef>>((ref) async {
@@ -151,7 +174,7 @@ class _TradingScreenState extends State<TradingScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 5, vsync: this);
+    _tab = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -181,6 +204,7 @@ class _TradingScreenState extends State<TradingScreen>
             Tab(text: 'Power Moves'),
             Tab(text: 'Signals'),
             Tab(text: 'Alerts'),
+            Tab(text: 'Compare'),
           ],
         ),
       ),
@@ -193,6 +217,7 @@ class _TradingScreenState extends State<TradingScreen>
             _PowerMovesTab(),
             _SignalsTab(),
             _AlertsTab(),
+            _ComparisonTab(),
           ],
         ),
       ),
@@ -1198,12 +1223,13 @@ class _StrategyGrid extends StatelessWidget {
     final showS9 = type == null ||
         type == 'ALL' ||
         type == 'Commodities' ||
-        strategy == TradingStrategy.s9;
+        strategy == TradingStrategy.s9 ||
+        strategy == TradingStrategy.s9Plus;
 
     Widget chip(TradingStrategy s) {
       const silver = Color(0xFFC0C0C0);
       final isSelected = strategy == s;
-      final isS9Chip = s == TradingStrategy.s9;
+      final isS9Chip = s == TradingStrategy.s9 || s == TradingStrategy.s9Plus;
       final isAdvanced = int.parse(s.serverParam) >= 4;
       final isLocked = isAdvanced && !EntitlementService.can('signals_advanced');
       final chipColor =
@@ -1268,6 +1294,13 @@ class _StrategyGrid extends StatelessWidget {
       return Row(children: items);
     }
 
+    Widget spacerRow4() => Row(children: const [
+      Expanded(child: SizedBox()), SizedBox(width: 5),
+      Expanded(child: SizedBox()), SizedBox(width: 5),
+      Expanded(child: SizedBox()), SizedBox(width: 5),
+      Expanded(child: SizedBox()),
+    ]);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1284,8 +1317,10 @@ class _StrategyGrid extends StatelessWidget {
           ],
         ),
         const SizedBox(height: AppSpacing.s2),
+        // Base strategies: S1–S4
         buildRow(all.sublist(0, 4)),
         const SizedBox(height: 5),
+        // Base strategies: S5–S8
         buildRow(all.sublist(4, 8)),
         if (showS9) ...[
           const SizedBox(height: 5),
@@ -1300,6 +1335,39 @@ class _StrategyGrid extends StatelessWidget {
               const Expanded(child: SizedBox()),
             ],
           ),
+        ],
+        const SizedBox(height: 8),
+        // Divider between base and enhanced rows
+        Row(children: [
+          Expanded(child: Container(height: 1, color: c.border.withAlpha(60))),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text('Enhanced', style: AppTypography.xs.copyWith(color: c.textMuted)),
+          ),
+          Expanded(child: Container(height: 1, color: c.border.withAlpha(60))),
+        ]),
+        const SizedBox(height: 6),
+        // Enhanced strategies: S1+–S4+
+        buildRow(all.sublist(9, 13)),
+        const SizedBox(height: 5),
+        // Enhanced strategies: S5+–S8+
+        buildRow(all.sublist(13, 17)),
+        if (showS9) ...[
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Expanded(child: chip(all[17])),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+            ],
+          ),
+        ] else ...[
+          const SizedBox(height: 5),
+          spacerRow4(),
         ],
       ],
     );
@@ -1511,6 +1579,30 @@ class _SignalCardContent extends StatelessWidget {
                     signal.riskReward.toStringAsFixed(2), c.accent, c),
               ],
             ),
+            if (signal.vwap != null) ...[
+              const SizedBox(height: AppSpacing.s2),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _SignalStat('VWAP', _fmt(signal.vwap!), c.textSecondary, c),
+                  if (signal.vwapDeviation != null)
+                    _SignalStat(
+                      'vs VWAP',
+                      '${signal.vwapDeviation! >= 0 ? '+' : ''}${signal.vwapDeviation!.toStringAsFixed(2)}%',
+                      signal.vwapDeviation! >= 0 ? c.positive : c.danger,
+                      c,
+                    ),
+                ],
+              ),
+            ],
+            if (signal.vixAtSignal != null) ...[
+              const SizedBox(height: AppSpacing.s1),
+              Text(
+                'VIX ${signal.vixAtSignal!.toStringAsFixed(1)}'
+                '${signal.dynamicThreshold != null ? '  ·  Threshold ${signal.dynamicThreshold!.toStringAsFixed(2)}' : ''}',
+                style: AppTypography.xs.copyWith(color: c.textFaint),
+              ),
+            ],
             const SizedBox(height: AppSpacing.s3),
             ...signal.reasoning.take(2).map((r) => Padding(
                   padding: const EdgeInsets.only(bottom: 2),
@@ -3335,6 +3427,388 @@ class _PMSignalRow extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Comparison Tab ────────────────────────────────────────────────────────────
+
+class _ComparisonTab extends ConsumerStatefulWidget {
+  const _ComparisonTab();
+
+  @override
+  ConsumerState<_ComparisonTab> createState() => _ComparisonTabState();
+}
+
+class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
+  final _symbolController = TextEditingController();
+  bool _editing = false;
+
+  static const _popularSymbols = [
+    ('GC=F', 'Gold'),
+    ('SI=F', 'Silver'),
+    ('BTC-USD', 'Bitcoin'),
+    ('ETH-USD', 'Ethereum'),
+    ('^GSPC', 'S&P 500'),
+    ('CL=F', 'Oil'),
+    ('EURUSD=X', 'EUR/USD'),
+    ('AAPL', 'Apple'),
+  ];
+
+  static const _tfs = ['1d', '4h', '1h', '5m'];
+
+  @override
+  void dispose() {
+    _symbolController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final symbol = ref.watch(_compareSymbolProvider);
+    final tf = ref.watch(_compareTfProvider);
+    final compareAsync = ref.watch(_compareProvider((symbol: symbol, tf: tf)));
+
+    if (!EntitlementService.can('signals_advanced')) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.s6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.compare_arrows_rounded, size: 48, color: c.accent),
+              const SizedBox(height: AppSpacing.s4),
+              Text('Strategy Comparison',
+                  style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s3),
+              Text(
+                'Compare S1–S9 versus their enhanced S1+–S9+ counterparts side-by-side for any asset. Requires Pro.',
+                style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.5),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.s5),
+              GestureDetector(
+                onTap: () => UpgradeSheet.show(context, feature: 'signals_advanced'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5, vertical: AppSpacing.s3),
+                  decoration: BoxDecoration(
+                    color: c.accent,
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                  ),
+                  child: Text('Upgrade to Pro',
+                      style: AppTypography.labelMd.copyWith(
+                          color: Colors.black, fontWeight: FontWeight.w700)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        // ── Controls bar ─────────────────────────────────────────────────────
+        Container(
+          color: c.surface,
+          padding: const EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, AppSpacing.s3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Symbol picker
+              if (_editing)
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _symbolController,
+                        autofocus: true,
+                        textCapitalization: TextCapitalization.characters,
+                        style: AppTypography.sm.copyWith(color: c.textPrimary),
+                        decoration: InputDecoration(
+                          hintText: 'Enter symbol (e.g. AAPL, BTC-USD)',
+                          hintStyle: AppTypography.sm.copyWith(color: c.textMuted),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            borderSide: BorderSide(color: c.border),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            borderSide: BorderSide(color: c.border),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(AppRadius.sm),
+                            borderSide: BorderSide(color: c.accent),
+                          ),
+                        ),
+                        onSubmitted: (v) {
+                          final trimmed = v.trim().toUpperCase();
+                          if (trimmed.isNotEmpty) {
+                            ref.read(_compareSymbolProvider.notifier).state = trimmed;
+                          }
+                          setState(() => _editing = false);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => setState(() => _editing = false),
+                      child: Icon(Icons.close_rounded, color: c.textMuted, size: 18),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        _symbolController.text = symbol;
+                        setState(() => _editing = true);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: c.accent.withAlpha(20),
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          border: Border.all(color: c.accent.withAlpha(80)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(symbol,
+                                style: AppTypography.labelMd.copyWith(
+                                    color: c.accent, fontWeight: FontWeight.w700)),
+                            const SizedBox(width: 4),
+                            Icon(Icons.edit_rounded, size: 12, color: c.accent),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.s3),
+                    // TF selector
+                    ..._tfs.map((t) => Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: GestureDetector(
+                        onTap: () => ref.read(_compareTfProvider.notifier).state = t,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: tf == t ? c.accent.withAlpha(25) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(AppRadius.full),
+                            border: Border.all(
+                              color: tf == t ? c.accent : c.border,
+                            ),
+                          ),
+                          child: Text(t.toUpperCase(),
+                              style: AppTypography.xs.copyWith(
+                                color: tf == t ? c.accent : c.textSecondary,
+                                fontWeight: FontWeight.w600,
+                              )),
+                        ),
+                      ),
+                    )),
+                  ],
+                ),
+              const SizedBox(height: AppSpacing.s2),
+              // Popular symbol chips
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: _popularSymbols.map((entry) {
+                    final (sym, name) = entry;
+                    final selected = symbol == sym;
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: GestureDetector(
+                        onTap: () => ref.read(_compareSymbolProvider.notifier).state = sym,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: selected ? c.surface : Colors.transparent,
+                            borderRadius: BorderRadius.circular(AppRadius.full),
+                            border: Border.all(color: selected ? c.border : c.border.withAlpha(80)),
+                          ),
+                          child: Text(name,
+                              style: AppTypography.xs.copyWith(
+                                color: selected ? c.textPrimary : c.textMuted,
+                                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                              )),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        // ── Results ──────────────────────────────────────────────────────────
+        Expanded(
+          child: compareAsync.when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => ErrorView(
+              message: 'Failed to load comparison',
+              onRetry: () => ref.invalidate(_compareProvider),
+            ),
+            data: (data) {
+              final pairs = (data['pairs'] as List<dynamic>? ?? []);
+              if (pairs.isEmpty) {
+                return Center(
+                  child: Text('No comparison data', style: AppTypography.sm.copyWith(color: c.textMuted)),
+                );
+              }
+              return ListView.builder(
+                padding: EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s3, AppSpacing.s4,
+                    AppSpacing.s4 + MediaQuery.of(context).padding.bottom),
+                itemCount: pairs.length,
+                itemBuilder: (ctx, i) {
+                  final pair = pairs[i] as Map<String, dynamic>;
+                  final baseId  = pair['baseId'] as String;
+                  final plusId  = pair['enhancedId'] as String;
+                  final base    = pair['base'] as Map<String, dynamic>?;
+                  final plus    = pair['enhanced'] as Map<String, dynamic>?;
+                  final baseLbl = 'S$baseId';
+                  final plusLbl = 'S$plusId' == 'S10' ? 'S1+' : 'S${int.parse(plusId) - 9}+';
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+                    child: GlassCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text('$baseLbl vs $plusLbl',
+                                  style: AppTypography.labelMd.copyWith(
+                                      color: c.textPrimary, fontWeight: FontWeight.w700)),
+                              const Spacer(),
+                              if (base != null)
+                                Text(base['strategy_title'] as String? ?? baseLbl,
+                                    style: AppTypography.xs.copyWith(color: c.textMuted)),
+                            ],
+                          ),
+                          const SizedBox(height: AppSpacing.s3),
+                          Row(
+                            children: [
+                              Expanded(child: _CompareSignalCard(
+                                label: baseLbl, signal: base, isBase: true)),
+                              const SizedBox(width: AppSpacing.s3),
+                              Expanded(child: _CompareSignalCard(
+                                label: plusLbl, signal: plus, isBase: false)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CompareSignalCard extends StatelessWidget {
+  const _CompareSignalCard({
+    required this.label,
+    required this.signal,
+    required this.isBase,
+  });
+  final String label;
+  final Map<String, dynamic>? signal;
+  final bool isBase;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    if (signal == null) {
+      return Container(
+        padding: const EdgeInsets.all(AppSpacing.s3),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          border: Border.all(color: c.border),
+        ),
+        child: Text('No data', style: AppTypography.xs.copyWith(color: c.textMuted)),
+      );
+    }
+    final direction = signal!['direction'] as String? ?? 'HOLD';
+    final confidence = signal!['confidence'];
+    final confNum = confidence is num ? confidence.toDouble() : double.tryParse(confidence?.toString() ?? '') ?? 0.0;
+    final entry    = signal!['entry'];
+    final sl       = signal!['stopLoss'];
+    final tp       = signal!['takeProfit'];
+    final rr       = signal!['riskReward'];
+    final reasoning = (signal!['reasoning'] as List<dynamic>? ?? []).cast<String>();
+
+    Color dirColor(String d) {
+      if (d == 'BUY')  return c.signalColor('BUY');
+      if (d == 'SELL') return c.signalColor('SELL');
+      return c.textMuted;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.s3),
+      decoration: BoxDecoration(
+        color: isBase ? c.surface : c.accent.withAlpha(8),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: isBase ? c.border : c.accent.withAlpha(60)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(label,
+                  style: AppTypography.xs.copyWith(
+                      color: c.textMuted, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: dirColor(direction).withAlpha(30),
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  border: Border.all(color: dirColor(direction).withAlpha(80)),
+                ),
+                child: Text(direction,
+                    style: AppTypography.xs.copyWith(
+                        color: dirColor(direction), fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text('${confNum.toStringAsFixed(0)}% confidence',
+              style: AppTypography.xs.copyWith(color: c.textSecondary)),
+          if (entry != null) ...[
+            const SizedBox(height: 4),
+            Text('Entry: $entry', style: AppTypography.xs.copyWith(color: c.textSecondary)),
+          ],
+          if (sl != null && tp != null) ...[
+            Text('SL: $sl  TP: $tp', style: AppTypography.xs.copyWith(color: c.textMuted)),
+          ],
+          if (rr != null)
+            Text('R/R: $rr', style: AppTypography.xs.copyWith(color: c.textMuted)),
+          if (reasoning.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            ...reasoning.take(2).map((r) => Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('• ', style: AppTypography.xs.copyWith(color: c.textMuted)),
+                  Expanded(child: Text(r,
+                      style: AppTypography.xs.copyWith(color: c.textMuted, height: 1.4))),
+                ],
+              ),
+            )),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -130,9 +130,16 @@ class SettingsSheet extends ConsumerWidget {
           ),
           const SizedBox(height: AppSpacing.s3),
           Text(
-            current == ChartDataProvider.tradingView
-                ? 'TradingView: full-featured live charts with 100+ indicators.'
-                : 'Yahoo Finance: fast candles with volume and VWAP overlay.',
+            switch (current) {
+              ChartDataProvider.yahoo =>
+                'Yahoo Finance: fast candles with volume and VWAP overlay.',
+              ChartDataProvider.tradingView =>
+                'TradingView: real TradingView charts for major metals, energy, '
+                    'crypto and forex; other symbols use the Yahoo chart automatically.',
+              ChartDataProvider.inHouse =>
+                'In-House: native chart with SMA/EMA, Bollinger, Ichimoku, RSI, '
+                    'MACD, VWAP and support/resistance.',
+            },
             style: AppTypography.sm.copyWith(color: c.textMuted),
           ),
           const SizedBox(height: AppSpacing.s3),

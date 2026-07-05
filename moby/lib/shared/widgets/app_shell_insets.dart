@@ -34,6 +34,13 @@ Future<T?> showAppBottomSheet<T>({
 }) {
   return showModalBottomSheet<T>(
     context: context,
+    // AppShell uses extendBody:true, so the glass nav pill paints in a layer
+    // above the Scaffold body. go_router's ShellRoute runs routed pages
+    // through a nested Navigator inside that body, so the default
+    // useRootNavigator:false would insert this sheet's overlay *below* the
+    // pill's paint layer, clipping its bottom edge. Route through the root
+    // Navigator instead so the sheet overlays the entire shell, pill included.
+    useRootNavigator: true,
     isScrollControlled: true,
     useSafeArea: true,
     enableDrag: enableDrag,

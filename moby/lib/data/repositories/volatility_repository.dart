@@ -19,6 +19,11 @@ class VolatilityRepository {
     return (data['briefing'] ?? '') as String;
   }
 
+  Future<Map<String, dynamic>> fetchVixTermStructure() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.vixTermStructure);
+    return data as Map<String, dynamic>;
+  }
+
   Future<({List<CrisisEvent> crises, String dataAsOf})> fetchCrises() async {
     final data = await ApiClient.instance.get(ApiEndpoints.crises) as Map<String, dynamic>;
     final list = (data['crises'] as List).cast<Map<String, dynamic>>();

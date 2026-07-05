@@ -23,6 +23,7 @@ import '../../shared/widgets/performance_heatmap.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 import '../../shared/widgets/theme_toggle.dart';
 import '../usa_debt/usa_debt_screen.dart';
+import 'adv_correlation_tab.dart';
 import 'correlation_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
@@ -113,6 +114,12 @@ final _regimeSummaryProvider =
   return data as Map<String, dynamic>;
 });
 
+final _vixTermStructureProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  ref.keepAlive(); // 30m server TTL
+  return VolatilityRepository.instance.fetchVixTermStructure();
+});
+
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class MacroScreen extends ConsumerStatefulWidget {
@@ -129,7 +136,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 5, vsync: this);
+    _tab = TabController(length: 6, vsync: this);
   }
 
   @override
@@ -146,6 +153,13 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
 
     return Scaffold(
       backgroundColor: c.background,
+      // Adv Correlation's custom-symbol search introduced the first text
+      // field in this Scaffold — same keyboard-squish fix as TradingScreen
+      // (see feedback_keyboard_squish memory): default resize shrinks the
+      // whole body (TabBar + keyboard leaves almost nothing), so keep this
+      // false and let the scroll views push their own content above the
+      // keyboard via viewInsets.bottom instead.
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: Text('Macro',
             style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
@@ -154,7 +168,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
-          tabAlignment: TabAlignment.start,
+          tabAlignment: TabAlignment.fill,
           labelColor: c.accent,
           unselectedLabelColor: c.textMuted,
           indicatorColor: c.accent,
@@ -163,10 +177,11 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
           unselectedLabelStyle: AppTypography.labelSm,
           tabs: const [
             Tab(text: 'Dashboard'),
+            Tab(text: 'Correlation'),
+            Tab(text: 'Adv Correlation'),
+            Tab(text: 'Economic Calendar'),
             Tab(text: 'Crisis'),
             Tab(text: 'Debt'),
-            Tab(text: 'Calendar'),
-            Tab(text: 'Correlation'),
           ],
         ),
       ),
@@ -174,10 +189,11 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
         controller: _tab,
         children: const [
           _MacroDashboardTab(),
+          CorrelationTab(),
+          AdvCorrelationTab(),
+          _MacroCalendarTab(),
           _MacroCrisisTab(),
           _MacroDebtTab(),
-          _MacroCalendarTab(),
-          CorrelationTab(),
         ],
       ),
     );
@@ -240,6 +256,10 @@ class _MacroDashboardTab extends ConsumerWidget {
                     ],
                   ),
                 ),
+                const SizedBox(height: AppSpacing.s3),
+                const _VixTermStructureCard(),
+                const SizedBox(height: AppSpacing.s3),
+                const _OptionsEnvScoreCard(),
                 const SizedBox(height: AppSpacing.s3),
                 const _FearGreedGauge(),
                 const SizedBox(height: AppSpacing.s5),
@@ -572,6 +592,26 @@ final _eventsProvider =
   );
 });
 
+Color _categoryColor(String category, AppPalette c) {
+  switch (category) {
+    case 'Fed':
+      return c.accent;
+    case 'Inflation':
+      return c.warning;
+    case 'Jobs':
+      return c.positive;
+    case 'GDP':
+      return const Color(0xFF5B8DEF);
+    default:
+      return const Color(0xFFA78BFA);
+  }
+}
+
+const _kMonthNames = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
 class _MacroCalendarTab extends ConsumerWidget {
   const _MacroCalendarTab();
 
@@ -594,13 +634,14 @@ class _MacroCalendarTab extends ConsumerWidget {
       data: (result) {
         if (result.events.isEmpty) return fallback();
 
-        // Group by date
+        // Group by calendar month (YYYY-MM) for the 3-month month-on-month view.
         final Map<String, List<Map<String, dynamic>>> grouped = {};
         for (final e in result.events) {
           final date = e['date'] as String? ?? '';
-          grouped.putIfAbsent(date, () => []).add(e);
+          if (date.length < 7) continue;
+          grouped.putIfAbsent(date.substring(0, 7), () => []).add(e);
         }
-        final dates = grouped.keys.toList()..sort();
+        final months = grouped.keys.toList()..sort();
 
         return MaxWidthLayout(
           child: Column(
@@ -612,59 +653,58 @@ class _MacroCalendarTab extends ConsumerWidget {
                   padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
                       AppSpacing.s5, AppSpacing.s5 + MediaQuery.of(context).padding.bottom),
                   children: [
-                    GlassCard(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
+                    Row(
+                      children: [
+                        Text('Economic Calendar',
+                            style: AppTypography.headingSm
+                                .copyWith(color: c.textPrimary)),
+                        const SizedBox(width: AppSpacing.s2),
+                        GestureDetector(
+                          onTap: () => _showCalendarInfo(context),
+                          child: Icon(Icons.info_outline_rounded,
+                              size: 16, color: c.textMuted),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.s3),
+                    Row(
+                      children: [
+                        _LegendDot(color: c.accent, label: 'Fed'),
+                        const SizedBox(width: AppSpacing.s4),
+                        _LegendDot(color: c.warning, label: 'Inflation'),
+                        const SizedBox(width: AppSpacing.s4),
+                        _LegendDot(color: c.positive, label: 'Jobs'),
+                        const SizedBox(width: AppSpacing.s4),
+                        _LegendDot(color: const Color(0xFF5B8DEF), label: 'GDP'),
+                        const SizedBox(width: AppSpacing.s4),
+                        _LegendDot(color: const Color(0xFFA78BFA), label: 'Other'),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.s4),
+                    ...months.map((month) {
+                      final parts = month.split('-');
+                      final label =
+                          '${_kMonthNames[(int.parse(parts[1]) - 1).clamp(0, 11)]} ${parts[0]}';
+                      final evts = grouped[month]!
+                        ..sort((a, b) =>
+                            (a['date'] as String).compareTo(b['date'] as String));
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.s4),
+                        child: GlassCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Economic Events',
-                                  style: AppTypography.headingSm
-                                      .copyWith(color: c.textPrimary)),
-                              const SizedBox(width: AppSpacing.s2),
-                              GestureDetector(
-                                onTap: () => _showCalendarInfo(context),
-                                child: Icon(Icons.info_outline_rounded,
-                                    size: 16, color: c.textMuted),
-                              ),
-                              const Spacer(),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: c.danger.withAlpha(30),
-                                  borderRadius:
-                                      BorderRadius.circular(AppRadius.full),
-                                  border: Border.all(color: c.danger.withAlpha(60)),
-                                ),
-                                child: Text('High Impact',
-                                    style: AppTypography.xs.copyWith(
-                                        color: c.danger,
-                                        fontWeight: FontWeight.w700)),
-                              ),
+                              Text(label,
+                                  style: AppTypography.labelLg.copyWith(
+                                      color: c.textPrimary,
+                                      fontWeight: FontWeight.w700)),
+                              const SizedBox(height: AppSpacing.s3),
+                              ...evts.map((e) => _DynamicEventRow(event: e)),
                             ],
                           ),
-                          const SizedBox(height: AppSpacing.s4),
-                          ...dates.expand((date) {
-                            final evts = grouped[date]!;
-                            final dt = DateTime.tryParse(date);
-                            final label = dt != null
-                                ? '${_dayName(dt.weekday)}, ${_monthName(dt.month)} ${dt.day}'
-                                : date;
-                            return [
-                              Padding(
-                                padding: const EdgeInsets.only(
-                                    top: AppSpacing.s3, bottom: AppSpacing.s2),
-                                child: Text(label,
-                                    style: AppTypography.labelSm.copyWith(
-                                        color: c.textMuted, letterSpacing: 1.0)),
-                              ),
-                              ...evts.map((e) => _DynamicEventRow(event: e)),
-                            ];
-                          }),
-                        ],
-                      ),
-                    ),
+                        ),
+                      );
+                    }),
                   ],
                 ),
               ),
@@ -673,17 +713,6 @@ class _MacroCalendarTab extends ConsumerWidget {
         );
       },
     );
-  }
-
-  String _dayName(int weekday) {
-    const d = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    return d[(weekday - 1).clamp(0, 6)];
-  }
-
-  String _monthName(int month) {
-    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return m[(month - 1).clamp(0, 11)];
   }
 }
 
@@ -695,9 +724,20 @@ class _DynamicEventRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final eventName = event['event'] as String? ?? '';
+    final date = event['date'] as String? ?? '';
     final time = event['time'] as String? ?? '';
     final previous = event['previous'] as String?;
     final forecast = event['forecast'] as String?;
+    final category = event['category'] as String? ?? 'Other';
+    final impact = event['impact'] as String? ?? 'High';
+    final estimated = event['estimated'] as bool? ?? false;
+    final dateLabel = event['dateLabel'] as String?;
+    final isHigh = impact == 'High';
+
+    final dt = DateTime.tryParse(date);
+    final dayLabel = estimated
+        ? (dateLabel ?? 'Est.')
+        : (dt != null ? '${_shortMonth(dt.month)} ${dt.day}' : date);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.s3),
@@ -705,12 +745,20 @@ class _DynamicEventRow extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 6,
-            height: 6,
+            width: 8,
+            height: 8,
             margin: const EdgeInsets.only(top: 5),
-            decoration: BoxDecoration(color: c.danger, shape: BoxShape.circle),
+            decoration: BoxDecoration(
+                color: _categoryColor(category, c), shape: BoxShape.circle),
           ),
           const SizedBox(width: AppSpacing.s3),
+          SizedBox(
+            width: 64,
+            child: Text(dayLabel,
+                style: AppTypography.sm.copyWith(
+                    color: c.accent, fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(width: AppSpacing.s2),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -740,9 +788,29 @@ class _DynamicEventRow extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(width: AppSpacing.s2),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: isHigh ? c.dangerDim : c.warningDim,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              isHigh ? 'High' : 'Med',
+              style: AppTypography.xs.copyWith(
+                  color: isHigh ? c.danger : c.warning,
+                  fontWeight: FontWeight.w700),
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  String _shortMonth(int month) {
+    const m = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return m[(month - 1).clamp(0, 11)];
   }
 }
 
@@ -1634,6 +1702,8 @@ class _MacroRegimePanelState extends ConsumerState<_MacroRegimePanel>
   Widget build(BuildContext context) {
     final c = context.colors;
     final bondsAsync = ref.watch(_bondsProvider);
+    // Read term structure outside maybeWhen — Riverpod prohibits ref.watch inside callbacks
+    final termLabel = ref.watch(_vixTermStructureProvider).valueOrNull?['termLabel'] as String? ?? 'flat';
 
     return bondsAsync.maybeWhen(
       data: (bonds) {
@@ -1644,7 +1714,16 @@ class _MacroRegimePanelState extends ConsumerState<_MacroRegimePanel>
         final Color regimeColor;
         final String regimeDesc;
 
-        if (vix >= 30 && curveStatus == 'inverted') {
+        // Term-structure overrides applied first (highest signal specificity)
+        if (termLabel == 'backwardation' && vix >= 20) {
+          regime = 'Risk-Off';
+          regimeColor = c.danger;
+          regimeDesc = 'VIX term structure inverted — spot vol > futures signals acute stress';
+        } else if (termLabel == 'strong_contango' && vix < 20) {
+          regime = 'Bullish Bias';
+          regimeColor = c.positive;
+          regimeDesc = 'Strong VIX contango + low vol — options market pricing sustained calm';
+        } else if (vix >= 30 && curveStatus == 'inverted') {
           regime = 'Risk-Off / Recession Fear';
           regimeColor = c.danger;
           regimeDesc = 'High volatility + inverted curve — defensive positioning favored';
@@ -3070,6 +3149,332 @@ class _SectorQuadrantInfo extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── VIX Term Structure / Options Env info sheets ──────────────────────────────
+
+void _showVixTermStructureInfo(BuildContext context) {
+  final c = context.colors;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.85,
+      builder: (ctx, sc) => ListView(
+        controller: sc,
+        padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+            AppSpacing.s5, AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
+        children: [
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                  color: c.border, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('VIX Term Structure',
+              style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            'Compares VIX (30-day implied volatility) with VIX3M (93-day implied volatility) to reveal the shape of the volatility curve.',
+            style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.6),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          _InfoRow(c, label: 'Ratio', value: 'VIX3M ÷ VIX',
+              desc: 'A ratio above 1 means future vol is priced higher than near-term vol (normal). Below 1 means the market fears near-term moves more than future ones.'),
+          _InfoRow(c, label: 'Strong Contango', value: 'Ratio ≥ 1.10',
+              desc: 'Calm near-term vol, elevated future expectations. Best environment for options sellers — premium erodes steadily.'),
+          _InfoRow(c, label: 'Contango', value: '1.02 – 1.09',
+              desc: 'Moderately favorable for options sellers. Normal market condition.'),
+          _InfoRow(c, label: 'Flat', value: '0.98 – 1.01',
+              desc: 'Near-term and future vol are roughly equal. No clear edge for either buyers or sellers.'),
+          _InfoRow(c, label: 'Backwardation', value: 'Ratio < 0.98',
+              desc: 'Near-term fear exceeds future expectations — a stress signal. Options buyers have an edge; sellers face elevated risk of sudden moves.'),
+        ],
+      ),
+    ),
+  );
+}
+
+void _showOptionsEnvInfo(BuildContext context) {
+  final c = context.colors;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.85,
+      builder: (ctx, sc) => ListView(
+        controller: sc,
+        padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+            AppSpacing.s5, AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
+        children: [
+          Center(
+            child: Container(
+              width: 36, height: 4,
+              decoration: BoxDecoration(
+                  color: c.border, borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('Options Environment Score',
+              style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            'A composite 0–10 score indicating how favorable current market conditions are for options premium selling strategies (e.g. covered calls, cash-secured puts, iron condors).',
+            style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.6),
+          ),
+          const SizedBox(height: AppSpacing.s5),
+          Text('How it\'s calculated',
+              style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s3),
+          _InfoRow(c, label: 'VIX Score (0–5)', value: '',
+              desc: 'Lower VIX = higher score. VIX below 13 scores 5; above 35 scores 0. Elevated VIX inflates premiums but increases tail risk.'),
+          _InfoRow(c, label: 'Term Score (0–5)', value: '',
+              desc: 'Strong contango scores 5; contango scores 3.5; flat scores 2.5; backwardation scores 1. Contango means time decay works in the seller\'s favour.'),
+          const SizedBox(height: AppSpacing.s4),
+          Text('Score bands',
+              style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+          const SizedBox(height: AppSpacing.s3),
+          _InfoRow(c, label: 'Favorable', value: '≥ 7',
+              desc: 'Low vol + contango structure. Premium selling strategies have a statistical edge.', valueColor: c.positive),
+          _InfoRow(c, label: 'Caution', value: '4 – 6.9',
+              desc: 'Mixed signals. Reduce position size or use defined-risk structures.', valueColor: c.warning),
+          _InfoRow(c, label: 'Unfavorable', value: '< 4',
+              desc: 'High vol or backwardation. Avoid naked premium selling — consider buying protection or sitting out.', valueColor: c.danger),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _InfoRow(AppPalette c,
+    {required String label, required String value, required String desc, Color? valueColor}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: AppSpacing.s4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 4, height: 4,
+          margin: const EdgeInsets.only(top: 7),
+          decoration: BoxDecoration(color: c.accent, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: AppSpacing.s3),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(label,
+                      style: AppTypography.labelSm.copyWith(color: c.textPrimary)),
+                  if (value.isNotEmpty) ...[
+                    const SizedBox(width: AppSpacing.s2),
+                    Text(value,
+                        style: AppTypography.labelSm
+                            .copyWith(color: valueColor ?? c.accent)),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(desc,
+                  style: AppTypography.xs.copyWith(
+                      color: c.textSecondary, height: 1.55)),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// ── VIX Term Structure Card ───────────────────────────────────────────────────
+
+class _VixTermStructureCard extends ConsumerWidget {
+  const _VixTermStructureCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_vixTermStructureProvider);
+    return async.maybeWhen(
+      orElse: () => const SizedBox.shrink(),
+      data: (data) {
+        final vix    = (data['vix']    as num?)?.toDouble();
+        final vix3m  = (data['vix3m']  as num?)?.toDouble();
+        final ratio  = (data['ratio']  as num?)?.toDouble();
+        final label  = data['termLabel'] as String? ?? 'flat';
+
+        final (labelText, labelColor) = switch (label) {
+          'strong_contango' => ('Strong Contango', c.positive),
+          'contango'        => ('Contango', c.positive),
+          'backwardation'   => ('Backwardation', c.danger),
+          _                 => ('Flat', c.textMuted),
+        };
+
+        String fmt(double? v) => v != null ? v.toStringAsFixed(2) : '—';
+
+        return GlassCard(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.s4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('VIX Term Structure',
+                        style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+                    const SizedBox(width: AppSpacing.s2),
+                    GestureDetector(
+                      onTap: () => _showVixTermStructureInfo(context),
+                      child: Icon(Icons.info_outline_rounded,
+                          size: 15, color: c.textMuted),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.s2, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: labelColor.withAlpha(30),
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                        border: Border.all(color: labelColor.withAlpha(80)),
+                      ),
+                      child: Text(labelText,
+                          style: AppTypography.xs.copyWith(color: labelColor)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.s3),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _TermStat('VIX Spot', fmt(vix), c.textSecondary, c),
+                    _TermStat('VIX 3M', fmt(vix3m), c.textSecondary, c),
+                    _TermStat('Ratio', ratio != null ? ratio.toStringAsFixed(3) : '—',
+                        labelColor, c),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TermStat extends StatelessWidget {
+  const _TermStat(this.label, this.value, this.valueColor, this.c);
+  final String label;
+  final String value;
+  final Color valueColor;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(label, style: AppTypography.xs.copyWith(color: c.textMuted)),
+        const SizedBox(height: 2),
+        Text(value,
+            style: AppTypography.numericLg.copyWith(
+                color: valueColor, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+}
+
+// ── Options Environment Score Card ───────────────────────────────────────────
+
+class _OptionsEnvScoreCard extends ConsumerWidget {
+  const _OptionsEnvScoreCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_vixTermStructureProvider);
+    return async.maybeWhen(
+      orElse: () => const SizedBox.shrink(),
+      data: (data) {
+        final score     = (data['optionsEnvScore'] as num?)?.toDouble() ?? 5.0;
+        final envLabel  = data['optionsEnvLabel'] as String? ?? 'Caution';
+
+        final scoreColor = envLabel == 'Favorable'
+            ? c.positive
+            : envLabel == 'Unfavorable'
+                ? c.danger
+                : c.warning;
+
+        return GlassCard(
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.s4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Options Environment',
+                        style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
+                    const SizedBox(width: AppSpacing.s2),
+                    GestureDetector(
+                      onTap: () => _showOptionsEnvInfo(context),
+                      child: Icon(Icons.info_outline_rounded,
+                          size: 15, color: c.textMuted),
+                    ),
+                    const Spacer(),
+                    Text(envLabel,
+                        style: AppTypography.labelSm.copyWith(color: scoreColor)),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.s3),
+                Row(
+                  children: [
+                    Text('${score.toStringAsFixed(1)} / 10',
+                        style: AppTypography.numericLg.copyWith(
+                            color: scoreColor, fontWeight: FontWeight.w700)),
+                    const SizedBox(width: AppSpacing.s3),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                        child: LinearProgressIndicator(
+                          value: score / 10,
+                          minHeight: 8,
+                          backgroundColor: c.surface,
+                          color: scoreColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.s2),
+                Text(
+                  envLabel == 'Favorable'
+                      ? 'VIX contango and low volatility create favorable premium capture conditions'
+                      : envLabel == 'Unfavorable'
+                          ? 'Backwardation or elevated VIX reduces options premium viability'
+                          : 'Mixed signals — options strategies require tighter risk management',
+                  style: AppTypography.xs.copyWith(color: c.textMuted),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

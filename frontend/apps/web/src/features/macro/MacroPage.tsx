@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Sector } from "@monysa/contracts";
 import { PERF_TIMEFRAMES, perfFor, type PerfTimeframe } from "@monysa/contracts";
 import { MultiLineChart, Sparkline } from "@monysa/charts";
@@ -19,7 +19,7 @@ import { api } from "../../lib/api";
 import { Gauge } from "../../components/Gauge";
 import { HeatmapGrid } from "../../components/HeatmapGrid";
 
-const TABS = ["Dashboard", "Crisis", "Debt", "Calendar", "Correlation"] as const;
+const TABS = ["Dashboard", "Correlation", "Adv Correlation", "Economic Calendar", "Crisis", "Debt"] as const;
 type Tab = (typeof TABS)[number];
 
 export function MacroPage() {
@@ -35,10 +35,11 @@ export function MacroPage() {
         </ChipRow>
       </div>
       {tab === "Dashboard" && <DashboardTab />}
+      {tab === "Correlation" && <CorrelationTab />}
+      {tab === "Adv Correlation" && <AdvCorrelationTab />}
+      {tab === "Economic Calendar" && <CalendarTab />}
       {tab === "Crisis" && <CrisisTab />}
       {tab === "Debt" && <DebtTab />}
-      {tab === "Calendar" && <CalendarTab />}
-      {tab === "Correlation" && <CorrelationTab />}
     </div>
   );
 }
@@ -50,6 +51,7 @@ function DashboardTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--s5)" }}>
       <RegimeSummaryCard />
       <GaugesCard />
+      <VixTermStructureCard />
       <MarketHeatmapsCard />
       <YieldsCard />
       <SectorRotationCard />
@@ -154,6 +156,81 @@ function GaugesCard() {
               invert
             />
           )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function termColor(label: string | null | undefined): string {
+  if (label === "strong_contango" || label === "contango") return "var(--positive)";
+  if (label === "backwardation") return "var(--danger)";
+  return "var(--text-secondary)";
+}
+
+function optionsScoreColor(score: number | null | undefined): string {
+  if (score == null) return "var(--text-secondary)";
+  if (score >= 7) return "var(--positive)";
+  if (score >= 4) return "var(--warning)";
+  return "var(--danger)";
+}
+
+function VixTermStructureCard() {
+  const { data, isLoading } = useQuery({
+    queryKey: ["vix-term-structure"],
+    queryFn: () => api.getVixTermStructure(),
+    staleTime: 30 * 60_000,
+  });
+  return (
+    <Card>
+      <div className="page-header">
+        <strong>VIX Term Structure</strong>
+        <FreshnessBar lastUpdated={data?.lastUpdated} />
+      </div>
+      {isLoading || !data ? (
+        <SkeletonList rows={1} height={48} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--s4)", marginTop: "var(--s3)" }}>
+          <div className="stat-row">
+            <Stat label="VIX" value={data.vix != null ? data.vix.toFixed(2) : "—"} />
+            <Stat label="VIX3M" value={data.vix3m != null ? data.vix3m.toFixed(2) : "—"} />
+            <Stat
+              label="Ratio"
+              value={data.ratio != null ? data.ratio.toFixed(3) : "—"}
+              sub={data.termLabel ?? "—"}
+              valueClassName=""
+            />
+            <Stat
+              label="Options Env"
+              value={data.optionsEnvScore != null ? `${data.optionsEnvScore.toFixed(1)}/10` : "—"}
+              sub={data.optionsEnvLabel ?? "—"}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--s3)" }}>
+            <span className="ui-stat-label">Term structure:</span>
+            <span style={{ color: termColor(data.termLabel), fontWeight: 600, fontSize: "0.85rem" }}>
+              {data.termLabel?.replace("_", " ") ?? "—"}
+            </span>
+            {data.optionsEnvScore != null && (
+              <>
+                <span className="ui-stat-label" style={{ marginLeft: "var(--s4)" }}>Options env:</span>
+                <span style={{ color: optionsScoreColor(data.optionsEnvScore), fontWeight: 600, fontSize: "0.85rem" }}>
+                  {data.optionsEnvLabel ?? "—"}
+                </span>
+                <div style={{
+                  flex: 1, height: 6, background: "var(--surface-2)", borderRadius: 3, maxWidth: 160,
+                }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${(data.optionsEnvScore / 10) * 100}%`,
+                    background: optionsScoreColor(data.optionsEnvScore),
+                    borderRadius: 3,
+                    transition: "width 0.3s",
+                  }} />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </Card>
@@ -521,17 +598,29 @@ function DebtTab() {
       <div className="stat-row" style={{ marginTop: "var(--s4)" }}>
         <Stat label="Total debt" value={data.totalDebtFormatted ?? "—"} valueClassName="num-down" />
         <Stat label="Per citizen" value={data.debtPerCitizen ?? "—"} />
-        <Stat label="Per taxpayer" value={data.debtPerTaxpayer ?? "—"} />
         <Stat label="Debt / GDP" value={data.debtToGdpRatio ?? "—"} />
         <Stat label="Daily increase" value={data.dailyIncrease ?? "—"} />
-        <Stat label="Annual deficit" value={data.annualDeficit ?? "—"} />
-        <Stat label="Interest payments" value={data.interestPayments ?? "—"} />
+        <Stat label="Deficit (fiscal YTD)" value={data.annualDeficit ?? "—"} />
+        <Stat label="Interest payments (YTD)" value={data.interestPayments ?? "—"} />
       </div>
     </Card>
   );
 }
 
-// ── Calendar ──────────────────────────────────────────────────────────────
+// ── Economic Calendar ─────────────────────────────────────────────────────
+
+const CATEGORY_COLOR: Record<string, string> = {
+  Fed: "var(--accent)",
+  Inflation: "var(--warning)",
+  Jobs: "var(--positive)",
+  GDP: "#5b8def",
+  Other: "#a78bfa",
+};
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
 
 function CalendarTab() {
   const { data, isLoading, error, refetch } = useQuery({
@@ -542,39 +631,71 @@ function CalendarTab() {
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
   if (isLoading || !data) return <SkeletonList rows={10} />;
+
+  const byMonth = new Map<string, typeof data.events>();
+  for (const e of data.events) {
+    const key = e.date.slice(0, 7);
+    byMonth.set(key, [...(byMonth.get(key) ?? []), e]);
+  }
+  const months = [...byMonth.keys()].sort();
+
   return (
-    <div className="tbl-wrap">
-      <table className="tbl">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Time</th>
-            <th>Event</th>
-            <th>Impact</th>
-            <th className="num">Forecast</th>
-            <th className="num">Previous</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.events.map((e, i) => (
-            <tr key={i}>
-              <td className="cell-main">{e.date}</td>
-              <td className="cell-sub">{e.time ?? ""}</td>
-              <td style={{ whiteSpace: "normal" }}>{e.event}</td>
-              <td>
-                <span
-                  className="ui-badge"
-                  data-tone={(e.impact ?? "").toLowerCase() === "high" ? "sell" : "hold"}
-                >
-                  {e.impact ?? "—"}
-                </span>
-              </td>
-              <td className="num">{e.forecast ?? "—"}</td>
-              <td className="num">{e.previous ?? "—"}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--s5)" }}>
+      <FreshnessBar lastUpdated={data.lastUpdated} />
+      <ChipRow>
+        {(["Fed", "Inflation", "Jobs", "GDP", "Other"] as const).map((cat) => (
+          <span key={cat} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLOR[cat], display: "inline-block" }} />
+            {cat}
+          </span>
+        ))}
+      </ChipRow>
+      {months.map((month) => {
+        const [y, m] = month.split("-");
+        const label = `${MONTH_NAMES[Number(m) - 1]} ${y}`;
+        const events = [...byMonth.get(month)!].sort((a, b) => a.date.localeCompare(b.date));
+        return (
+          <Card key={month}>
+            <strong>{label}</strong>
+            <div style={{ display: "flex", flexDirection: "column", marginTop: "var(--s3)" }}>
+              {events.map((e, i) => {
+                const isHigh = (e.impact ?? "").toLowerCase() === "high";
+                const day = Number(e.date.slice(8, 10));
+                return (
+                  <div
+                    key={i}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "var(--s3)",
+                      padding: "var(--s3) 0",
+                      borderBottom: i < events.length - 1 ? "1px solid var(--border)" : "none",
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: "50%", background: CATEGORY_COLOR[e.category ?? "Other"] ?? CATEGORY_COLOR.Other, flexShrink: 0 }} />
+                    <span className="cell-sub" style={{ width: 84, flexShrink: 0 }}>
+                      {e.estimated ? e.dateLabel ?? "Est." : `${(MONTH_NAMES[Number(m) - 1] ?? "").slice(0, 3)} ${day}`}
+                    </span>
+                    <span style={{ flex: 1 }}>{e.event}</span>
+                    {(e.forecast || e.previous) && (
+                      <span className="cell-sub" style={{ flexShrink: 0 }}>
+                        {e.forecast ? `Fcst: ${e.forecast}` : ""} {e.previous ? `Prev: ${e.previous}` : ""}
+                      </span>
+                    )}
+                    <span
+                      className="ui-badge"
+                      data-tone={isHigh ? "sell" : "hold"}
+                      style={{ flexShrink: 0 }}
+                    >
+                      {e.impact ?? "—"}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        );
+      })}
     </div>
   );
 }
@@ -632,6 +753,266 @@ function CorrelationTab() {
           </tbody>
         </table>
       </div>
+    </>
+  );
+}
+
+// ── Adv Correlation (new, additive — see CorrelationTab above, untouched) ──
+
+const ADV_WINDOWS = ["1m", "3m", "6m", "1y"] as const;
+type AdvWindow = (typeof ADV_WINDOWS)[number];
+const ADV_WINDOW_LABELS: Record<AdvWindow, string> = { "1m": "1M", "3m": "3M", "6m": "6M", "1y": "1Y" };
+
+const ADV_CATEGORIES = ["All", "Commodities", "Indices", "Crypto", "Forex", "Stocks"] as const;
+type AdvCategory = (typeof ADV_CATEGORIES)[number];
+
+const ADV_CUSTOM_SYMBOLS_KEY = "monysa.advCorrelation.customSymbols";
+
+function loadCustomSymbols(): string[] {
+  try {
+    const raw = localStorage.getItem(ADV_CUSTOM_SYMBOLS_KEY);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function AdvCorrelationTab() {
+  const [window_, setWindow] = useState<AdvWindow>("3m");
+  const [category, setCategory] = useState<AdvCategory>("All");
+  const [customSymbols, setCustomSymbols] = useState<string[]>(() => loadCustomSymbols());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [drillDown, setDrillDown] = useState<{ a: string; b: string } | null>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  const persistCustomSymbols = (next: string[]) => {
+    setCustomSymbols(next);
+    try {
+      localStorage.setItem(ADV_CUSTOM_SYMBOLS_KEY, JSON.stringify(next));
+    } catch {
+      // localStorage unavailable (private mode etc.) — in-memory state still works this session
+    }
+  };
+
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["adv-correlation", window_],
+    queryFn: () => api.getAdvCorrelation(window_),
+    staleTime: 900_000,
+  });
+
+  const { data: searchResults } = useQuery({
+    queryKey: ["search", debouncedQuery],
+    queryFn: () => api.search(debouncedQuery),
+    enabled: debouncedQuery.length >= 2,
+    staleTime: 5 * 60_000,
+  });
+
+  const { data: customData, isFetching: customLoading } = useQuery({
+    queryKey: ["adv-correlation-custom", customSymbols, window_],
+    queryFn: () => api.getAdvCorrelationCustom(customSymbols, window_),
+    enabled: customSymbols.length > 0,
+    staleTime: 45 * 60_000,
+  });
+
+  const { data: historyData, isLoading: historyLoading } = useQuery({
+    queryKey: ["adv-correlation-history", drillDown?.a, drillDown?.b],
+    queryFn: () => api.getAdvCorrelationHistory(drillDown!.a, drillDown!.b),
+    enabled: !!drillDown,
+    staleTime: 900_000,
+  });
+
+  const visibleIdx = useMemo(() => {
+    if (!data) return [];
+    return data.symbols
+      .map((s, i) => i)
+      .filter((i) => category === "All" || data.symbols[i]!.category === category);
+  }, [data, category]);
+
+  const addCustomSymbol = (symbol: string) => {
+    if (customSymbols.includes(symbol) || customSymbols.length >= 12) return;
+    persistCustomSymbols([...customSymbols, symbol]);
+    setSearchQuery("");
+    setDebouncedQuery("");
+  };
+  const removeCustomSymbol = (symbol: string) => {
+    persistCustomSymbols(customSymbols.filter((s) => s !== symbol));
+  };
+
+  if (error) return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
+  if (isLoading || !data) return <SkeletonList rows={10} />;
+
+  return (
+    <>
+      <FreshnessBar lastUpdated={data.lastUpdated} />
+      {!!data.staleSymbols?.length && (
+        <div className="ui-freshness" style={{ color: "var(--warning, #e6952a)" }}>
+          Data delayed for: {data.staleSymbols.join(", ")}
+        </div>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--s3)", marginBottom: "var(--s4)" }}>
+        <ChipRow>
+          {ADV_WINDOWS.map((w) => (
+            <Chip key={w} label={ADV_WINDOW_LABELS[w]} active={window_ === w} onClick={() => setWindow(w)} />
+          ))}
+        </ChipRow>
+        <ChipRow>
+          {ADV_CATEGORIES.map((c) => (
+            <Chip key={c} label={c} active={category === c} onClick={() => setCategory(c)} />
+          ))}
+        </ChipRow>
+      </div>
+
+      <div className="tbl-wrap">
+        <table className="tbl" style={{ fontSize: "var(--fs-sm)" }}>
+          <thead>
+            <tr>
+              <th />
+              {visibleIdx.map((i) => (
+                <th key={data.symbols[i]!.symbol} className="num" title={data.symbols[i]!.name}>
+                  {data.symbols[i]!.flag || data.symbols[i]!.symbol}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {visibleIdx.map((i) => {
+              const row = data.symbols[i]!;
+              return (
+                <tr key={row.symbol}>
+                  <td className="cell-main" title={row.name}>
+                    {row.flag ?? ""} {row.symbol}
+                  </td>
+                  {visibleIdx.map((j) => (
+                    <td
+                      key={j}
+                      className="num"
+                      style={{
+                        background: corrBg(data.matrix[i]?.[j] ?? 0),
+                        color: "var(--text-primary)",
+                        cursor: i === j ? "default" : "pointer",
+                      }}
+                      onClick={() => {
+                        if (i !== j) setDrillDown({ a: row.symbol, b: data.symbols[j]!.symbol });
+                      }}
+                    >
+                      {(data.matrix[i]?.[j] ?? 0).toFixed(2)}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <Card className="adv-corr-custom" style={{ marginTop: "var(--s5)" }}>
+        <div style={{ marginBottom: "var(--s3)", fontWeight: 600 }}>Your Custom Picks</div>
+        <input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search any symbol to add (max 12)…"
+          style={{ width: "100%", padding: "var(--s3)", marginBottom: "var(--s3)" }}
+        />
+        {debouncedQuery.length >= 2 && (searchResults?.results?.length ?? 0) > 0 && (
+          <div style={{ marginBottom: "var(--s3)", display: "flex", flexDirection: "column", gap: 4 }}>
+            {searchResults!.results.slice(0, 8).map((r) => (
+              <div
+                key={`${r.symbol}-${r.exchange ?? ""}`}
+                onClick={() => addCustomSymbol(r.symbol)}
+                style={{ cursor: "pointer", padding: "4px 0" }}
+              >
+                <span style={{ color: "var(--text-primary)" }}>{r.symbol}</span>{" "}
+                <span style={{ color: "var(--text-faint)" }}>{r.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <ChipRow>
+          {customSymbols.map((s) => (
+            <Chip key={s} label={`${s} ✕`} onClick={() => removeCustomSymbol(s)} />
+          ))}
+        </ChipRow>
+        {customSymbols.length > 0 && (customLoading || !customData) && <SkeletonList rows={3} />}
+        {customData && (
+          <div className="tbl-wrap" style={{ marginTop: "var(--s3)" }}>
+            <table className="tbl" style={{ fontSize: "var(--fs-sm)" }}>
+              <thead>
+                <tr>
+                  <th />
+                  {customData.symbols.map((s) => (
+                    <th key={s.symbol} className="num" title={s.name}>
+                      {s.flag || s.symbol}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {customData.symbols.map((row, i) => (
+                  <tr key={row.symbol}>
+                    <td className="cell-main" title={row.name}>
+                      {row.flag ?? ""} {row.symbol}
+                    </td>
+                    {(customData.matrix[i] ?? []).map((v, j) => (
+                      <td key={j} className="num" style={{ background: corrBg(v), color: "var(--text-primary)" }}>
+                        {v.toFixed(2)}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {drillDown && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.6)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+          onClick={() => setDrillDown(null)}
+        >
+          <Card style={{ width: "min(640px, 90vw)" }}>
+            <div
+              style={{ display: "flex", justifyContent: "space-between", marginBottom: "var(--s3)" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ fontWeight: 600 }}>
+                {drillDown.a} vs {drillDown.b} — 30d rolling correlation
+              </div>
+              <button type="button" onClick={() => setDrillDown(null)}>
+                ✕
+              </button>
+            </div>
+            <div onClick={(e) => e.stopPropagation()}>
+              {historyLoading || !historyData ? (
+                <SkeletonList rows={4} />
+              ) : (
+                <MultiLineChart
+                  series={[
+                    {
+                      label: `${drillDown.a} vs ${drillDown.b}`,
+                      color: "#00d4aa",
+                      points: historyData.points.map((p) => ({ time: p.date, value: p.r })),
+                    },
+                  ]}
+                />
+              )}
+            </div>
+          </Card>
+        </div>
+      )}
     </>
   );
 }

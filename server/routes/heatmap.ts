@@ -787,7 +787,7 @@ export async function fetchYahooQuoteSummary(
   return null;
 }
 
-async function fetchYahooQuoteSummaryBatch(
+export async function fetchYahooQuoteSummaryBatch(
   symbols: string[],
   opts: { includeAssetProfile?: boolean } = {},
 ): Promise<Map<string, YahooQuote>> {
@@ -810,4 +810,102 @@ async function fetchYahooQuoteSummaryBatch(
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
   return out;
+}
+
+// ── ETF fund data (holdings, sector weights, expense ratio, AUM) ────────────
+// Separate from fetchYahooQuoteSummary — different Yahoo modules, only
+// called for the ETF universe. Reuses the same module-scoped crumb/cookie
+// state via refreshYahooCrumb().
+
+export interface EtfHolding {
+  symbol: string | null;
+  name: string | null;
+  weightPct: number | null;
+}
+
+export interface EtfSectorWeighting {
+  sector: string;
+  weightPct: number | null;
+}
+
+export interface EtfFundData {
+  expenseRatio: number | null;
+  aum: number | null;
+  family: string | null;
+  holdings: EtfHolding[];
+  sectorWeightings: EtfSectorWeighting[];
+}
+
+function titleCaseSectorKey(key: string): string {
+  if (key === "realestate") return "Real Estate";
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+export async function fetchYahooFundData(symbol: string): Promise<EtfFundData | null> {
+  if (!yahooCrumb) await refreshYahooCrumb();
+  const modules = "topHoldings,fundProfile,defaultKeyStatistics";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(symbol)}?modules=${modules}&crumb=${encodeURIComponent(yahooCrumb ?? "")}`;
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        headers: { "User-Agent": YF_UA, "Cookie": yahooCookies ?? "" },
+        signal: AbortSignal.timeout(10_000),
+      });
+    } catch {
+      return null;
+    }
+    if ((resp.status === 401 || resp.status === 403) && attempt < 2) {
+      yahooCrumb = null;
+      await refreshYahooCrumb();
+      continue;
+    }
+    if (resp.status === 429) {
+      await new Promise(r => setTimeout(r, 1_000 * (attempt + 1)));
+      continue;
+    }
+    if (!resp.ok) return null;
+    const body = await resp.json() as any;
+    const result = body?.quoteSummary?.result?.[0];
+    const topHoldings = result?.topHoldings;
+    const fundProfile = result?.fundProfile;
+    const keyStats = result?.defaultKeyStatistics;
+    if (!topHoldings && !fundProfile) return null;
+    const rawNum = (v: any): number | null =>
+      typeof v?.raw === "number" ? v.raw : null;
+    const holdings: EtfHolding[] = Array.isArray(topHoldings?.holdings)
+      ? topHoldings.holdings.map((h: any) => ({
+          symbol: typeof h?.symbol === "string" ? h.symbol : null,
+          name: typeof h?.holdingName === "string" ? h.holdingName : null,
+          weightPct: rawNum(h?.holdingPercent) != null ? rawNum(h.holdingPercent)! * 100 : null,
+        }))
+      : [];
+    const sectorWeightings: EtfSectorWeighting[] = Array.isArray(topHoldings?.sectorWeightings)
+      ? topHoldings.sectorWeightings.flatMap((entry: Record<string, any>) =>
+          Object.entries(entry).map(([key, v]) => ({
+            sector: titleCaseSectorKey(key),
+            weightPct: rawNum(v) != null ? rawNum(v)! * 100 : null,
+          })),
+        )
+      : [];
+    const expenseRatioRaw = rawNum(fundProfile?.feesExpensesInvestment?.annualReportExpenseRatio);
+    return {
+      expenseRatio: expenseRatioRaw != null ? expenseRatioRaw * 100 : null,
+      aum: rawNum(keyStats?.totalAssets),
+      family: typeof fundProfile?.family === "string" ? fundProfile.family : null,
+      holdings,
+      sectorWeightings,
+    };
+  }
+  return null;
+}
+
+export function bustHeatmapCache() {
+  heatmapCache = null;
+  assetsCacheMap.clear();
+}
+
+export function bustTreemapCache() {
+  treemapDataCache.clear();
+  constituentCache.clear();
 }

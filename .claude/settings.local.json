@@ -285,7 +285,14 @@
       "Bash(python3 -c \"import json,sys; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")",
       "Bash(dart --version)",
       "Bash(dart pub *)",
-      "Bash(firebase --version)"
+      "Bash(firebase --version)",
+      "Bash(npm i *)",
+      "Bash(codegraph install *)",
+      "Bash(cat ~/.claude.json 2>/dev/null | python3 -m json.tool 2>/dev/null | grep -A10 codegraph)",
+      "Read(//Users/apoorvjin/**)",
+      "Bash(lsof -ti:5001,5175,5176,5177)",
+      "Bash(curl -s https://raw.githubusercontent.com/harunsaglam85/spy-0dte-trader/main/hermes_system/systemd/hermes-engine-alert.service)",
+      "Bash(curl -s http://localhost:5001/api/volatility/vix-term-structure)"
     ],
     "additionalDirectories": [
       "/Users/apoorvjin/.claude/skills",

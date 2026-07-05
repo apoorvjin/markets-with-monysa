@@ -547,7 +547,14 @@ class _CountryRow extends StatelessWidget {
       return c.positive;
     }
 
+    Color scoreColor(double score) {
+      if (score >= 70) return c.danger;
+      if (score >= 40) return c.warning;
+      return c.positive;
+    }
+
     final color = rateColor(country.tariffRate);
+    final impactScore = country.impactScore;
     return InkWell(
       onTap: () => context.push('/country/${country.countryCode}'),
       child: Container(
@@ -598,6 +605,23 @@ class _CountryRow extends StatelessWidget {
                     color: color, fontWeight: FontWeight.w700),
               ),
             ),
+            if (impactScore != null) ...[
+              const SizedBox(width: AppSpacing.s2),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: scoreColor(impactScore).withAlpha(30),
+                  borderRadius: BorderRadius.circular(AppRadius.xs),
+                ),
+                child: Text(
+                  'Impact ${impactScore.toStringAsFixed(0)}',
+                  style: AppTypography.xs.copyWith(
+                      color: scoreColor(impactScore),
+                      fontWeight: FontWeight.w700),
+                ),
+              ),
+            ],
             const SizedBox(width: AppSpacing.s2),
             Icon(Icons.chevron_right,
                 color: c.textMuted, size: 18),

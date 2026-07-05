@@ -1,5 +1,7 @@
 import type { Express } from "express";
 import { fetchYahooPrice, fetchRangeData } from "./shared";
+import { adminFirestore } from "../lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 // Volatility: Asset class response during geopolitical crises
 const VOLATILITY_ASSETS = [
@@ -61,6 +63,9 @@ const VOLATILITY_ASSETS = [
 
 const volatilityCache: Map<string, { data: any; timestamp: number }> = new Map();
 const VOLATILITY_CACHE_DURATION = 10 * 60 * 1000;
+
+const vixTermStructureCache: Map<string, { data: any; timestamp: number }> = new Map();
+const VIX_TERM_STRUCTURE_TTL = 30 * 60 * 1000;
 
 // AI Crisis Briefing
 const briefingCache: Map<string, { briefing: string; generatedAt: string; timestamp: number }> = new Map();
@@ -148,6 +153,17 @@ export function registerVolatilityRoutes(app: Express): void {
       Math.round((dxyPct1M || 0) * 10),
       vixBand || "unknown",
     ].join("-");
+
+    // Track the button tap regardless of cache hit/miss
+    const _db = adminFirestore();
+    const _deviceId = req.headers["x-device-id"] as string | undefined;
+    if (_db && _deviceId) {
+      _db.doc(`ai_usage/${_deviceId}`).set({
+        openaiCalls: FieldValue.increment(1),
+        lastSeen: new Date().toISOString(),
+        routes: { "/api/volatility/briefing": FieldValue.increment(1) },
+      }, { merge: true }).catch(() => {});
+    }
 
     const cached = briefingCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < BRIEFING_CACHE_DURATION) {
@@ -313,4 +329,63 @@ export function registerVolatilityRoutes(app: Express): void {
       return res.status(503).json({ error: "Fear & Greed data temporarily unavailable" });
     }
   });
+
+  // GET /api/volatility/vix-term-structure
+  // Returns VIX spot vs VIX3M (3-month implied vol) ratio with regime label and
+  // a composite Options Environment Score (0–10). All fields nullable — ^VIX3M
+  // is occasionally unavailable from Yahoo Finance outside US hours.
+  app.get("/api/volatility/vix-term-structure", async (_req, res) => {
+    res.set("Cache-Control", "public, max-age=1800, stale-while-revalidate=3600");
+    const cacheKey = "vix-ts-v1";
+    const cached = vixTermStructureCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < VIX_TERM_STRUCTURE_TTL) {
+      return res.json({ ...cached.data, lastUpdated: new Date(cached.timestamp).toISOString() });
+    }
+    try {
+      const [vixData, vix3mData] = await Promise.all([
+        fetchYahooPrice("^VIX"),
+        fetchYahooPrice("^VIX3M"),
+      ]);
+      const vix   = vixData?.price   ?? null;
+      const vix3m = vix3mData?.price ?? null;
+      const ratio = vix && vix3m ? Math.round((vix3m / vix) * 1000) / 1000 : null;
+
+      type TermLabel = "strong_contango" | "contango" | "flat" | "backwardation";
+      let termLabel: TermLabel | null = null;
+      if (ratio !== null) {
+        termLabel =
+          ratio >= 1.10 ? "strong_contango" :
+          ratio >= 1.02 ? "contango" :
+          ratio <= 0.97 ? "backwardation" :
+          "flat";
+      }
+
+      // vixScore: 0–5, lower VIX = more favorable for options sellers
+      const vixScore =
+        vix == null ? 2.5 :
+        vix < 15 ? 5 : vix < 20 ? 4 : vix < 25 ? 3 : vix < 30 ? 2 : vix < 35 ? 1 : 0;
+
+      // termScore: 0–5, contango = favorable (futures premium = decay income for sellers)
+      const termScore =
+        termLabel == null ? 2.5 :
+        termLabel === "strong_contango" ? 5 :
+        termLabel === "contango"        ? 3.5 :
+        termLabel === "flat"            ? 2.5 : 1;
+
+      const optionsEnvScore = Math.round((vixScore + termScore) * 10) / 10;
+      const optionsEnvLabel =
+        optionsEnvScore >= 7 ? "Favorable" :
+        optionsEnvScore >= 4 ? "Caution" : "Unfavorable";
+
+      const responseData = { vix, vix3m, ratio, termLabel, optionsEnvScore, optionsEnvLabel };
+      vixTermStructureCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+      return res.json({ ...responseData, lastUpdated: new Date().toISOString() });
+    } catch (err) {
+      console.error("[VIX Term Structure]", err);
+      return res.status(503).json({ error: "VIX term structure data temporarily unavailable" });
+    }
+  });
 }
+
+export function bustBriefingCache()   { briefingCache.clear(); }
+export function bustFearGreedCache()  { fearGreedCache = null; }

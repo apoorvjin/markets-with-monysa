@@ -14,7 +14,7 @@
 Five user-facing capabilities:
 - **Live Markets** — 46 global indices, 23 commodities, 44 forex pairs with candlestick charts, plus a market-cap-weighted treemap heatmap (9 indices: S&P 500 / NASDAQ 100 / Dow Jones / Russell 2000 / FTSE 100 / DAX 40 / Nikkei 225 / Hang Seng / Nifty 50)
 - **AI Trading Signals** — BUY / HOLD / SELL with entry, SL, TP, and reasoning for 49+ assets across three strategies (S1 / S2 / S3)
-- **Investing** — Best Setups, Multibaggers, Congress/House trades, Presidential (OGE), Smart Money
+- **Investing** — Best Setups, Multibaggers, Presidential (OGE), Smart Money (lobbying + insider), ETF Explorer (holdings, sector weights, expense ratio, AUM, RRG rotation). Congress/House trade tracking was removed 2026-07 — see Known Pitfalls.
 - **Tariff Exposure** — US tariff impact ranked across 113+ countries with sector breakdown (browsable country list, not AI gated)
 - **Macro** — Market Stress Meter, VIX, Fear & Greed, yield curve, sector rotation (RRG), correlation matrix, crisis playbook, AI briefing, US Debt
 
@@ -35,6 +35,9 @@ server/
     billing.ts          # POST /api/billing/webhook (RevenueCat)
     economy.ts          # search, usa-debt, country-data, bonds, sectors (with rsRatio/rsMomentum), crises, tariffs,
                        #   yield-curve-history (/api/economy/yield-curve-history), economy events (/api/economy/events)
+                       #   also exports getEtfRotationQuadrants() — generalized RRG math reused by etf.ts's rotation endpoint
+    etf.ts              # GET /api/etf/list, GET /api/etf/:symbol/profile, GET /api/etf/rotation — free, no plan gate.
+                       #   ETF universe defined in data/etf_universe.ts (42 ETFs, 7 categories)
     exposure.ts         # GET /api/exposure/analysis (Anthropic, plan-gated: Insight+)
     heatmap.ts          # GET /api/heatmap, GET /api/heatmap/assets, GET /api/heatmap/treemap (Pro)
                        #   Supports 9 indices; FX-normalises non-USD caps to USD for tile sizing
@@ -49,6 +52,10 @@ server/
     index_constituents.ts  # Hardcoded symbol lists for DJI 30 / NASDAQ 100 / FTSE 100 / Nifty 50 /
                            # Russell 2000 / DAX 40 / Nikkei 225 / Hang Seng (used by /api/heatmap/treemap).
                            # S&P 500 constituents fetched live from public CSV.
+    etf_universe.ts        # ETF_UNIVERSE: 42 curated ETFs across 7 categories (sector/broad/international/
+                           # fixed_income/commodity/thematic/leveraged). Sector category imports SECTOR_ETFS
+                           # from routes/economy.ts rather than duplicating it. ETF_ROTATION_CATEGORIES limits
+                           # the RRG rotation view to equity-like categories (sector/broad/international/thematic).
 
   lib/                  # Shared server utilities
     chart-renderer.ts   # Per-device chart-provider preference middleware
@@ -144,7 +151,7 @@ Three coordinated caching layers:
 | `GET /api/volatility/assets` | Crisis assets + sparklines | 10m |
 | `POST /api/volatility/briefing` | GPT-4o-mini macro stress analysis | 30m |
 | `GET /api/volatility/fear-greed` | CNN Fear & Greed index | varies |
-| `GET /api/usa-debt` | Live US debt from Treasury API | 12h |
+| `GET /api/usa-debt` | US debt clock — totalDebt/dailyIncrease/debtGrowth20yr live (Treasury); deficit/spending/interest live but fiscal-YTD, not annual (Treasury MTS); gdp/population live (World Bank); foreignHolders kept but dated (no live source — see Known Pitfalls); ssUnfunded/medicareUnfunded/debtPerTaxpayer removed (no live source, see Known Pitfalls) | 6h |
 | `GET /api/bonds` | US Treasury yield curve (3m/5y/10y/30y + spread + status) | 30m |
 | `GET /api/sectors` | 11 sector ETF performance (1W/1M change %) | 15m |
 | `GET /api/search?q=QUERY` | Yahoo Finance symbol/name search | none |
@@ -158,13 +165,16 @@ Three coordinated caching layers:
 | `GET /api/heatmap/treemap` | Market-cap-weighted treemap for an index. `?index=sp500\|ndx\|dji\|russell2000\|ftse100\|dax40\|nikkei225\|hsi\|nifty50`, `&limit=N` (UI sends 500), `&timeframe=1d\|1w\|1m\|ytd`. FX-normalised to USD. Plan-gated: Pro+. | constituents 24h + quotes 5m |
 | `GET /api/exposure/analysis` | AI tariff exposure analysis (Insight+ plan) | 24h |
 | `POST /api/billing/webhook` | RevenueCat subscription event webhook | — |
-| `GET /api/quiver/congress` | Top-10 congress buys by disclosed amount (FMP → Quiver → snapshot) | 4h |
-| `GET /api/quiver/lobbying` | Top-10 by QoQ lobbying spend growth (Senate LDA) | 4h |
-| `GET /api/quiver/insider` | Top-10 by insider buy count — 90-day window (SEC EDGAR) | 4h |
-| `GET /api/quiver/congress-trades` | Raw congress trades last 365 days (?ticker=&chamber=&type=) (FMP) | 4h |
-| `GET /api/house-trades` | House PTR trades — all history via FMP (requires FMP_API_KEY) | 4h |
-| `GET /api/oge/trump-transactions` | Presidential transactions ≥ $100K from OGE Form 278-T PDFs | 24h |
+| `GET /api/quiver/congress` | Top-10 congress buys (FMP → Quiver, 500 if both fail — no hardcoded snapshot). **Not called by either client since 2026-07** (Congress tab removed — both sources dead); route kept in case a working source appears. | 4h |
+| `GET /api/quiver/lobbying` | Top-10 by QoQ lobbying spend growth (Senate LDA — confirmed live) | 4h |
+| `GET /api/quiver/insider` | Top-10 by insider buy count — 90-day window (SEC EDGAR — confirmed live) | 4h |
+| `GET /api/quiver/congress-trades` | Raw congress trades last 365 days (?ticker=&chamber=&type=) (FMP/Quiver, both dead). **Not called by either client since 2026-07.** | 4h |
+| `GET /api/house-trades` | House PTR trades via FMP (requires FMP_API_KEY, plan doesn't include this data — returns empty). **Not called by either client since 2026-07.** | 4h |
+| `GET /api/oge/trump-transactions` | Presidential transactions ≥ $100K from OGE Form 278-T PDFs | 7d |
 | `POST /api/oge/trump-transactions/refresh` | Force-bust OGE cache + re-run PDF pipeline | — |
+| `GET /api/etf/list` | ETF Explorer list. `?category=sector\|broad\|international\|fixed_income\|commodity\|thematic\|leveraged` (omit for all 42). Quote via `fetchYahooPrice`. No AI signal (removed — not shown in UI). Free, no plan gate. | 10m |
+| `GET /api/etf/:symbol/profile` | ETF fund data — holdings, sector weights, expense ratio, AUM. Via `fetchYahooFundData()` (separate Yahoo `topHoldings`/`fundProfile`/`defaultKeyStatistics` modules, does not touch `fetchYahooQuoteSummary`). | 24h |
+| `GET /api/etf/rotation` | RRG rotation view for sector/broad/international/thematic ETFs (leveraged/fixed_income/commodity excluded — not meaningful on an SPX-relative RRG). Via `getEtfRotationQuadrants()` in `economy.ts` (separate from `getSectorQuadrants()` — does not touch `/api/sectors`). | 15m |
 
 ### Exact API Response Shapes
 
@@ -184,7 +194,8 @@ GET /api/sectors              → { sectors: [{ emoji, name, changePercent, perf
                                   rsRatio/rsMomentum are SPX-relative Relative Rotation Graph values (centred at 100)
 GET /api/crises               → { crises: [...], dataAsOf: CRISIS_DATA_REVIEWED_AT (e.g. "June 2026"), lastUpdated: ISO }
 GET /api/tariffs              → { countries: [CountryTariff], dataAsOf: "April 2025", lastUpdated: "2025-04-09T00:00:00.000Z", source: string }
-                                  CountryTariff: { countryName, countryCode, tariffRate, sectors: [SectorTariff], debtToUSA: [DebtDetail], laymanExplanation, lastUpdated }
+                                  CountryTariff: { countryName, countryCode, tariffRate, sectors: [SectorTariff], debtToUSA: [DebtDetail], laymanExplanation, lastUpdated, impactScore }
+                                  impactScore: 0-100, server-computed in computeTariffImpactScore() (economy.ts) — rate (60pts) + sector breadth (20pts) + debtToUSA USD exposure capped at $1T (20pts). Not stored in tariffs.json.
                                   SectorTariff: { sectorName, tariffRate, sourceURL }
                                   DebtDetail: { category, amountBillions, notes }
                                   Data file: server/data/tariffs.json — update and bump TARIFFS_DATA_AS_OF in economy.ts to refresh without an app release
@@ -205,14 +216,28 @@ GET /api/heatmap/treemap      → { index, timeframe, limit, total, stocks: [Tre
                                   effectiveMarketCap = marketCapUsd ?? marketCap — use this for tile sizing.
                                   marketState: "REGULAR"|"PRE"|"POST"|"POSTPOST" — from lead stock in index.
 GET /api/exposure/analysis    → { comps: [{ name, ticker, revenueExposurePct, earningsImpactPct }], summary }
+GET /api/usa-debt             → { recordDate, totalDebt, totalDebtFormatted, debtPerCitizen, debtToGdpRatio,
+                                  dailyIncrease, debtGrowth20yr, fiscalYtdLabel, annualDeficit, revenueVsSpending,
+                                  interestPayments, foreignHolders: {asOf, japan, china, uk, canada, india, totalForeign},
+                                  spending: {socialSecurity, medicareMedicaid, defense, netInterest, everythingElse} | null }
+                                  Any field can be null if its live source (Treasury or World Bank) failed — client must
+                                  fall back to "—", never re-hardcode a number. annualDeficit/revenueVsSpending/interestPayments/
+                                  spending are fiscal-year-to-date (see fiscalYtdLabel), not full-year, despite the field names.
+                                  debtPerTaxpayer, ssUnfunded, medicareUnfunded were removed entirely — no live source exists
+                                  (taxpayer count and SS/Medicare unfunded liabilities are annual actuarial-report figures with
+                                  no API). Do not re-add them as hardcoded values.
 GET /api/quiver/congress      → { items: [QuiverItem], meta: { label, rebalance }, lastUpdated }
 GET /api/quiver/lobbying      → { items: [QuiverItem], meta: { label, rebalance }, lastUpdated }
 GET /api/quiver/insider       → { items: [QuiverItem], meta: { label, rebalance }, lastUpdated }
-                                  QuiverItem: { symbol, name, price, changePercent, weight, rank, badge, badgeLabel }
+                                  QuiverItem: { symbol, name, price, changePercent, weight, rank, badge, badgeLabel, lobbyingGrowth? }
+                                  lobbyingGrowth (only populated on /api/quiver/congress items): the ticker's QoQ lobbying badge
+                                  (e.g. "+42%") when it also appears in the current /api/quiver/lobbying top-10 — cross-link computed
+                                  via getLobbyingBadgeMap() in quiver.ts, null otherwise. Not populated on the /lobbying or /insider responses themselves.
 GET /api/quiver/congress-trades → { trades: [CongressTrade], total, lastUpdated }
                                   Supports ?memberName= filter to get a single member's trades.
                                   CongressTrade: { memberName, chamber, ticker, name?(company), assetDescription, type("buy"|"sell"),
-                                                  transactionDate, filingDate, amount, amountMidpoint?, party?, state? }
+                                                  transactionDate, filingDate, amount, amountMidpoint?, party?, state?, lobbyingGrowth? }
+                                  lobbyingGrowth: same cross-link join as above, applied per-trade by ticker.
 GET /api/house-trades         → { trades: [HouseTrade], total, lastUpdated }
                                   HouseTrade fields mirror FMP response (disclosure_year, disclosure_date,
                                   transaction_date, owner, ticker, asset_description, type, amount,
@@ -222,6 +247,16 @@ GET /api/oge/trump-transactions → { transactions: [OgeTransaction], total, las
                                                     date(YYYY-MM-DD), amount("$X - $Y"),
                                                     amountMidpoint, filingDate, source(PDF filename) }
                                   loading=true when the server PDF pipeline is still running.
+GET /api/etf/list             → { category, items: [EtfItem], lastUpdated }
+                                  EtfItem: { symbol, name, emoji, category, risk("leveraged"|null),
+                                             price, changePercent, preMarketPrice, preMarketChangePercent }
+GET /api/etf/:symbol/profile  → { symbol, expenseRatio, aum, family, holdings: [EtfHolding],
+                                  sectorWeightings: [EtfSectorWeighting], lastUpdated }
+                                  EtfHolding: { symbol, name, weightPct }
+                                  EtfSectorWeighting: { sector, weightPct }
+GET /api/etf/rotation         → { items: [EtfRotationItem], lastUpdated }
+                                  EtfRotationItem: { symbol, name, emoji, category, rsRatio, rsMomentum,
+                                                     quadrant("Leading"|"Improving"|"Weakening"|"Lagging"|null) }
 ```
 
 Plan-gated endpoints return `403 { error: "...", code: "PLAN_REQUIRED" }` when the device lacks entitlement.
@@ -306,15 +341,12 @@ moby/lib/
                                    # dayHigh/Low, 52wHigh/Low, sparkline, pre/post market fields,
                                    # nativeCurrency, marketCapUsd, fxRateUsed, effectiveMarketCap getter),
                                    # TreemapHeatmapData (index, timeframe, limit, total, stocks, lastUpdated, marketState)
-      house_trade.dart             # HouseTradeRecord, EnrichedHouseTrade, HouseTradesOverview, TopTrader, TopTicker,
-                                   # HouseTradesResult, HouseTradeFilter + filterTrades/buildOverview/buildTopTraders helpers
     repositories/
       markets_repository.dart      # fetchIndices, fetchCommodities, fetchForex, fetchCotMetals
       trading_repository.dart      # fetchQuotes, fetchSignal, fetchHistory, fetchBacktest, fetchNews, searchStocks
       volatility_repository.dart   # fetchVolatilityAssets, fetchBriefing
       debt_repository.dart         # fetchDebt
       heatmap_repository.dart      # fetchHeatmap, fetchAssets(category), fetchTreemap(index, limit) — client-side 15m/30m/5m TTLs
-      house_trades_repository.dart # fetchHouseTrades — fetches /api/house-trades, returns HouseTradesResult
     sources/
       tariffs_data.dart            # TariffsData singleton — fetches /api/tariffs, hydrates from DiskCache on cold start,
                                    # 24h in-memory TTL refresh. `lastUpdated` / `dataAsOf` populated after first load().
@@ -330,9 +362,13 @@ moby/lib/
       trading_screen.dart
       tenx_backtest_screen.dart    # 10X scanner backtest viewer (/trading/10x-backtest?version=&type=)
     investing/
-      investing_screen.dart        # 7 sub-tabs: Exposure / Dashboard / Multibaggers / Presidential / Congress / Smart $ / House Trades
+      investing_screen.dart        # 7 sub-tabs: Exposure / Dashboard / Multibaggers / Presidential / Smart $ / Earnings Calendar / ETFs
+                                   # (Congress + House Trades removed 2026-07 — dead data sources, see Known Pitfalls)
       multibaggers_screen.dart     # Multibaggers screen (/trading/multibaggers?country=us); default country=US; country-aware stock search
-      house_trades_tab.dart        # HouseTradesTab — uses HouseTradesRepository + house_trade.dart models
+      etf_explorer_tab.dart        # EtfExplorerTab — category chips + List/Rotation toggle. List: tap row → /asset/:symbol;
+                                   # info icon → bottom sheet (EtfProfilePanel-equivalent) with holdings/sector weights/expense
+                                   # ratio/AUM. Rotation: quadrant-grouped list (Leading/Improving/Weakening/Lagging), reusing
+                                   # /api/etf/rotation. Uses etf.dart models + EtfRepository (DiskCache pattern).
     exposure/exposure_screen.dart  # ExposureScreen — embedded as "Exposure" tab inside InvestingScreen
     volatility/volatility_screen.dart  # MacroScreen (class name!) — /macro route; also still has old VolatilityScreen import path
     usa_debt/usa_debt_screen.dart  # UsaDebtScreen — embedded inside MacroScreen tabs
@@ -407,14 +443,13 @@ REDIRECTS (app_router.dart handles these automatically):
 - Signals: type filter ALL/Commodities/Indices/Forex/Crypto + strategy selector **S1–S9** (`TradingStrategy` enum is s1…s9; S9 "Silver Liquidity Sweep" filters list to SI=F only). Info icon opens strategy explainer sheet.
 - Alerts: badge count on tab icon when alerts are active.
 
-**Investing** (`/investing`): **8** scrollable sub-tabs — **Exposure** (default) / Dashboard / Multibaggers / Presidential / Congress / Smart $ / House Trades / **Earnings** (`earnings_calendar_tab.dart` — `/api/trading/earnings-calendar?days=`, items have `symbol/name/sector/earningsDate`).
-- Exposure: embeds `ExposureBody` from `exposure_screen.dart` — shows browsable/searchable/sortable list of 113+ countries with their US tariff rates (from `/api/tariffs`). Sort options: Market Size (GDP proxy, default) / Rate / Name. **Free, no plan gate.** This is tab index 0 — the default landing tab. (The AI analysis endpoint `/api/exposure/analysis` still exists on the server, plan-gated Insight+, but the Flutter tab no longer calls it.)
+**Investing** (`/investing`): **7** scrollable sub-tabs — **Exposure** (default) / Dashboard / Multibaggers / Presidential / Smart $ / **Earnings Calendar** (`earnings_calendar_tab.dart` — `/api/trading/earnings-calendar?days=`, items have `symbol/name/sector/earningsDate`) / **ETFs**. (Congress and House Trades tabs were removed 2026-07 — see Known Pitfalls.)
+- Exposure: embeds `ExposureBody` from `exposure_screen.dart` — shows browsable/searchable/sortable list of 113+ countries with their US tariff rates and `impactScore` (from `/api/tariffs`). Sort options: Market Size (GDP proxy, default) / Rate / Name. **Free, no plan gate.** This is tab index 0 — the default landing tab. (The AI analysis endpoint `/api/exposure/analysis` still exists on the server, plan-gated Insight+, but the Flutter tab no longer calls it.)
 - Dashboard: Best Setups (plan-gated: Pro+).
 - Multibaggers: full-screen push to `/trading/multibaggers?country=us` (default US). Country chips: 🇺🇸 US / 🇮🇳 India / 🇬🇧 UK / 🇯🇵 Japan / 🇭🇰 HK / 🇨🇳 China / 🇪🇺 Euronext. Has country-aware stock search (search bar filters results by country via Yahoo Finance symbol suffix + exchange code).
-- Presidential: OGE Form 278-T transactions ≥ $100K — fetches `/api/oge/trump-transactions`. **Presidential is before Congress.**
-- Congress: QuiverItem congress top-10 buys.
-- Smart $: QuiverItem insider + lobbying.
-- House Trades: House PTR trades from FMP — uses `HouseTradesRepository` + `house_trade.dart` models.
+- Presidential: OGE Form 278-T transactions ≥ $100K — fetches `/api/oge/trump-transactions`.
+- Smart $: `_QuiverTab` — 2 strategies (was 3; Congress Buys removed 2026-07): Lobbying Growth (S1) + Insider Buys (S2), both QuiverItem lists. Lobbying items carry a `lobbyingGrowth` cross-link badge when the same ticker also shows up rising in that data.
+- ETFs: `EtfExplorerTab` — category chips (Sector/Broad Market/International/Fixed Income/Commodity/Thematic/Leveraged-Inverse) over a curated 42-ETF universe (`server/data/etf_universe.ts`). List view shows live quote per ETF (no AI signal — removed from the page); tapping a row pushes to `/asset/:symbol` for chart/signal/backtest/news. Info icon opens a bottom sheet with fund data (holdings, sector weights, expense ratio, AUM) from `/api/etf/:symbol/profile`. Rotation toggle switches to an RRG quadrant view (`/api/etf/rotation`) for equity-like categories only (fixed income/commodity/leveraged excluded). **Free, no plan gate.**
 
 **Trading** (`/trading`) Power Moves tab: 4th tab. Scanner for Indices/Forex/Commodities/Crypto assets with v1/v2/v3 Pine variants. Auto-selects correct v3 version when type changes (Indices→v3, Forex→v3f, Crypto→v3crypto). Backtest link (v1/v2 only) uses `/trading/10x-backtest?version=&type=assets`. Info sheet explains each version's signals.
 
@@ -455,7 +490,7 @@ frontend/
 - **Run**: `pnpm install && pnpm dev` from `frontend/` → http://localhost:5173 (talks to localhost:5001 in dev; prod default `https://monysa-api.fly.dev`, override with `VITE_API_BASE_URL`).
 - **Internal-package pattern**: workspace packages export raw TS (`"main": "./src/index.ts"`); Vite compiles them — no per-package build step.
 - **Caching**: Query `staleTime` mirrors server TTLs; `persistQueryClient` (localStorage, `buster: "v1"`) replicates DiskCache hydrate-stale-then-refresh. Bump the buster when a persisted shape changes (mirror of `DiskCache._schemaVersion`).
-- **Routes** (mirror mobile tab structure): `/markets` (Heatmap/Indices/Commodities/Forex/CFTC), `/trading` (Instruments/Dashboard/Power Moves/Signals S1–S9/Alerts — watchlist+alerts in localStorage), `/investing` (Exposure/Dashboard/Multibaggers/Presidential/Congress/Smart $/House Trades/Earnings), `/macro` (Dashboard w/ regime+gauges+heatmaps+yield graph+RRG quadrants+AI briefing / Crisis / Debt / Calendar / Correlation), `/asset/$symbol?name=`.
+- **Routes** (mirror mobile tab structure): `/markets` (Heatmap/Indices/Commodities/Forex/CFTC), `/trading` (Instruments/Dashboard/Power Moves/Signals S1–S9/Alerts — watchlist+alerts in localStorage), `/investing` (Exposure/Dashboard/Multibaggers/Presidential/Smart $/Earnings Calendar/ETFs — Congress/House Trades removed 2026-07), `/macro` (Dashboard w/ regime+gauges+heatmaps+yield graph+RRG quadrants+AI briefing / Crisis / Debt / Calendar / Correlation), `/asset/$symbol?name=`.
 - **Parity rule**: the Flutter screens are the spec. When mobile gains/changes a tab, filter, or strategy, port it here in the same change (and vice versa) — and verify against the running screens, not this file alone.
 - **Data-display parity (hard requirement)**: web and mobile must show *identical data*, not just identical UI structure. That includes field-picking logic — e.g. session-aware prices (`pre` → `preMarketPrice`/`preMarketChangePercent`, `post` → `postMarketPrice`/`postMarketChangePercent`, fallback to `price`/`changePercent`), filter sets, sort orders, and null fallbacks. When changing what one client displays, port the same logic to the other in the same change. Regression example: web MoversCard once showed last-close prices during pre-market because it ignored the session fields mobile already used — a critical bug for a financial app.
 - **Prod CORS**: set `ALLOWED_ORIGINS=https://<web-domain>` on the API; `server/index.ts` already supports it. Custom headers `X-Device-ID`/`X-Signature` are in the CORS allow-list.
@@ -604,7 +639,12 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | Macro Calendar tab | Hardcoded FOMC/CPI/NFP/Jackson Hole dates | Dynamic: fetches `/api/economy/events` (FF Calendar feed); falls back to STATIC_EVENTS in server when feed is down |
 | Treemap index count | 5 (S&P 500/NASDAQ 100/DJI/FTSE 100/Nifty 50) | 9 — also Russell 2000, DAX 40, Nikkei 225, Hang Seng |
 | Calling plan-gated API without X-Device-ID | endpoint returns 403 | Dio SigningInterceptor adds X-Device-ID + X-Signature automatically |
-| Investing default tab | Dashboard (index 1) | Exposure (index 0) — tab order is Exposure/Dashboard/Multibaggers/Presidential/Congress/Smart $/House Trades. Exposure is now free (tariff browser); Dashboard is Pro+. |
+| Investing default tab | Dashboard (index 1) | Exposure (index 0) — tab order is Exposure/Dashboard/Multibaggers/Presidential/Smart $/Earnings Calendar/ETFs (7 tabs; Congress + House Trades removed 2026-07). Exposure is now free (tariff browser); Dashboard is Pro+. |
+| Congress/House Trades tabs | re-adding them because a user asks for congressional trade tracking | Removed 2026-07 — Quiver's public congress-trading API now 401s, and FMP's current plan returns an empty array for both senate-trading and house-trading. Don't rebuild these tabs without first confirming a real, working, non-paywalled data source exists (Senate Stock Watcher's GitHub JSON repo is Senate-only and was never wired in; House Stock Watcher's feed is dead as of 2026). The Smart $ tab's Lobbying Growth and Insider Buys strategies are unaffected — different providers (Senate LDA, SEC EDGAR), both confirmed live. |
+| `mapNameToTicker`-style static company→ticker maps | adding more names to a hardcoded list when a company isn't found | For Insider Buys (arbitrary EDGAR filers): use `resolveTickerForName()` in `quiver.ts` — static map fast path + Yahoo search fallback, caches both ticker and real company name in `_resolvedNames` (don't fall back to bare ticker as the display name — use `_resolvedNames.get(ticker) ?? KNOWN_NAMES[ticker] ?? ticker`). For Lobbying Growth: don't reverse-resolve arbitrary filer names at all — query Senate LDA's `client_name` filter directly for each company in `LOBBYING_UNIVERSE` (a curated "which real companies to check" list, same pattern as `ETF_UNIVERSE`/`index_constituents.ts` — not fake data). This is both more reliable (only ever surfaces real, recognizable companies) and faster than random-page-sampling + fuzzy matching. |
+| Senate LDA `filing_period_display` as a group-by key | trusting it to distinguish quarters | It's a bare label ("2nd Quarter (Apr 1 - June 30)") with **no year** — identical text every year. Grouping by it merges e.g. Q2-2025 and Q2-2026 into one bucket, corrupting QoQ sums and making almost every ticker fail a "≥2 distinct periods" check. Build the period key yourself from each row's own `filing_year` + `filing_type` fields instead (e.g. `${filing_year}-${filing_type.slice(0,2)}`). |
+| Senate LDA default query ordering | assuming results come back recent-first | Without `ordering=-dt_posted`, results come back **oldest-first** (1999 first, for a company with 25+ years of filings). `client_name=` + `ordering=-dt_posted` + a small `limit` is the reliable way to get a company's recent filings. |
+| Extending `fetchYahooQuoteSummary` or `getSectorQuadrants` for new features | Adding params/modules directly to the existing function | Both back live endpoints (`/api/heatmap/treemap`, `/api/sectors`, `/api/trading/best-setups-sector`). Add a new sibling function instead (e.g. `fetchYahooFundData`, `getEtfRotationQuadrants`) so the existing live endpoints' behavior is provably unchanged — see `server/routes/etf.ts`. |
 | Power Moves scanner location | InvestingScreen (10X tab) | Moved to TradingScreen as 4th tab "Power Moves" — _PowerMovesTab in trading_screen.dart |
 | Stocks view in Power Moves | Stocks filter + search bar exist in scanner | Stocks view was removed — Power Moves is assets-only (Indices/Forex/Commodities/Crypto); Multibaggers handles country-specific stock scanning |
 | Multibaggers default country | `?country=india` | `?country=us` — US is now the default and first chip |
@@ -619,6 +659,8 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | Express behind Fly's proxy | leaving `trust proxy` unset (default) | `app.set("trust proxy", 1)` in `server/index.ts` — without it, `express-rate-limit` groups all users under Fly's proxy IP and emits `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` warnings. |
 | Disk-persisted payloads survive a wrong schema | bumping a model shape without bumping `DiskCache._schemaVersion` | DiskCache prefixes keys with `dcache.v$_schemaVersion.`. Bump the version when changing the on-disk shape of *any* persisted payload (tariffs, treemap, scanner, best-sector). Old entries become unreachable and are overwritten on next write. |
 | Server-side ETag for plan-gated endpoints | leaving the default `Cache-Control: public` | `private`-mark plan-gated endpoints (signals, analyst-note, exposure, treemap) so a CDN edge can't serve the response to other devices. Public for unauthenticated content (sectors, bonds, tariffs, etc.). |
+| Live-data endpoint has no real source | adding a hardcoded snapshot/constant so the field is never empty | `/api/quiver/congress` used to fall back to a hardcoded `CONGRESS_SNAPSHOT` array when Quiver+FMP both failed — removed (2026-07). If every live source for a field fails, return `null`/error and let the client show "—" or a retry state (both apps already have these). Never silently substitute a plausible-looking fake number — it's indistinguishable from real data to the user of a paid, marketed-as-real-time app. |
+| USA Debt screen mostly hardcoded despite "LIVE" badge | trusting the field names / UI without checking the handler | As of 2026-07, `/api/usa-debt` sources totalDebt/dailyIncrease/debtGrowth20yr from Treasury `debt_to_penny`, gdp/population from World Bank, and deficit/spending/interest from Treasury MTS (fiscal-YTD, not annual — see `fiscalYtdLabel`). `foreignHolders` by country has no live source found (Treasury's TIC feed is stale, last update Jan 2023) and is kept but dated, not removed. `ssUnfunded`/`medicareUnfunded`/`debtPerTaxpayer` were removed outright — no live source exists for any of them. Before adding a new "debt clock" stat, check whether a real Treasury/World Bank endpoint exists first (see `server/routes/economy.ts` — `fetchMtsYtd`, `fetchMtsSpending`, `fetchDebt20yAgo`) rather than hardcoding a number to fill the gap. |
 
 ---
 
@@ -628,7 +670,7 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 |--------|--------------|---------------------|----------------------|
 | **Markets** `/markets` | 5 sub-tabs: **Heatmap** (default; market-cap-weighted treemap of 9 indices with timeframe selector 1D/1W/1M/YTD, Pro+), Indices (46 global), Commodities (23), Forex (44 pairs grouped by region), CFTC metals (hedge fund COT positions). Inline search per price tab. Tap any row → candlestick chart modal; tap a treemap tile → tooltip card. | `/api/futures/indices` `/api/futures/commodities` `/api/futures/forex` `/api/futures/cot-metals` `/api/central-bank-rates` `/api/heatmap/treemap` | **Free**: Indices/Commodities/Forex/CFTC. **Pro** (`treemap_heatmap`): Heatmap tab. |
 | **Trading** `/trading` | 4 sub-tabs: Dashboard (49 live assets, 30s refresh; category chips; Stocks chip = full-text search), AI Signals (S1–S3 strategy selector; BUY/HOLD/SELL per asset), Alerts (price alerts, 10s poll), Power Moves (scanner: Indices/Forex/Commodities/Crypto with v1/v2/v3 Pine variants). | `/api/trading/quotes` `/api/search` `/api/trading/signals/:symbol` `/api/trading/strategies` `/api/trading/scanner/10x-v3/assets` `/api/trading/scanner/10x-v3/commodities` `/api/trading/scanner/10x-v3/forex` `/api/trading/scanner/10x-v3/crypto` `/api/trading/scanner/10x/assets` `/api/trading/scanner/10x-v2/assets` | **Free**: S1–S3 signals, basic alerts, Power Moves. **Pro** (`signals_advanced`): S4–S8/advanced strategies. **Pro** (`alerts_unlimited`): more than 3 active alerts. |
-| **Investing** `/investing` | 7 sub-tabs (Exposure is default): Exposure (tariff country browser — free), Dashboard (Best Setups — Pro+), Multibaggers, Presidential, Congress, Smart $, House Trades. | `/api/tariffs` `/api/trading/scanner/best-setups` `/api/trading/best-setups-sector` `/api/trading/scanner/10x-v2/assets` `/api/search` `/api/oge/trump-transactions` `/api/quiver/congress-trades` `/api/quiver/congress` `/api/quiver/lobbying` `/api/quiver/insider` `/api/house-trades` | **Free**: Exposure, Presidential, Congress, Smart $, House Trades, Multibaggers. **Pro** (`best_setups`): Dashboard tab (Best Setups). |
+| **Investing** `/investing` | 7 sub-tabs (Exposure is default): Exposure (tariff country browser — free), Dashboard (Best Setups — Pro+), Multibaggers, Presidential, Smart $ (Lobbying Growth + Insider Buys), Earnings Calendar, ETFs. Congress/House Trades tabs removed 2026-07 (dead data sources — see Known Pitfalls). | `/api/tariffs` `/api/trading/scanner/best-setups` `/api/trading/best-setups-sector` `/api/trading/scanner/10x-v2/assets` `/api/search` `/api/oge/trump-transactions` `/api/quiver/lobbying` `/api/quiver/insider` `/api/trading/earnings-calendar` `/api/etf/list` `/api/etf/:symbol/profile` `/api/etf/rotation` | **Free**: Exposure, Presidential, Smart $, Multibaggers, Earnings Calendar, ETFs. **Pro** (`best_setups`): Dashboard tab (Best Setups). |
 | **Macro** `/macro` | 5 sub-tabs: Dashboard (Market Stress Meter, Fear & Greed, VIX gauge, crisis assets sparklines, yield curve, sector rotation RRG, geopolitical infographic, AI macro briefing button), Crisis (historical crisis playbook), Debt (US live debt clock), Calendar (dynamic FOMC/CPI/NFP events from FF Calendar), Correlation (asset correlation matrix). | `/api/volatility/assets` `/api/volatility/fear-greed` `POST /api/volatility/briefing` `/api/bonds` `/api/sectors` `/api/heatmap` `/api/heatmap/assets` `/api/crises` `/api/usa-debt` `/api/economy/yield-curve-history` `/api/economy/events` `/api/trading/correlation` | **Free**: all content. **Pro** (`analyst_notes_unlimited`): AI Macro Briefing button (GPT-4o-mini stress analysis). |
 | **Asset Detail** `/asset/:symbol` | 5 sub-tabs for any Yahoo Finance symbol: Chart (inline TradingView or Yahoo candlestick + fullscreen modal), Signal (AI BUY/HOLD/SELL with entry/SL/TP/reasoning), Indicators (fundamentals data), Backtest (walk-forward S1/S2/S3 results), News (headlines + sentiment). | `/api/chart/:symbol` `/api/trading/signals/:symbol` `/api/trading/backtest/:symbol` `/api/trading/news/:symbol` `/api/trading/analyst-note/:symbol` `/api/trading/fundamentals/:symbol` | **Free**: Chart, Signal, Backtest, News. **Pro** (`analyst_notes_unlimited`): Analyst Note inside Signal tab. |
 | **Country Detail / Stocks** `/country/:code` `/country/:code/stocks` | Country overview (GDP, trade balance, military data from World Bank). Stocks list for that country; India has NSE/BSE exchange tabs. Tap stock row → Asset Detail (not a chart modal). | `/api/country-data/:code` `/api/stocks/:countryCode` | **All free.** |

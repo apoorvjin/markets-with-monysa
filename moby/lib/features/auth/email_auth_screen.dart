@@ -90,7 +90,9 @@ class _EmailAuthScreenState extends State<EmailAuthScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Password reset email sent to $email'),
+            content: Text(
+              'Password reset email sent to $email. Check spam/junk if it doesn\'t arrive.',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );

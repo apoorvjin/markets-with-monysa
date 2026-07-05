@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -10,12 +11,53 @@ import 'core/router/app_router.dart';
 import 'providers/alert_provider.dart';
 import 'providers/font_size_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/push_notification_service.dart';
 
-class MobyApp extends ConsumerWidget {
+final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
+
+class MobyApp extends ConsumerStatefulWidget {
   const MobyApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MobyApp> createState() => _MobyAppState();
+}
+
+class _MobyAppState extends ConsumerState<MobyApp> {
+  StreamSubscription<({String title, String body})>? _pushSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _pushSub = PushNotificationService.foregroundMessages.listen((msg) {
+      _scaffoldMessengerKey.currentState?.showSnackBar(
+        SnackBar(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(msg.title,
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              if (msg.body.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(msg.body, style: const TextStyle(fontSize: 13)),
+              ],
+            ],
+          ),
+          duration: const Duration(seconds: 5),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    });
+  }
+
+  @override
+  void dispose() {
+    _pushSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
     final fontScale = ref.watch(fontSizeScaleProvider);
     return MaterialApp.router(
@@ -23,6 +65,7 @@ class MobyApp extends ConsumerWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,
+      scaffoldMessengerKey: _scaffoldMessengerKey,
       routerConfig: appRouter,
       debugShowCheckedModeBanner: false,
       builder: (context, child) => MediaQuery(

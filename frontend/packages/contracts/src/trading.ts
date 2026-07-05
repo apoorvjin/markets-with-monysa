@@ -43,6 +43,10 @@ export const TradingSignal = z
     timeframe: z.string().nullish(),
     timestamp: z.string().nullish(),
     ivPercentile: z.number().nullish(),
+    vwap: z.number().nullable().nullish(),
+    vwapDeviation: z.number().nullable().nullish(),
+    vixAtSignal: z.number().nullable().nullish(),
+    dynamicThreshold: z.number().nullable().nullish(),
   })
   .passthrough();
 export type TradingSignal = z.infer<typeof TradingSignal>;
@@ -114,11 +118,65 @@ export const CorrelationResponse = z.object({
 });
 export type CorrelationResponse = z.infer<typeof CorrelationResponse>;
 
+/** New, additive "Adv Correlation" tab — separate endpoint/contract from
+    CorrelationResponse above, which is untouched. */
+export const AdvCorrelationResponse = z.object({
+  symbols: z.array(
+    z
+      .object({
+        symbol: z.string(),
+        name: z.string(),
+        flag: z.string().nullish(),
+        category: z.string().nullish(),
+      })
+      .passthrough(),
+  ),
+  matrix: z.array(z.array(z.number())),
+  window: z.string().nullish(),
+  cacheWarm: z.boolean().nullish(),
+  staleSymbols: z.array(z.string()).nullish(),
+  lastUpdated: z.string().nullish(),
+});
+export type AdvCorrelationResponse = z.infer<typeof AdvCorrelationResponse>;
+
+export const AdvCorrelationHistoryResponse = z.object({
+  a: z.object({ symbol: z.string() }),
+  b: z.object({ symbol: z.string() }),
+  points: z.array(z.object({ date: z.string(), r: z.number() })),
+  windowDays: z.number(),
+  lastUpdated: z.string().nullish(),
+});
+export type AdvCorrelationHistoryResponse = z.infer<typeof AdvCorrelationHistoryResponse>;
+
 /** UI display "S1"–"S9"; always send serverParam ("1"–"9") to the API.
     S9 ("Silver Liquidity Sweep") applies to SI=F only — mirror mobile and
-    filter the asset list to silver when S9 is selected. */
-export const STRATEGIES = Array.from({ length: 9 }, (_, i) => ({
-  label: `S${i + 1}`,
-  serverParam: String(i + 1),
-})) as ReadonlyArray<{ label: string; serverParam: string }>;
+    filter the asset list to silver when S9 is selected.
+    Enhanced S1+–S9+ use serverParams "10"–"18". */
+export const STRATEGIES: ReadonlyArray<{ label: string; serverParam: string; isEnhanced: boolean }> = [
+  // Base strategies (S1–S9)
+  ...Array.from({ length: 9 }, (_, i) => ({
+    label: `S${i + 1}`,
+    serverParam: String(i + 1),
+    isEnhanced: false,
+  })),
+  // Enhanced strategies (S1+–S9+)
+  ...Array.from({ length: 9 }, (_, i) => ({
+    label: `S${i + 1}+`,
+    serverParam: String(i + 10),
+    isEnhanced: true,
+  })),
+];
 export type Strategy = (typeof STRATEGIES)[number];
+
+export const SignalsCompareResponse = z.object({
+  symbol: z.string(),
+  timeframe: z.string(),
+  pairs: z.array(z.object({
+    baseId: z.string(),
+    enhancedId: z.string(),
+    base: z.unknown().nullable(),
+    enhanced: z.unknown().nullable(),
+  })),
+  timestamp: z.string(),
+});
+export type SignalsCompareResponse = z.infer<typeof SignalsCompareResponse>;

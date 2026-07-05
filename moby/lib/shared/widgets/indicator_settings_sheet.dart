@@ -338,6 +338,102 @@ class IndicatorSettingsSheet extends ConsumerWidget {
                 ),
               ],
               const SizedBox(height: AppSpacing.s5),
+              _SectionHeader(label: 'Pivot Points'),
+              const SizedBox(height: AppSpacing.s3),
+              _ToggleRow(
+                label: 'Show pivots',
+                subtitle: 'From the previous day (intraday) or month (daily)',
+                value: prefs.pivots.visible,
+                onChanged: notifier.setPivotsVisible,
+              ),
+              if (prefs.pivots.visible) ...[
+                const SizedBox(height: AppSpacing.s2),
+                _ToggleRow(
+                  label: 'Camarilla',
+                  subtitle: prefs.pivots.camarilla
+                      ? 'R4–S4 tight reversal bands'
+                      : 'Off: classic P / R1–R3 / S1–S3',
+                  value: prefs.pivots.camarilla,
+                  onChanged: notifier.setPivotsCamarilla,
+                ),
+              ],
+              const SizedBox(height: AppSpacing.s5),
+              _SectionHeader(label: 'Stochastic (sub-pane)'),
+              const SizedBox(height: AppSpacing.s3),
+              _ToggleRow(
+                label: 'Show Stochastic',
+                subtitle: 'Slow %K / %D oscillator',
+                value: prefs.stochastic.visible,
+                onChanged: notifier.setStochasticVisible,
+              ),
+              if (prefs.stochastic.visible) ...[
+                const SizedBox(height: AppSpacing.s2),
+                _NumberFieldRow(
+                  label: '%K',
+                  value: prefs.stochastic.kPeriod.toString(),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null) notifier.setStochasticKPeriod(n);
+                  },
+                ),
+                _NumberFieldRow(
+                  label: 'Smooth',
+                  value: prefs.stochastic.smooth.toString(),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null) notifier.setStochasticSmooth(n);
+                  },
+                ),
+                _NumberFieldRow(
+                  label: '%D',
+                  value: prefs.stochastic.dPeriod.toString(),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null) notifier.setStochasticDPeriod(n);
+                  },
+                ),
+              ],
+              const SizedBox(height: AppSpacing.s5),
+              _SectionHeader(label: 'ATR (sub-pane)'),
+              const SizedBox(height: AppSpacing.s3),
+              _ToggleRow(
+                label: 'Show ATR',
+                subtitle: 'Average True Range (Wilder)',
+                value: prefs.atr.visible,
+                onChanged: notifier.setAtrVisible,
+              ),
+              if (prefs.atr.visible) ...[
+                const SizedBox(height: AppSpacing.s2),
+                _NumberFieldRow(
+                  label: 'Period',
+                  value: prefs.atr.period.toString(),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null) notifier.setAtrPeriod(n);
+                  },
+                ),
+              ],
+              const SizedBox(height: AppSpacing.s5),
+              _SectionHeader(label: 'ADX (sub-pane)'),
+              const SizedBox(height: AppSpacing.s3),
+              _ToggleRow(
+                label: 'Show ADX',
+                subtitle: 'Trend strength with DI+ / DI−',
+                value: prefs.adx.visible,
+                onChanged: notifier.setAdxVisible,
+              ),
+              if (prefs.adx.visible) ...[
+                const SizedBox(height: AppSpacing.s2),
+                _NumberFieldRow(
+                  label: 'Period',
+                  value: prefs.adx.period.toString(),
+                  onChanged: (v) {
+                    final n = int.tryParse(v);
+                    if (n != null) notifier.setAdxPeriod(n);
+                  },
+                ),
+              ],
+              const SizedBox(height: AppSpacing.s5),
             ],
           ),
         ),

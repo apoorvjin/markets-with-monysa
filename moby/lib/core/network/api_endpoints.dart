@@ -17,10 +17,14 @@ abstract final class ApiEndpoints {
   static String get tradingQuotes => '$baseUrl/api/trading/quotes';
   static String tradingSignal(String symbol) =>
       '$baseUrl/api/trading/signals/$symbol';
+  static String tradingSignalsCompare(String symbol) =>
+      '$baseUrl/api/trading/signals-compare/$symbol';
   static String tradingHistory(String symbol) =>
       '$baseUrl/api/trading/history/$symbol';
-  static String tradingBacktest(String symbol) =>
-      '$baseUrl/api/trading/backtest/$symbol';
+  static String tradingBacktest(String symbol, {String? timeframe}) {
+    final url = '$baseUrl/api/trading/backtest/$symbol';
+    return timeframe != null ? '$url?timeframe=$timeframe' : url;
+  }
   static String tradingNews(String symbol) =>
       '$baseUrl/api/trading/news/$symbol';
   static String tradingAnalystNote(String symbol) =>
@@ -63,6 +67,7 @@ abstract final class ApiEndpoints {
 
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';
+  static String get vixTermStructure => '$baseUrl/api/volatility/vix-term-structure';
 
   static String get usaDebt => '$baseUrl/api/usa-debt';
 
@@ -82,24 +87,32 @@ abstract final class ApiEndpoints {
   static String heatmapMovers({String index = 'sp500'}) =>
       '$baseUrl/api/heatmap/movers?index=$index';
 
-  static String get quiverCongress         => '$baseUrl/api/quiver/congress';
   static String get quiverLobbying         => '$baseUrl/api/quiver/lobbying';
   static String get quiverInsider          => '$baseUrl/api/quiver/insider';
-  static String get quiverCongressTrades   => '$baseUrl/api/quiver/congress-trades';
-  static String congressTradesByMember(String name) =>
-      '$baseUrl/api/quiver/congress-trades?memberName=${Uri.encodeComponent(name)}';
   static String get ogeTrumpTransactions   => '$baseUrl/api/oge/trump-transactions';
-  static String get houseTrades            => '$baseUrl/api/house-trades';
 
   static String get regimeSummary    => '$baseUrl/api/trading/regime-summary';
   static String get earningsCalendar => '$baseUrl/api/trading/earnings-calendar?days=15';
   static String get correlation      => '$baseUrl/api/trading/correlation';
-  static String copyTrades(String memberName) =>
-      '$baseUrl/api/trading/copy-trades?memberName=${Uri.encodeComponent(memberName)}';
+  static String advCorrelation({String window = '3m'}) =>
+      '$baseUrl/api/trading/correlation/advanced?window=$window';
+  static String advCorrelationCustom({required List<String> symbols, String window = '3m'}) =>
+      '$baseUrl/api/trading/correlation/advanced/custom'
+      '?symbols=${Uri.encodeComponent(symbols.join(","))}&window=$window';
+  static String advCorrelationHistory({required String a, required String b}) =>
+      '$baseUrl/api/trading/correlation/advanced/history'
+      '?a=${Uri.encodeComponent(a)}&b=${Uri.encodeComponent(b)}';
   static String get yieldCurveHistory => '$baseUrl/api/economy/yield-curve-history';
   static String get economyEvents     => '$baseUrl/api/economy/events';
   static String get tariffs           => '$baseUrl/api/tariffs';
   static String get fearGreed         => '$baseUrl/api/volatility/fear-greed';
+
+  static String etfList({String? category}) => category == null
+      ? '$baseUrl/api/etf/list'
+      : '$baseUrl/api/etf/list?category=$category';
+  static String etfProfile(String symbol) =>
+      '$baseUrl/api/etf/${Uri.encodeComponent(symbol)}/profile';
+  static String get etfRotation => '$baseUrl/api/etf/rotation';
 
   static String exposureAnalysis({
     required String country,

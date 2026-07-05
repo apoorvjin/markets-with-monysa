@@ -11,6 +11,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../providers/strategy_provider.dart';
+import '../../providers/chart_provider_provider.dart';
 import '../../shared/widgets/signal_badge.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/error_view.dart';
@@ -20,6 +21,8 @@ import '../../utils/tv_symbol.dart';
 import '../../providers/watchlist_provider.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
+import '../../shared/widgets/shimmer_list.dart';
+import '../../shared/widgets/app_shell_insets.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -39,11 +42,47 @@ final _signalProvider = FutureProvider.autoDispose
   },
 );
 
+// Keyed by (symbol, timeframe) — used by Backtest tab.
 final _backtestProvider = FutureProvider.autoDispose
-    .family<List<BacktestResult>, String>(
-  (ref, symbol) {
+    .family<List<BacktestResult>, ({String symbol, String tf})>(
+  (ref, args) {
     ref.keepAlive();
-    return TradingRepository.instance.fetchBacktest(symbol);
+    return TradingRepository.instance.fetchBacktest(args.symbol, timeframe: args.tf);
+  },
+);
+
+// Runs all 4 relevant TF backtests in parallel — used by Trace tab for per-TF win%/ret%.
+final _traceBacktestProvider = FutureProvider.autoDispose
+    .family<Map<String, List<BacktestResult>>, String>(
+  (ref, symbol) async {
+    ref.keepAlive();
+    const tfs = ['1h', '4h', '1d', '1w'];
+    final results = await Future.wait(
+      tfs.map((tf) => TradingRepository.instance.fetchBacktest(symbol, timeframe: tf)),
+    );
+    return Map.fromIterables(tfs, results);
+  },
+);
+
+final _signalTraceProvider = FutureProvider.autoDispose
+    .family<Map<String, List<SignalTracePair>>, String>(
+  (ref, symbol) async {
+    ref.keepAlive();
+    const tfs = ['1h', '4h', '1d', '1w'];
+    // Use error-tolerant approach: a single failed TF should not crash the whole trace.
+    final settled = await Future.wait(
+      tfs.map((tf) => TradingRepository.instance
+          .fetchSignalsCompare(symbol, timeframe: tf)
+          .then<List<SignalTracePair>?>((v) => v)
+          .catchError((_) => null)),
+    );
+    final out = <String, List<SignalTracePair>>{};
+    for (int i = 0; i < tfs.length; i++) {
+      final v = settled[i];
+      if (v != null) out[tfs[i]] = v;
+    }
+    if (out.isEmpty) throw Exception('No trace data available');
+    return out;
   },
 );
 
@@ -104,8 +143,8 @@ class _AssetDetailScreenState extends State<AssetDetailScreen>
   late final TabController _tab;
   String _timeframe = '1d';
 
-  static const _tabs = ['Chart', 'Signal', 'Indicators', 'Backtest', 'News'];
-  static const _timeframes = ['1m', '1h', '4h', '1d'];
+  static const _tabs = ['Chart', 'Signal', 'Trace', 'Indicators', 'Backtest', 'News'];
+  static const _timeframes = ['1h', '4h', '1d', '1w'];
 
   @override
   void initState() {
@@ -184,12 +223,16 @@ class _AssetDetailScreenState extends State<AssetDetailScreen>
       body: TabBarView(
         controller: _tab,
         children: [
-          _ChartTab(symbol: widget.symbol, name: widget.name),
+          _ChartTab(
+              symbol: widget.symbol,
+              name: widget.name,
+              timeframe: _timeframe),
           _SignalTab(
               symbol: widget.symbol, name: widget.name, timeframe: _timeframe),
+          _SignalTraceTab(symbol: widget.symbol, name: widget.name),
           _IndicatorsTab(
               symbol: widget.symbol, timeframe: _timeframe),
-          _BacktestTab(symbol: widget.symbol),
+          _BacktestTab(symbol: widget.symbol, initialTf: _timeframe),
           _NewsTab(symbol: widget.symbol),
         ],
       ),
@@ -256,21 +299,125 @@ class _WatchlistButtonState extends ConsumerState<_WatchlistButton>
 
 // ── Chart Tab ─────────────────────────────────────────────────────────────────
 
-class _ChartTab extends StatelessWidget {
-  const _ChartTab({required this.symbol, required this.name});
+class _ChartTab extends ConsumerStatefulWidget {
+  const _ChartTab({
+    required this.symbol,
+    required this.name,
+    required this.timeframe,
+  });
   final String symbol;
   final String name;
+  final String timeframe;
+
+  @override
+  ConsumerState<_ChartTab> createState() => _ChartTabState();
+}
+
+class _ChartTabState extends ConsumerState<_ChartTab> {
+  bool _showSignal = true;
+  bool _showTrades = false;
 
   @override
   Widget build(BuildContext context) {
-    return ChartHost(
-      symbol: symbol,
-      name: name,
-      initialRange: '1M',
-      withVwap: true,
-      showFullscreenButton: true,
-      onFullscreen: () =>
-          ChartModal.show(context, symbol: symbol, name: name),
+    final c = context.colors;
+    // Signal/trade overlays render on the in-house chart and the LWC WebView.
+    // The real TradingView embed (mapped symbol in tradingView mode) is a
+    // sealed widget — skip the fetches there since nothing can render them.
+    final provider = ref.watch(chartProviderProvider);
+    final overlaysSupported = switch (provider) {
+      ChartDataProvider.inHouse || ChartDataProvider.yahoo => true,
+      ChartDataProvider.tradingView =>
+        TvSymbol.resolveForEmbeddedWidget(widget.symbol) == null,
+    };
+    final strategy = ref.watch(strategyProvider);
+
+    SignalLevels? levels;
+    List<TradeMarker>? markers;
+    if (overlaysSupported && _showSignal) {
+      final signal = ref
+          .watch(_signalProvider((
+            symbol: widget.symbol,
+            tf: widget.timeframe,
+            strategy: strategy.serverParam,
+          )))
+          .valueOrNull;
+      if (signal != null && signal.direction != 'HOLD') {
+        levels = SignalLevels(
+          entry: signal.entry,
+          stopLoss: signal.stopLoss,
+          takeProfit: signal.takeProfit,
+          direction: signal.direction,
+        );
+      }
+    }
+    if (overlaysSupported && _showTrades) {
+      final results = ref
+          .watch(_backtestProvider(
+              (symbol: widget.symbol, tf: widget.timeframe)))
+          .valueOrNull;
+      final result = results?.where((r) => r.strategy == strategy.label);
+      if (result != null && result.isNotEmpty) {
+        markers = [
+          for (final t in result.first.tradeLog)
+            if (t.date != null)
+              TradeMarker(
+                date: DateTime.parse(t.date!).toUtc(),
+                price: t.entryPrice,
+                direction: t.direction,
+                win: t.win,
+              ),
+        ];
+      }
+    }
+
+    Widget chip(String label, bool active, VoidCallback onTap) =>
+        GestureDetector(
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s4, vertical: 4),
+            decoration: BoxDecoration(
+              color: active ? c.accentDim : Colors.transparent,
+              borderRadius: BorderRadius.circular(AppRadius.full),
+              border: Border.all(color: active ? c.accent : c.border),
+            ),
+            child: Text(label,
+                style: AppTypography.sm.copyWith(
+                    color: active ? c.accent : c.textMuted,
+                    fontWeight: FontWeight.w600)),
+          ),
+        );
+
+    return Column(
+      children: [
+        if (overlaysSupported)
+          Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+            child: Row(
+              children: [
+                chip('${strategy.label} entry/SL/TP', _showSignal,
+                    () => setState(() => _showSignal = !_showSignal)),
+                const SizedBox(width: AppSpacing.s3),
+                chip('Backtest trades', _showTrades,
+                    () => setState(() => _showTrades = !_showTrades)),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ChartHost(
+            symbol: widget.symbol,
+            name: widget.name,
+            initialRange: '1M',
+            withVwap: true,
+            showFullscreenButton: true,
+            onFullscreen: () => ChartModal.show(context,
+                symbol: widget.symbol, name: widget.name),
+            signalLevels: levels,
+            tradeMarkers: markers,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -346,7 +493,7 @@ class _StrategyPillRow extends StatelessWidget {
     Widget chip(TradingStrategy s) {
       const silver = Color(0xFFC0C0C0);
       final isActive = s == selected;
-      final isS9 = s == TradingStrategy.s9;
+      final isS9 = s == TradingStrategy.s9 || s == TradingStrategy.s9Plus;
       final isAdvanced = int.parse(s.serverParam) >= 4;
       final isLocked = isAdvanced && !EntitlementService.can('signals_advanced');
       final chipColor = isS9 ? Color.lerp(c.accent, silver, 0.5)! : c.accent;
@@ -409,6 +556,9 @@ class _StrategyPillRow extends StatelessWidget {
       return Row(children: items);
     }
 
+    final base = all.sublist(0, 9);     // S1–S9
+    final plus = all.sublist(9);        // S1+–S9+
+
     return Container(
       padding: const EdgeInsets.fromLTRB(
           AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, AppSpacing.s3),
@@ -431,13 +581,39 @@ class _StrategyPillRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          buildRow(all.sublist(0, 4)),
+          buildRow(base.sublist(0, 4)),
           const SizedBox(height: 5),
-          buildRow(all.sublist(4, 8)),
+          buildRow(base.sublist(4, 8)),
           const SizedBox(height: 5),
           Row(
             children: [
-              Expanded(child: chip(all[8])),
+              Expanded(child: chip(base[8])),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+              const SizedBox(width: 5),
+              const Expanded(child: SizedBox()),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          Row(
+            children: [
+              Text('Enhanced',
+                  style: AppTypography.xs.copyWith(
+                      color: c.accent.withAlpha(180), letterSpacing: 0.5)),
+              const SizedBox(width: 4),
+              Icon(Icons.bolt_rounded, size: 11, color: c.accent.withAlpha(180)),
+            ],
+          ),
+          const SizedBox(height: 5),
+          buildRow(plus.sublist(0, 4)),
+          const SizedBox(height: 5),
+          buildRow(plus.sublist(4, 8)),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Expanded(child: chip(plus[8])),
               const SizedBox(width: 5),
               const Expanded(child: SizedBox()),
               const SizedBox(width: 5),
@@ -1642,57 +1818,98 @@ class _IndicatorRow extends StatelessWidget {
 
 // ── Backtest Tab ──────────────────────────────────────────────────────────────
 
-class _BacktestTab extends ConsumerWidget {
-  const _BacktestTab({required this.symbol});
+class _BacktestTab extends ConsumerStatefulWidget {
+  const _BacktestTab({required this.symbol, required this.initialTf});
   final String symbol;
+  final String initialTf;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final c = context.colors;
-    final async = ref.watch(_backtestProvider(symbol));
+  ConsumerState<_BacktestTab> createState() => _BacktestTabState();
+}
 
-    return async.when(
-      loading: () => Center(
-          child: CircularProgressIndicator(color: c.accent)),
-      error: (e, _) => ErrorView(
-        message: e.toString().contains('Unknown symbol')
-            ? 'Symbol not available for backtesting'
-            : 'Backtest data unavailable',
-        onRetry: () => ref.invalidate(_backtestProvider(symbol)),
-      ),
-      data: (results) => ListView(
-        padding: EdgeInsets.fromLTRB(
-          AppSpacing.s5,
-          AppSpacing.s5,
-          AppSpacing.s5,
-          AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
+class _BacktestTabState extends ConsumerState<_BacktestTab> {
+  static const _tfs = ['1h', '4h', '1d', '1w'];
+  late String _tf;
+
+  @override
+  void initState() {
+    super.initState();
+    _tf = _tfs.contains(widget.initialTf) ? widget.initialTf : '1d';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final args = (symbol: widget.symbol, tf: _tf);
+    final async = ref.watch(_backtestProvider(args));
+
+    return Column(children: [
+      // TF chip selector
+      SizedBox(
+        height: 44,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
+          children: _tfs.map((tf) {
+            final sel = tf == _tf;
+            return Padding(
+              padding: const EdgeInsets.only(right: AppSpacing.s2),
+              child: GestureDetector(
+                onTap: () => setState(() => _tf = tf),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: sel ? c.accent : c.surfaceCard,
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                    border: Border.all(color: sel ? c.accent : c.border),
+                  ),
+                  child: Text(tf.toUpperCase(),
+                      style: AppTypography.labelSm.copyWith(
+                          color: sel ? c.background : c.textSecondary,
+                          fontWeight: FontWeight.w700)),
+                ),
+              ),
+            );
+          }).toList(),
         ),
-        children: [
-          Row(
+      ),
+      Expanded(
+        child: async.when(
+          loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
+          error: (e, _) => ErrorView(
+            message: e.toString().contains('Unknown symbol')
+                ? 'Symbol not available for backtesting'
+                : 'Backtest data unavailable',
+            onRetry: () => ref.invalidate(_backtestProvider(args)),
+          ),
+          data: (results) => ListView(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.s5, AppSpacing.s3, AppSpacing.s5,
+              appShellBottomInset(context) + AppSpacing.s3,
+            ),
             children: [
-              Text('Walk-Forward Backtest',
-                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
-              const SizedBox(width: AppSpacing.s2),
+              Row(children: [
+                Text('Historical Backtest · ${_tf.toUpperCase()}',
+                    style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                const SizedBox(width: AppSpacing.s2),
+                GestureDetector(
+                  onTap: () => _showBacktestMethodInfo(context),
+                  child: Icon(Icons.info_outline_rounded, size: 16, color: c.textMuted),
+                ),
+              ]),
+              const SizedBox(height: AppSpacing.s2),
               GestureDetector(
                 onTap: () => _showBacktestMethodInfo(context),
-                child: Icon(Icons.info_outline_rounded,
-                    size: 16, color: c.textMuted),
+                child: Text('SL/TP exits · full history · tap for details',
+                    style: AppTypography.sm.copyWith(color: c.textMuted)),
               ),
+              const SizedBox(height: AppSpacing.s5),
+              ...results.map((r) => _BacktestCard(result: r)),
             ],
           ),
-          const SizedBox(height: AppSpacing.s2),
-          GestureDetector(
-            onTap: () => _showBacktestMethodInfo(context),
-            child: Text(
-              '70% train / 30% test split · 5-bar hold · tap for details',
-              style: AppTypography.sm.copyWith(color: c.textMuted),
-            ),
-          ),
-          const SizedBox(height: AppSpacing.s5),
-          ...results.map((r) => _BacktestCard(result: r)),
-        ],
+        ),
       ),
-    );
+    ]);
   }
 }
 
@@ -1730,17 +1947,17 @@ void _showBacktestMethodInfo(BuildContext context) {
               style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
           const SizedBox(height: AppSpacing.s4),
           _BacktestInfoRow(
-            icon: Icons.call_split_rounded,
+            icon: Icons.history_rounded,
             color: c.accent,
-            title: '70% Train / 30% Test Split',
-            description: 'Historical data is divided into two parts. The strategy is calibrated on the first 70% (training set), then evaluated on the unseen 30% (test set). This simulates how the strategy would have performed on data it never "saw" during development — a more honest performance estimate.',
+            title: 'Full History — No Train/Test Split',
+            description: 'Every available candle is tested. These strategies use fixed indicator parameters (RSI 14, EMA 20, etc.) — there is nothing to fit or optimise on historical data, so withholding a training set would only reduce the sample size without adding protection against overfitting.',
           ),
           const SizedBox(height: AppSpacing.s4),
           _BacktestInfoRow(
-            icon: Icons.timer_outlined,
+            icon: Icons.flag_outlined,
             color: c.warning,
-            title: '5-Bar Hold Period',
-            description: 'Each trade is held for exactly 5 bars (candles) after entry before exiting at market. On the 1D timeframe, this equals 5 trading days (~1 week). This fixed-duration approach removes discretionary exit bias and makes returns comparable across strategies.',
+            title: 'SL/TP Exits — Bar-by-Bar',
+            description: 'Each trade uses the same stop-loss and take-profit levels the strategy would set in live trading. Every subsequent bar checks whether its low hit the SL or its high hit the TP. The trade exits as soon as one is touched. If neither is hit within the max hold window (20 bars on 1D), the trade closes at the final bar close — shown as "TO" (timeout) in the trade log.',
           ),
           const SizedBox(height: AppSpacing.s5),
           Text('STAT DEFINITIONS',
@@ -2112,12 +2329,12 @@ class _TradeLogTable extends StatelessWidget {
           child: Row(
             children: [
               SizedBox(
-                  width: 24,
-                  child: Text('#',
+                  width: 66,
+                  child: Text('Date',
                       style: AppTypography.xs
                           .copyWith(color: c.textMuted))),
               SizedBox(
-                  width: 44,
+                  width: 38,
                   child: Text('Dir',
                       style: AppTypography.xs
                           .copyWith(color: c.textMuted))),
@@ -2130,7 +2347,12 @@ class _TradeLogTable extends StatelessWidget {
                       style: AppTypography.xs
                           .copyWith(color: c.textMuted))),
               SizedBox(
-                  width: 64,
+                  width: 38,
+                  child: Text('Why',
+                      style: AppTypography.xs
+                          .copyWith(color: c.textMuted))),
+              SizedBox(
+                  width: 52,
                   child: Text('Return',
                       style: AppTypography.xs
                           .copyWith(color: c.textMuted),
@@ -2157,6 +2379,34 @@ class _TradeRow extends StatelessWidget {
     final returnColor = trade.win ? c.positive : c.danger;
     final dirColor = isBuy ? c.positive : c.danger;
 
+    // Format YYYY-MM-DD → "Jun 6" style
+    String dateLabel = '—';
+    if (trade.date != null && trade.date!.length == 10) {
+      final parts = trade.date!.split('-');
+      if (parts.length == 3) {
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        final m = int.tryParse(parts[1]) ?? 0;
+        final d = int.tryParse(parts[2]) ?? 0;
+        final yy = parts[0].length >= 4 ? parts[0].substring(2) : parts[0];
+        if (m >= 1 && m <= 12) dateLabel = "${months[m - 1]} $d '$yy";
+      }
+    }
+
+    // Exit reason badge color
+    Color reasonColor;
+    String reasonLabel;
+    switch (trade.exitReason) {
+      case 'TP':
+        reasonColor = c.positive;
+        reasonLabel = 'TP';
+      case 'SL':
+        reasonColor = c.danger;
+        reasonLabel = 'SL';
+      default:
+        reasonColor = c.textMuted;
+        reasonLabel = 'TO';
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.s4, vertical: 5),
@@ -2170,13 +2420,13 @@ class _TradeRow extends StatelessWidget {
       child: Row(
         children: [
           SizedBox(
-            width: 24,
-            child: Text('${trade.n}',
+            width: 66,
+            child: Text(dateLabel,
                 style: AppTypography.xs
-                    .copyWith(color: c.textMuted)),
+                    .copyWith(color: c.textSecondary)),
           ),
           SizedBox(
-            width: 44,
+            width: 38,
             child: Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -2210,7 +2460,24 @@ class _TradeRow extends StatelessWidget {
             ),
           ),
           SizedBox(
-            width: 64,
+            width: 38,
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: reasonColor.withAlpha(30),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(
+                reasonLabel,
+                style: AppTypography.xs.copyWith(
+                    color: reasonColor, fontWeight: FontWeight.w700),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 52,
             child: Text(
               '${trade.returnPct >= 0 ? '+' : ''}${trade.returnPct.toStringAsFixed(2)}%',
               style: AppTypography.xs.copyWith(
@@ -2219,6 +2486,602 @@ class _TradeRow extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Signal Trace Tab ──────────────────────────────────────────────────────────
+
+// Flex weights: label=3 | 1m=3 | 1h=3 | 4h=3 | 1d=3 | win=2 | ret=3 (total 20)
+const _kLabelFlex = 3;
+const _kTfFlex    = 3;
+const _kWinFlex   = 2;
+const _kRetFlex   = 3;
+
+class _SignalTraceTab extends ConsumerWidget {
+  const _SignalTraceTab({required this.symbol, required this.name});
+  final String symbol;
+  final String name;
+
+  // S9 / S9+ are only meaningful on 1h — return "—" on other TFs.
+  static const _s9Ids = {'9', '18'};
+  static const _tfs = ['1h', '4h', '1d', '1w'];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+
+    if (!EntitlementService.can('signals_advanced')) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.s6),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline_rounded, color: c.textMuted, size: 40),
+              const SizedBox(height: AppSpacing.s4),
+              Text('Signal Trace requires Pro',
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s2),
+              Text('Upgrade to see all 18 strategies across 4 timeframes.',
+                  style: AppTypography.sm.copyWith(color: c.textSecondary),
+                  textAlign: TextAlign.center),
+              const SizedBox(height: AppSpacing.s5),
+              FilledButton(
+                onPressed: () => UpgradeSheet.show(context, feature: 'signals_advanced'),
+                child: const Text('Upgrade to Pro'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final traceAsync    = ref.watch(_signalTraceProvider(symbol));
+    final btTraceAsync  = ref.watch(_traceBacktestProvider(symbol));
+
+    // Show shimmer until both loads complete.
+    if (traceAsync.isLoading || btTraceAsync.isLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(AppSpacing.s4),
+        child: ShimmerList(count: 18),
+      );
+    }
+
+    final traceError = traceAsync.error;
+    if (traceError != null) {
+      return ErrorView(
+        message: 'Signal trace unavailable',
+        onRetry: () {
+          ref.invalidate(_signalTraceProvider(symbol));
+          ref.invalidate(_traceBacktestProvider(symbol));
+        },
+      );
+    }
+
+    final traceData  = traceAsync.value!;   // Map<tf, List<SignalTracePair>>
+    final btByTf     = btTraceAsync.value ?? {};  // Map<tf, List<BacktestResult>>
+    // Per-TF lookup: btByTf[tf][stratId] → BacktestResult
+    final btIndex    = <String, Map<String, BacktestResult>>{
+      for (final tf in _tfs)
+        tf: {
+          for (final r in (btByTf[tf] ?? [])) _stratNumFromLabel(r.strategy): r,
+        },
+    };
+
+    // Pair list from the 1d call (just for row ordering — 9 pairs, S1–S9).
+    final pairs = traceData['1d'] ?? [];
+    if (pairs.isEmpty) {
+      return Center(
+        child: Text('No signal data available.',
+            style: AppTypography.sm.copyWith(color: c.textMuted)),
+      );
+    }
+
+    return ListView(
+      padding: EdgeInsets.fromLTRB(12, 12, 12, appShellBottomInset(context) + 12),
+      children: [
+        // Asset chip header + info icon
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: c.accent.withAlpha(22),
+              borderRadius: BorderRadius.circular(AppRadius.full),
+              border: Border.all(color: c.accent.withAlpha(70)),
+            ),
+            child: Text(name,
+                style: AppTypography.labelSm.copyWith(color: c.accent)),
+          ),
+          const Spacer(),
+          GestureDetector(
+            onTap: () => _showTraceInfoSheet(context),
+            child: Icon(Icons.info_outline_rounded, size: 18, color: c.textMuted),
+          ),
+        ]),
+        const SizedBox(height: 12),
+        // Column headers — matches flex layout of rows
+        _TraceColumnHeaders(c: c),
+        const SizedBox(height: 6),
+        // 9 pair cards
+        for (int i = 0; i < pairs.length; i++) ...[
+          _TracePairCard(
+            pair: pairs[i],
+            traceData: traceData,
+            btIndex: btIndex,
+            tfs: _tfs,
+            s9Ids: _s9Ids,
+            c: c,
+          ),
+          if (i < pairs.length - 1) const SizedBox(height: 4),
+        ],
+      ],
+    );
+  }
+
+  static String _stratNumFromLabel(String label) {
+    if (label.endsWith('+')) {
+      final n = int.tryParse(label.substring(1, label.length - 1)) ?? 1;
+      return '${n + 9}';
+    }
+    return label.substring(1);
+  }
+}
+
+void _showTraceInfoSheet(BuildContext context) {
+  final c = context.colors;
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: c.surface,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (_) => DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.82,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      builder: (ctx, scrollCtrl) => Column(children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Center(
+              child: Container(
+                width: 36, height: 4,
+                decoration: BoxDecoration(
+                  color: c.border,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Row(children: [
+              Icon(Icons.grid_view_rounded, color: c.accent, size: 20),
+              const SizedBox(width: 8),
+              Text('How to read Signal Trace',
+                  style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+              'Signal Trace shows every strategy\'s signal in one place — across all timeframes — so you can spot consensus at a glance.',
+              style: AppTypography.sm.copyWith(color: c.textSecondary),
+            ),
+          ]),
+        ),
+        Expanded(
+          child: ListView(
+            controller: scrollCtrl,
+            padding: EdgeInsets.fromLTRB(
+                20, 16, 20, 24 + MediaQuery.of(ctx).padding.bottom),
+            children: [
+              // ── Columns explained ──
+              _InfoSection(
+                icon: Icons.view_column_rounded,
+                title: 'Columns',
+                color: c.accent,
+                items: const [
+                  _InfoItem('1H', 'Hourly signal — for active traders who check positions a few times a day.'),
+                  _InfoItem('4H', '4-hour signal — swing traders\' sweet spot. Fewer signals, less noise.'),
+                  _InfoItem('1D', 'Daily signal — one signal per day. Best for most investors.'),
+                  _InfoItem('1W', 'Weekly signal — macro trend confirmation. Changes slowly; high quality.'),
+                  _InfoItem('WIN (1D)',
+                      'Win rate from daily backtests over the past year — % of trades that were profitable.'),
+                  _InfoItem('RET (1D)',
+                      'Compounded return from daily backtests over the past year. Positive = made money.'),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // ── Signal badges ──
+              _InfoSection(
+                icon: Icons.label_rounded,
+                title: 'Signal badges',
+                color: c.textSecondary,
+                items: [
+                  _InfoItem('BUY', 'The strategy thinks price is likely to go up from here.', badgeDir: 'BUY', c: c),
+                  _InfoItem('SELL', 'The strategy thinks price is likely to go down from here.', badgeDir: 'SELL', c: c),
+                  _InfoItem('HOLD', 'No strong edge detected — stay flat or hold an existing position.', badgeDir: 'HOLD', c: c),
+                  const _InfoItem('—', 'Not applicable for this timeframe (e.g. S9 only runs on 1H).'),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // ── Strategies ──
+              _InfoSection(
+                icon: Icons.psychology_rounded,
+                title: 'Strategies (S1 – S9)',
+                color: c.textSecondary,
+                items: const [
+                  _InfoItem('S1 – S3', 'Foundation strategies: pure technical analysis, multi-factor, and a hybrid that blends charts with news sentiment.'),
+                  _InfoItem('S4 – S6', 'Regime-aware strategies that detect whether the market is trending, ranging, or volatile before signalling.'),
+                  _InfoItem('S7 – S8', 'Institutional-grade: APEX probabilistic engine (S7) and a consensus vote across S4/S5/S7 (S8).'),
+                  _InfoItem('S9', 'Silver Liquidity Sweep — monitors large-order liquidity sweeps in silver futures. Only valid on 1H.'),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // ── Enhanced ──
+              _InfoSection(
+                icon: Icons.bolt_rounded,
+                title: 'Enhanced strategies (S1+ – S9+)',
+                color: c.accent,
+                items: const [
+                  _InfoItem('What is S+?',
+                      'Each S+ variant layers a higher-timeframe trend filter on top of the base strategy. A signal is only issued when the short-term setup AND the bigger-picture trend agree — this cuts false signals at the cost of fewer trades.'),
+                  _InfoItem('When to prefer S+ over S',
+                      'In choppy or sideways markets S+ stays quiet while S may fire too often. In strong trends both tend to agree, giving you extra confidence.'),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // ── How to use ──
+              _InfoSection(
+                icon: Icons.lightbulb_rounded,
+                title: 'How to use this table',
+                color: c.warning,
+                items: const [
+                  _InfoItem('Look for consensus',
+                      'When multiple strategies show the same direction across multiple timeframes, the signal is stronger.'),
+                  _InfoItem('Timeframe alignment',
+                      'A BUY on 1D confirmed by a BUY on 4H and 1H is more reliable than a lone 1M signal going the opposite way.'),
+                  _InfoItem('Win% + Return together',
+                      'High Win% with low Return can mean the wins are small. High Return with low Win% means big wins and big losses — higher risk. Look for both to be healthy.'),
+                  _InfoItem('Small trade count warning',
+                      'S9 may only have 5–15 trades in a year — treat its stats as illustrative, not statistically firm.'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ]),
+    ),
+  );
+}
+
+class _InfoSection extends StatelessWidget {
+  const _InfoSection({
+    required this.icon,
+    required this.title,
+    required this.color,
+    required this.items,
+  });
+  final IconData icon;
+  final String title;
+  final Color color;
+  final List<_InfoItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(icon, size: 14, color: color),
+        const SizedBox(width: 6),
+        Text(title,
+            style: AppTypography.labelMd
+                .copyWith(color: c.textPrimary, fontWeight: FontWeight.w700)),
+      ]),
+      const SizedBox(height: 8),
+      Container(
+        decoration: BoxDecoration(
+          color: c.surfaceCard,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(children: [
+          for (int i = 0; i < items.length; i++) ...[
+            items[i],
+            if (i < items.length - 1)
+              Divider(height: 1, color: c.border),
+          ],
+        ]),
+      ),
+    ]);
+  }
+}
+
+class _InfoItem extends StatelessWidget {
+  const _InfoItem(this.term, this.definition, {this.badgeDir, this.c});
+  final String term;
+  final String definition;
+  final String? badgeDir;
+  final AppPalette? c;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = c ?? context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        if (badgeDir != null) ...[
+          _TraceBadge(direction: badgeDir, isDash: false, c: palette),
+          const SizedBox(width: 10),
+        ] else ...[
+          SizedBox(
+            width: 76,
+            child: Text(term,
+                style: AppTypography.labelSm
+                    .copyWith(color: palette.textPrimary, fontWeight: FontWeight.w700)),
+          ),
+          const SizedBox(width: 8),
+        ],
+        Expanded(
+          child: Text(definition,
+              style: AppTypography.xs.copyWith(color: palette.textSecondary)),
+        ),
+      ]),
+    );
+  }
+}
+
+// Column header row — uses same flex weights as data rows so columns align.
+class _TraceColumnHeaders extends StatelessWidget {
+  const _TraceColumnHeaders({required this.c});
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppTypography.xs.copyWith(
+        color: c.textMuted, fontWeight: FontWeight.w700, letterSpacing: 0.6);
+    return Padding(
+      padding: const EdgeInsets.only(left: 3 + 10, right: 10), // left: accent border + padding
+      child: Row(children: [
+        Expanded(flex: _kLabelFlex, child: Text('STRAT', style: s)),
+        Expanded(flex: _kTfFlex, child: Text('1H', style: s, textAlign: TextAlign.center)),
+        Expanded(flex: _kTfFlex, child: Text('4H', style: s, textAlign: TextAlign.center)),
+        Expanded(flex: _kTfFlex, child: Text('1D', style: s, textAlign: TextAlign.center)),
+        Expanded(flex: _kTfFlex, child: Text('1W', style: s, textAlign: TextAlign.center)),
+        Expanded(flex: _kWinFlex, child: Text('WIN', style: s, textAlign: TextAlign.center)),
+        Expanded(flex: _kRetFlex, child: Text('RET(1D)', style: s, textAlign: TextAlign.end)),
+      ]),
+    );
+  }
+}
+
+// Rounded card wrapping a base + enhanced row pair.
+class _TracePairCard extends StatelessWidget {
+  const _TracePairCard({
+    required this.pair,
+    required this.traceData,
+    required this.btIndex,
+    required this.tfs,
+    required this.s9Ids,
+    required this.c,
+  });
+
+  final SignalTracePair pair;
+  final Map<String, List<SignalTracePair>> traceData;
+  // btIndex[tf][stratId] → BacktestResult for that TF
+  final Map<String, Map<String, BacktestResult>> btIndex;
+  final List<String> tfs;
+  final Set<String> s9Ids;
+  final AppPalette c;
+
+  String? _dirFor(String tf, String stratId) {
+    final list = traceData[tf];
+    if (list == null) return null;
+    for (final p in list) {
+      if (p.baseId == stratId) return p.baseDir;
+      if (p.enhId  == stratId) return p.enhDir;
+    }
+    return null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      clipBehavior: Clip.hardEdge,
+      child: Column(children: [
+        _TraceDataRow(
+          label: 'S${pair.baseId}',
+          stratId: pair.baseId,
+          isEnhanced: false,
+          tfs: tfs,
+          s9Ids: s9Ids,
+          dirFor: _dirFor,
+          btIndex: btIndex,
+          c: c,
+        ),
+        Divider(height: 1, thickness: 1, color: c.border),
+        _TraceDataRow(
+          label: 'S${pair.baseId}+',
+          stratId: pair.enhId,
+          isEnhanced: true,
+          tfs: tfs,
+          s9Ids: s9Ids,
+          dirFor: _dirFor,
+          btIndex: btIndex,
+          c: c,
+        ),
+      ]),
+    );
+  }
+}
+
+// Per-TF win%/ret% helper — computes stats from the backtest for the given TF and stratId.
+({double? win, double? ret}) _tfStats(
+    Map<String, Map<String, BacktestResult>> btIndex, String tf, String stratId) {
+  final log = btIndex[tf]?[stratId]?.tradeLog ?? [];
+  if (log.isEmpty) return (win: null, ret: null);
+  final wins = log.where((t) => t.win).length;
+  double equity = 1.0;
+  for (final t in log) { equity *= 1 + t.returnPct / 100; }
+  return (win: wins / log.length * 100, ret: (equity - 1) * 100);
+}
+
+// A single strategy row inside a card.
+class _TraceDataRow extends StatelessWidget {
+  const _TraceDataRow({
+    required this.label,
+    required this.stratId,
+    required this.isEnhanced,
+    required this.tfs,
+    required this.s9Ids,
+    required this.dirFor,
+    required this.btIndex,
+    required this.c,
+  });
+
+  final String label;
+  final String stratId;
+  final bool isEnhanced;
+  final List<String> tfs;
+  final Set<String> s9Ids;
+  final String? Function(String tf, String stratId) dirFor;
+  final Map<String, Map<String, BacktestResult>> btIndex;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final isS9 = s9Ids.contains(stratId);
+
+    // For win/ret we show a single column pair — use 1D as the representative TF
+    // (most data, most reliable) and label it clearly.
+    final stats1d = _tfStats(btIndex, '1d', stratId);
+    final winRate1y   = stats1d.win;
+    final totalReturn = stats1d.ret;
+
+    final retColor = totalReturn == null
+        ? c.textFaint
+        : totalReturn >= 0 ? c.positive : c.danger;
+    final winColor = winRate1y == null
+        ? c.textFaint
+        : winRate1y >= 50 ? c.positive : c.danger;
+
+    final retStr = totalReturn == null
+        ? '—'
+        : '${totalReturn >= 0 ? '+' : ''}${totalReturn.toStringAsFixed(0)}%';
+    final winStr = winRate1y == null
+        ? '—'
+        : '${winRate1y.toStringAsFixed(0)}%';
+
+    return IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        // Left accent rail
+        Container(
+          width: 3,
+          color: isEnhanced ? c.accent : Colors.transparent,
+        ),
+        // Content
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+            child: Row(children: [
+              // Strategy label
+              Expanded(
+                flex: _kLabelFlex,
+                child: Text(
+                  label,
+                  style: AppTypography.labelSm.copyWith(
+                    color: isEnhanced ? c.accent : c.textPrimary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              // 4 timeframe signal badges
+              for (final tf in tfs)
+                Expanded(
+                  flex: _kTfFlex,
+                  child: Center(
+                    child: _TraceBadge(
+                      direction: (isS9 && tf != '1h') ? null : dirFor(tf, stratId),
+                      isDash: isS9 && tf != '1h',
+                      c: c,
+                    ),
+                  ),
+                ),
+              // Win%
+              Expanded(
+                flex: _kWinFlex,
+                child: Text(winStr,
+                    style: AppTypography.xs.copyWith(
+                        color: winColor, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.center),
+              ),
+              // Return%
+              Expanded(
+                flex: _kRetFlex,
+                child: Text(retStr,
+                    style: AppTypography.xs.copyWith(
+                        color: retColor, fontWeight: FontWeight.w700),
+                    textAlign: TextAlign.end),
+              ),
+            ]),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// Signal direction badge — full word, vivid fill.
+class _TraceBadge extends StatelessWidget {
+  const _TraceBadge({required this.direction, required this.isDash, required this.c});
+  final String? direction;
+  final bool isDash;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isDash || direction == null) {
+      return Text('—',
+          style: AppTypography.xs.copyWith(color: c.textFaint),
+          textAlign: TextAlign.center);
+    }
+
+    final Color fg;
+    final Color bg;
+    switch (direction!.toUpperCase()) {
+      case 'BUY':
+        fg = c.positive;
+        bg = c.positive.withAlpha(50);
+      case 'SELL':
+        fg = c.danger;
+        bg = c.danger.withAlpha(50);
+      default:
+        fg = c.warning;
+        bg = c.warning.withAlpha(50);
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(
+        direction!,
+        style: AppTypography.xs.copyWith(
+            color: fg, fontWeight: FontWeight.w800, letterSpacing: 0.2),
+        textAlign: TextAlign.center,
+        maxLines: 1,
       ),
     );
   }

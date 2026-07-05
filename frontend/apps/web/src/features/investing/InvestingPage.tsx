@@ -1,8 +1,11 @@
+import { useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Fragment, useMemo, useState } from "react";
 import {
   MULTIBAGGER_COUNTRIES,
   type CountryTariff,
+  type EtfCategory,
+  type EtfItem,
   type MultibaggerCountry,
   type QuiverItem,
   type SectorBestSetupsGroup,
@@ -14,6 +17,7 @@ import {
   Chip,
   ChipRow,
   ErrorView,
+  fmtCompact,
   fmtPct,
   fmtPrice,
   FreshnessBar,
@@ -24,15 +28,17 @@ import { BestSetupsCard } from "../../components/BestSetupsCard";
 import { InstitutionalFlowCard } from "../../components/InstitutionalFlowCard";
 
 // Mobile tab order — Exposure is the default landing tab.
+// Congress and House Trades were removed (2026-07): their only live data sources
+// (Quiver's free congress-trading API, FMP's house/senate-trading plan) are both
+// dead — see CLAUDE.md Known Pitfalls. Don't re-add without a working data source.
 const TABS = [
   "Exposure",
   "Dashboard",
   "Multibaggers",
   "Presidential",
-  "Congress",
   "Smart $",
-  "House Trades",
-  "Earnings",
+  "Earnings Calendar",
+  "ETFs",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -53,10 +59,9 @@ export function InvestingPage() {
       {tab === "Dashboard" && <DashboardTab />}
       {tab === "Multibaggers" && <MultibaggersTab />}
       {tab === "Presidential" && <PresidentialTab />}
-      {tab === "Congress" && <CongressTab />}
       {tab === "Smart $" && <SmartMoneyTab />}
-      {tab === "House Trades" && <HouseTradesTab />}
-      {tab === "Earnings" && <EarningsTab />}
+      {tab === "Earnings Calendar" && <EarningsTab />}
+      {tab === "ETFs" && <EtfExplorerTab />}
     </div>
   );
 }
@@ -468,6 +473,7 @@ function ExposureTab() {
             <tr>
               <th>Country</th>
               <th className="num">US tariff rate</th>
+              <th className="num">Impact score</th>
               <th>Sectors</th>
             </tr>
           </thead>
@@ -490,13 +496,27 @@ function ExposureTab() {
                   >
                     {c.tariffRate}%
                   </td>
+                  <td className="num">
+                    {c.impactScore != null ? (
+                      <span
+                        style={{
+                          color: c.impactScore >= 70 ? "var(--danger)" : c.impactScore >= 40 ? "var(--warning)" : "var(--positive)",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {c.impactScore}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td className="cell-sub">
                     {c.sectors.length} sectors {expanded === c.countryCode ? "▾" : "▸"}
                   </td>
                 </tr>
                 {expanded === c.countryCode && (
                   <tr>
-                    <td colSpan={3} style={{ background: "var(--surface)" }}>
+                    <td colSpan={4} style={{ background: "var(--surface)" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: "var(--s2)", padding: "var(--s2) 0" }}>
                         {c.laymanExplanation && (
                           <p style={{ color: "var(--text-secondary)", whiteSpace: "normal", maxWidth: 720 }}>
@@ -522,9 +542,10 @@ function ExposureTab() {
   );
 }
 
-// ── Congress / Smart $ (Quiver top-10 portfolios) ────────────────────────
+// ── Smart $ (Quiver top-10 portfolios) ────────────────────────────────────
 
 function QuiverTable(props: { items: QuiverItem[] }) {
+  const showLobbying = props.items.some((i) => i.lobbyingGrowth);
   return (
     <table className="tbl">
       <thead>
@@ -534,6 +555,7 @@ function QuiverTable(props: { items: QuiverItem[] }) {
           <th className="num">Price</th>
           <th className="num">Change %</th>
           <th className="num">Weight</th>
+          {showLobbying && <th className="num">Lobbying</th>}
         </tr>
       </thead>
       <tbody>
@@ -549,30 +571,19 @@ function QuiverTable(props: { items: QuiverItem[] }) {
               {fmtPct(i.changePercent)}
             </td>
             <td className="num">{i.weight != null ? `${i.weight.toFixed(1)}%` : "—"}</td>
+            {showLobbying && (
+              <td className="num">
+                {i.lobbyingGrowth ? (
+                  <span style={{ color: "var(--warning)", fontWeight: 600 }}>{i.lobbyingGrowth} QoQ</span>
+                ) : (
+                  "—"
+                )}
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
     </table>
-  );
-}
-
-function CongressTab() {
-  const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["quiver", "congress"],
-    queryFn: () => api.getQuiverCongress(),
-    staleTime: 4 * 3600_000,
-  });
-  if (error)
-    return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
-  if (isLoading || !data) return <SkeletonList rows={10} />;
-  return (
-    <Card>
-      <div className="page-header">
-        <strong>{data.meta?.label ?? "Top congress buys"}</strong>
-        <FreshnessBar lastUpdated={data.lastUpdated} />
-      </div>
-      <QuiverTable items={data.items} />
-    </Card>
   );
 }
 
@@ -666,82 +677,260 @@ function PresidentialTab() {
   );
 }
 
-// ── House Trades (FMP PTR filings) ───────────────────────────────────────
+// ── ETF Explorer ──────────────────────────────────────────────────────────
 
-function HouseTradesTab() {
-  const [query, setQuery] = useState("");
+const ETF_CATEGORIES: { id: EtfCategory | ""; label: string }[] = [
+  { id: "", label: "All" },
+  { id: "sector", label: "Sector" },
+  { id: "broad", label: "Broad Market" },
+  { id: "international", label: "International" },
+  { id: "fixed_income", label: "Fixed Income" },
+  { id: "commodity", label: "Commodity" },
+  { id: "thematic", label: "Thematic" },
+  { id: "leveraged", label: "Leveraged/Inverse" },
+];
+
+const RRG_QUADRANTS = ["Leading", "Improving", "Weakening", "Lagging"] as const;
+
+function EtfExplorerTab() {
+  const [category, setCategory] = useState<EtfCategory | "">("");
+  const [view, setView] = useState<"list" | "rotation">("list");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
+      {/* Each filter dimension gets its own labeled row — a single row sharing
+          space between 8 category chips and the view toggle left most
+          categories cramped or wrapping unpredictably. */}
+      <Card>
+        <div className="cell-sub" style={{ marginBottom: "var(--s2)" }}>
+          Category
+        </div>
+        <ChipRow>
+          {ETF_CATEGORIES.map((c) => (
+            <Chip
+              key={c.id || "all"}
+              label={c.label}
+              active={category === c.id}
+              onClick={() => setCategory(c.id)}
+            />
+          ))}
+        </ChipRow>
+        <div className="cell-sub" style={{ margin: "var(--s3) 0 var(--s2)" }}>
+          View
+        </div>
+        <ChipRow>
+          <Chip label="List" active={view === "list"} onClick={() => setView("list")} />
+          <Chip label="Rotation" active={view === "rotation"} onClick={() => setView("rotation")} />
+        </ChipRow>
+      </Card>
+      {view === "list" ? (
+        <EtfListView category={category} />
+      ) : (
+        <EtfRotationView category={category} />
+      )}
+    </div>
+  );
+}
+
+function EtfListView(props: { category: EtfCategory | "" }) {
+  const navigate = useNavigate();
+  const [expanded, setExpanded] = useState<string | null>(null);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["house-trades"],
-    queryFn: () => api.getHouseTrades(),
-    staleTime: 4 * 3600_000,
+    queryKey: ["etf", "list", props.category],
+    queryFn: () => api.getEtfList(props.category || undefined),
+    staleTime: 10 * 60_000,
   });
-
-  const rows = useMemo(() => {
-    let trades = data?.trades ?? [];
-    const q = query.trim().toLowerCase();
-    if (q) {
-      trades = trades.filter(
-        (t) =>
-          (t.representative ?? "").toLowerCase().includes(q) ||
-          (t.ticker ?? "").toLowerCase().includes(q),
-      );
-    }
-    return trades.slice(0, 300);
-  }, [data, query]);
 
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
-  if (isLoading || !data) return <SkeletonList rows={12} />;
+  if (isLoading || !data) return <SkeletonList rows={10} />;
+
   return (
-    <>
-      <div className="toolbar">
-        <input
-          className="search-input"
-          placeholder="Filter by representative or ticker…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+    <Card>
+      <div className="page-header">
+        <strong>{data.items.length} ETFs</strong>
         <FreshnessBar lastUpdated={data.lastUpdated} />
       </div>
-      <div className="tbl-wrap" style={{ maxHeight: "70vh" }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Representative</th>
-              <th>Ticker</th>
-              <th>Type</th>
-              <th>Amount</th>
-              <th>Transaction</th>
-              <th>Disclosed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((t, i) => (
-              <tr key={i}>
-                <td className="cell-main">
-                  {t.representative ?? "—"}{" "}
-                  <span className="cell-sub">
-                    {t.state ?? ""}
-                    {t.district ? `-${t.district}` : ""}
-                  </span>
-                </td>
-                <td>{t.ticker || "—"}</td>
+      <table className="tbl">
+        <thead>
+          <tr>
+            <th>ETF</th>
+            <th className="num">Price</th>
+            <th className="num">Change %</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.items.map((item) => (
+            <Fragment key={item.symbol}>
+              <tr
+                className="clickable"
+                onClick={() =>
+                  void navigate({
+                    to: "/asset/$symbol",
+                    params: { symbol: item.symbol },
+                    search: { name: item.name },
+                  })
+                }
+              >
                 <td>
-                  <span
-                    className="ui-badge"
-                    data-tone={(t.type ?? "").includes("purchase") ? "buy" : "sell"}
-                  >
-                    {t.type ?? "—"}
-                  </span>
+                  <span style={{ marginRight: 8 }}>{item.emoji}</span>
+                  <span className="cell-main">{item.symbol}</span>{" "}
+                  <span className="cell-sub">{item.name}</span>
+                  {item.risk === "leveraged" && (
+                    <span className="ui-badge" data-tone="sell" style={{ marginLeft: 6 }}>
+                      LEV
+                    </span>
+                  )}
                 </td>
-                <td className="cell-sub">{t.amount ?? "—"}</td>
-                <td className="cell-sub">{t.transaction_date ?? "—"}</td>
-                <td className="cell-sub">{t.disclosure_date ?? "—"}</td>
+                <td className="num cell-main">
+                  {item.price != null ? `$${fmtPrice(item.price)}` : "—"}
+                </td>
+                <td className={`num ${changeClass(item.changePercent)}`}>{fmtPct(item.changePercent)}</td>
+                <td>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setExpanded(expanded === item.symbol ? null : item.symbol);
+                    }}
+                  >
+                    {expanded === item.symbol ? "Hide" : "Fund data"}
+                  </button>
+                </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
+              {expanded === item.symbol && (
+                <tr>
+                  <td colSpan={4}>
+                    <EtfProfilePanel item={item} />
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function EtfProfilePanel(props: { item: EtfItem }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["etf", "profile", props.item.symbol],
+    queryFn: () => api.getEtfProfile(props.item.symbol),
+    staleTime: 24 * 3600_000,
+  });
+
+  if (isLoading || !data) return <SkeletonList rows={3} height={20} />;
+  if (error) return <div className="cell-sub">Fund data unavailable right now.</div>;
+
+  const topSectors = [...data.sectorWeightings]
+    .filter((s) => s.weightPct != null)
+    .sort((a, b) => (b.weightPct ?? 0) - (a.weightPct ?? 0))
+    .slice(0, 8);
+
+  return (
+    <div style={{ display: "flex", gap: "var(--s6)", flexWrap: "wrap", padding: "var(--s3) 0" }}>
+      <div>
+        <div className="cell-sub">Expense Ratio</div>
+        <div className="cell-main">
+          {data.expenseRatio != null ? `${data.expenseRatio.toFixed(2)}%` : "—"}
+        </div>
       </div>
-    </>
+      <div>
+        <div className="cell-sub">AUM</div>
+        <div className="cell-main">{data.aum != null ? `$${fmtCompact(data.aum)}` : "—"}</div>
+      </div>
+      {data.family && (
+        <div>
+          <div className="cell-sub">Issuer</div>
+          <div className="cell-main">{data.family}</div>
+        </div>
+      )}
+      {topSectors.length > 0 && (
+        <div>
+          <div className="cell-sub">Sector Weights</div>
+          {topSectors.map((s) => (
+            <div key={s.sector} className="cell-sub">
+              {s.sector}: {s.weightPct?.toFixed(1)}%
+            </div>
+          ))}
+        </div>
+      )}
+      {data.holdings.length > 0 && (
+        <div>
+          <div className="cell-sub">Top Holdings</div>
+          {data.holdings.map((h) => (
+            <div key={h.symbol ?? h.name} className="cell-sub">
+              {h.symbol}: {h.weightPct?.toFixed(1)}%
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Must match ETF_ROTATION_CATEGORIES in server/data/etf_universe.ts.
+const RRG_ELIGIBLE_CATEGORIES = new Set<EtfCategory>([
+  "sector",
+  "broad",
+  "international",
+  "thematic",
+]);
+
+function EtfRotationView(props: { category: EtfCategory | "" }) {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["etf", "rotation"],
+    queryFn: () => api.getEtfRotation(),
+    staleTime: 15 * 60_000,
+  });
+
+  if (props.category && !RRG_ELIGIBLE_CATEGORIES.has(props.category)) {
+    return (
+      <Card>
+        <div className="cell-sub" style={{ textAlign: "center", padding: "var(--s4) 0" }}>
+          RRG rotation only applies to Sector, Broad Market, International, and Thematic
+          ETFs — not available for this category.
+        </div>
+      </Card>
+    );
+  }
+
+  if (error)
+    return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
+  if (isLoading || !data) return <SkeletonList rows={6} />;
+
+  const filtered = props.category
+    ? data.items.filter((i) => i.category === props.category)
+    : data.items;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
+      {RRG_QUADRANTS.map((q) => {
+        const items = filtered.filter((i) => i.quadrant === q);
+        if (items.length === 0) return null;
+        return (
+          <Card key={q}>
+            <strong>{q}</strong>
+            <table className="tbl">
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.symbol}>
+                    <td>
+                      <span style={{ marginRight: 8 }}>{item.emoji}</span>
+                      <span className="cell-main">{item.symbol}</span>{" "}
+                      <span className="cell-sub">{item.name}</span>
+                    </td>
+                    <td className="num cell-sub">rsRatio {item.rsRatio?.toFixed(1) ?? "—"}</td>
+                    <td className="num cell-sub">rsMomentum {item.rsMomentum?.toFixed(1) ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        );
+      })}
+    </div>
   );
 }

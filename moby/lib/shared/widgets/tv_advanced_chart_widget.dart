@@ -73,7 +73,7 @@ class _TvAdvancedChartWidgetState extends State<TvAdvancedChartWidget> {
     "details": false,
     "hotlist": false,
     "calendar": false,
-    "hide_side_toolbar": false,
+    "hide_side_toolbar": true,
     "support_host": "https://www.tradingview.com"
   }
   </script>

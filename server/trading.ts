@@ -12,14 +12,22 @@
 
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { Redis } from "@upstash/redis";
+import { adminFirestore } from "./lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { z } from "zod";
 import pLimit from "p-limit";
 import { yahooProvider } from "./providers";
 import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
-import { fetchSp500Constituents, fetchYahooQuoteSummary } from "./routes/heatmap";
+import { fetchSp500Constituents, fetchYahooQuoteSummary, fetchYahooQuoteSummaryBatch } from "./routes/heatmap";
 import { fetchInsiderClusters, KNOWN_NAMES } from "./routes/quiver";
 import { fetchBatch } from "./routes/shared";
 import { isLeader } from "./lib/leader";
+import {
+  CORRELATION_FIXED_ASSETS,
+  CORRELATION_STOCK_POOLS,
+  type CorrelationAsset,
+} from "./data/correlation_universe";
 import {
   getSectorQuadrants,
   GICS_TO_ETF_SECTOR,
@@ -275,67 +283,44 @@ let _yfCrumbBackoffUntil = 0;
 let _yfCrumbConsecutiveFails = 0;
 const YF_CRUMB_BACKOFFS_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000];
 
-// Yahoo Finance uses a 307 → guce.yahoo.com/consent redirect that sets the GUCS session
-// cookie on the intermediate response. Node.js fetch with redirect:"follow" doesn't accumulate
-// cookies across hops (no cookie jar), so we follow redirects manually and collect every
-// Set-Cookie header along the way.
-function yfExtractCookies(headers: Headers): Map<string, string> {
-  const h = headers as any;
-  const arr: string[] = typeof h.getSetCookie === "function"
-    ? h.getSetCookie()
-    : (headers.get("set-cookie") ?? "").split(/,\s*(?=[A-Za-z0-9_-]+=)/).filter(Boolean);
-  const jar = new Map<string, string>();
-  for (const c of arr) {
-    const pair = c.split(";")[0];
-    const eq = pair.indexOf("=");
-    if (eq > 0) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
-  }
-  return jar;
-}
-
+// fc.yahoo.com seeds the A1/A3 auth cookies needed for the crumb endpoint without
+// going through finance.yahoo.com/quote's redirect chain. That chain now terminates
+// in a GDPR consent interstitial (guce.yahoo.com → consent.yahoo.com/v2/collectConsent,
+// HTTP 200) that never redirects back, so the old approach collected only decorative
+// cookies (dflow/GUCS/OTHD) and the crumb endpoint always 429'd. Mirrors the working
+// approach in server/routes/heatmap.ts's refreshYahooCrumbInner().
 async function fetchYFCrumb(): Promise<{ crumb: string; cookie: string } | null> {
-  const jar = new Map<string, string>();
-  const cookieHeader = () => [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-
-  const yfGet = (url: string) => fetch(url, {
-    headers: { "User-Agent": YF_CRUMB_UA, "Accept": "text/html", "Cookie": cookieHeader() },
-    signal: AbortSignal.timeout(12_000),
-    redirect: "manual",
-  });
-
   try {
-    let res = await yfGet("https://finance.yahoo.com/quote/AAPL");
-    for (const [k, v] of yfExtractCookies(res.headers)) jar.set(k, v);
-
-    // Follow the redirect chain (typically 307 → guce.yahoo.com/consent → back), up to 5 hops.
-    for (let hop = 0; hop < 5 && [301, 302, 303, 307, 308].includes(res.status); hop++) {
-      const location = res.headers.get("location");
-      if (!location) break;
-      const next = location.startsWith("http") ? location : `https://finance.yahoo.com${location}`;
-      res = await yfGet(next);
-      for (const [k, v] of yfExtractCookies(res.headers)) jar.set(k, v);
-    }
-
-    if (jar.size === 0) {
-      console.warn("[YFCrumb] No cookies after redirect chain, final status:", res.status);
+    const cookieRes = await fetch("https://fc.yahoo.com", {
+      headers: { "User-Agent": YF_CRUMB_UA },
+      signal: AbortSignal.timeout(10_000),
+      redirect: "manual",
+    });
+    const cookie = (cookieRes.headers.get("set-cookie") ?? "")
+      .split(/,(?=\s*[A-Z0-9_-]+=)/)
+      .map(c => c.split(";")[0].trim())
+      .filter(Boolean)
+      .join("; ");
+    if (!cookie) {
+      console.warn("[YFCrumb] No cookies from fc.yahoo.com, status:", cookieRes.status);
       return null;
     }
 
     const crumbRes = await fetch("https://query2.finance.yahoo.com/v1/test/getcrumb", {
-      headers: { "User-Agent": YF_CRUMB_UA, "Cookie": cookieHeader() },
+      headers: { "User-Agent": YF_CRUMB_UA, "Cookie": cookie },
       signal: AbortSignal.timeout(10_000),
     });
     if (!crumbRes.ok) {
-      console.warn("[YFCrumb] Crumb fetch failed:", crumbRes.status, "cookies:", [...jar.keys()].join(","));
+      console.warn("[YFCrumb] Crumb fetch failed:", crumbRes.status);
       return null;
     }
-    const crumb = await crumbRes.text();
+    const crumb = (await crumbRes.text()).trim();
     if (!crumb || crumb.startsWith("{") || crumb.length > 20) {
       console.warn("[YFCrumb] Unexpected crumb response:", crumb.slice(0, 60));
       return null;
     }
-    console.log("[YFCrumb] OK — cookies:", [...jar.keys()].join(","), "crumb len:", crumb.length);
-    return { crumb, cookie: cookieHeader() };
+    console.log("[YFCrumb] OK — crumb len:", crumb.length);
+    return { crumb, cookie };
   } catch (err) {
     console.warn("[YFCrumb] Exception:", err);
     return null;
@@ -832,7 +817,7 @@ function calculateIndicators(candles: OHLCV[]): Indicators {
 
 // ─── History Fetching ─────────────────────────────────────────────────────────
 
-type Timeframe = "1m" | "5m" | "1h" | "4h" | "1d";
+type Timeframe = "1m" | "5m" | "1h" | "4h" | "1d" | "1w";
 
 const TF_PARAMS: Record<Timeframe, { interval: string; range: string }> = {
   "1m": { interval: "1m",  range: "1d"  },
@@ -840,10 +825,55 @@ const TF_PARAMS: Record<Timeframe, { interval: string; range: string }> = {
   "1h": { interval: "60m", range: "1mo" },
   "4h": { interval: "60m", range: "3mo" },
   "1d": { interval: "1d",  range: "1y"  },
+  "1w": { interval: "1wk", range: "5y"  },
 };
 
 const historyCache = new Map<string, { data: OHLCV[]; ts: number }>();
 const HISTORY_TTL = 5 * 60_000;
+
+// Backtest-specific fetch params: extended ranges give 3–5× more candles than signal fetches.
+// Separate cache so signal latency is unaffected.
+const BACKTEST_TF_PARAMS: Record<Timeframe, { interval: string; range: string }> = {
+  "1m": { interval: "1m",  range: "5d"  },
+  "5m": { interval: "5m",  range: "1mo" },
+  "1h": { interval: "60m", range: "6mo" },
+  "4h": { interval: "60m", range: "6mo" },
+  "1d": { interval: "1d",  range: "2y"  },
+  "1w": { interval: "1wk", range: "5y"  },
+};
+const historyBtCache = new Map<string, { data: OHLCV[]; ts: number }>();
+const HISTORY_BT_TTL = 30 * 60_000;
+
+async function fetchHistoryBt(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
+  const cacheKey = `bt|${symbol}|${tf}`;
+  const cached = historyBtCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < HISTORY_BT_TTL) return cached.data;
+
+  const params = BACKTEST_TF_PARAMS[tf];
+  try {
+    let candles: OHLCV[] = (await yahooProvider.fetchHistoryCandles(symbol, params.interval, params.range)) as OHLCV[];
+    if (tf === "4h") {
+      const aggregated: OHLCV[] = [];
+      for (let i = 0; i < candles.length; i += 4) {
+        const group = candles.slice(i, i + 4);
+        if (group.length === 0) continue;
+        aggregated.push({
+          time: group[0].time as number,
+          open: group[0].open,
+          high: Math.max(...group.map(c => c.high)),
+          low: Math.min(...group.map(c => c.low)),
+          close: group[group.length - 1].close,
+          volume: group.reduce((s, c) => s + c.volume, 0),
+        });
+      }
+      candles = aggregated;
+    }
+    historyBtCache.set(cacheKey, { data: candles, ts: Date.now() });
+    return candles;
+  } catch {
+    return [];
+  }
+}
 
 async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
   const cacheKey = `${symbol}|${tf}`;
@@ -883,7 +913,9 @@ async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
 // ─── Signal Generation ────────────────────────────────────────────────────────
 
 type SignalDirection = "BUY" | "HOLD" | "SELL";
-type StrategyId = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+type BaseStrategyId = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+type EnhancedStrategyId = "10" | "11" | "12" | "13" | "14" | "15" | "16" | "17" | "18";
+type StrategyId = BaseStrategyId | EnhancedStrategyId;
 type Regime5 = "quiet_trend" | "quiet_range" | "volatile_trend" | "chaotic";
 
 export interface SignalResult {
@@ -906,6 +938,10 @@ export interface SignalResult {
   htfAlignment?: string;
   tradeable?: boolean;
   ivPercentile?: number;
+  vwap?: number | null;
+  vwapDeviation?: number | null;
+  vixAtSignal?: number | null;
+  dynamicThreshold?: number | null;
 }
 
 const signalCache = new Map<string, { data: SignalResult; ts: number }>();
@@ -1500,6 +1536,13 @@ function calcVwap(candles: OHLCV[], period = 20): number | null {
   return sumVol > 0 ? Math.round((sumTPV / sumVol) * 10000) / 10000 : null;
 }
 
+// Intraday VWAP over all supplied bars (used for signal enrichment with 5m session bars).
+function calcVwapIntraday(candles: OHLCV[]): number | null {
+  const sumTPV = candles.reduce((s, c) => s + ((c.high + c.low + c.close) / 3) * (c.volume ?? 0), 0);
+  const sumVol = candles.reduce((s, c) => s + (c.volume ?? 0), 0);
+  return sumVol > 0 ? Math.round(sumTPV / sumVol * 10000) / 10000 : null;
+}
+
 function calcRsiSeries(closes: number[], period = 14): number[] {
   if (closes.length < period + 1) return [];
   const changes = closes.slice(1).map((c, i) => c - closes[i]);
@@ -1969,7 +2012,7 @@ function strategyS9(
   const cur = candles[n - 1];
 
   // Session gate — bypass on daily/4h or when running backtest simulation
-  const bypassSession  = tf === "1d" || tf === "4h" || tf === "backtest";
+  const bypassSession  = tf === "1w" || tf === "1d" || tf === "4h" || tf === "backtest";
   const londonActive   = !bypassSession && isLondonKZ(cur.time);
   const nyActive       = !bypassSession && isNYKZ(cur.time);
   const postNewsActive = !bypassSession && isPostNewsCZ(cur.time);
@@ -2044,6 +2087,845 @@ function strategyS9(
 
   if (!inSession && !bypassSession) bullets.push(`Outside kill zones — ${sessionLabel}`);
   if (!nearFibLong && !nearFibShort) bullets.push(`Price outside POI zone — long: ${poiLongLow.toFixed(3)}–${poiLongHigh.toFixed(3)}, short: ${poiShortLow.toFixed(3)}–${poiShortHigh.toFixed(3)}`);
+  if (ema9 !== null) bullets.push(`9 EMA: ${ema9.toFixed(3)} — price ${price > ema9 ? "above" : "below"}`);
+
+  return { score: 0, bullets, swingHigh, swingLow };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ─── S1+–S9+: Enhanced Strategy Suite ────────────────────────────────────────
+// Each S*+ strategy applies the win-rate improvements identified in the audit.
+// Server params: S1+=10, S2+=11, S3+=12, S4+=13, S5+=14, S6+=15, S7+=16, S8+=17, S9+=18
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── S1+ helpers ──────────────────────────────────────────────────────────────
+
+function scoreIndicatorsPlus(
+  ind: Indicators,
+  price: number,
+  candles: OHLCV[],
+): { score: number; bullets: string[] } {
+  let score = 0;
+  let totalWeight = 0;
+  const bullets: string[] = [];
+
+  // Volume participation gate — thin vol dampens all signals
+  const volSma = calcVolumeSma(candles);
+  const currentVol = candles.length > 0 ? candles[candles.length - 1].volume : 0;
+  const volRatio = volSma && volSma > 0 ? currentVol / volSma : 1;
+  const volMult = volSma !== null ? (volRatio < 0.5 ? 0.55 : volRatio < 0.8 ? 0.82 : 1.0) : 1.0;
+  if (volSma !== null && volRatio < 0.5) {
+    bullets.push(`Very thin volume (${(volRatio * 100).toFixed(0)}% of avg) — signal confidence reduced`);
+  }
+
+  // RSI
+  if (ind.rsi !== null) {
+    totalWeight += 1.0;
+    if (ind.rsi < 30) { score += 1.0; bullets.push(`RSI oversold at ${ind.rsi.toFixed(1)} — reversal potential`); }
+    else if (ind.rsi > 70) { score -= 1.0; bullets.push(`RSI overbought at ${ind.rsi.toFixed(1)} — pullback watch`); }
+    else if (ind.rsi < 45) { score -= 0.3; bullets.push(`RSI at ${ind.rsi.toFixed(1)} leans slightly bearish`); }
+    else if (ind.rsi > 55) { score += 0.3; bullets.push(`RSI at ${ind.rsi.toFixed(1)} leans slightly bullish`); }
+    else { bullets.push(`RSI at ${ind.rsi.toFixed(1)} is neutral`); }
+  }
+
+  // MACD histogram sign + near-crossover bonus
+  if (ind.macdHistogram !== null) {
+    totalWeight += 1.0;
+    const histPos = ind.macdHistogram > 0;
+    score += histPos ? 0.6 : -0.6;
+    bullets.push(histPos ? "MACD histogram positive — bullish momentum" : "MACD histogram negative — bearish momentum");
+    // Near-crossover: histogram ≤ 8% of |macd line| → fresh momentum shift
+    if (ind.macd !== null && Math.abs(ind.macdHistogram) <= Math.abs(ind.macd) * 0.08 + 0.0001) {
+      score += histPos ? 0.2 : -0.2;
+      bullets.push("MACD near signal-line crossover — fresh momentum shift");
+    }
+  }
+
+  // EMA50
+  if (ind.ema50 !== null) {
+    totalWeight += 0.8;
+    if (price > ind.ema50) { score += 0.5; bullets.push(`Above EMA50 — medium-term uptrend`); }
+    else { score -= 0.5; bullets.push(`Below EMA50 — medium-term downtrend`); }
+  }
+
+  // EMA200
+  if (ind.ema200 !== null) {
+    totalWeight += 1.0;
+    if (price > ind.ema200) { score += 0.8; bullets.push("Above EMA200 — long-term bullish"); }
+    else { score -= 0.8; bullets.push("Below EMA200 — long-term bearish"); }
+  }
+
+  // Bollinger Bands
+  if (ind.bbUpper !== null && ind.bbLower !== null && ind.bbMid !== null) {
+    totalWeight += 0.8;
+    const bbRange = ind.bbUpper - ind.bbLower;
+    const pos = bbRange > 0 ? (price - ind.bbLower) / bbRange : 0.5;
+    if (pos < 0.2) { score += 0.7; bullets.push("Near lower Bollinger Band — oversold zone"); }
+    else if (pos > 0.8) { score -= 0.7; bullets.push("Near upper Bollinger Band — overbought zone"); }
+    else { bullets.push(`BB position: ${(pos * 100).toFixed(0)}% of range`); }
+  }
+
+  // ROC
+  if (ind.roc !== null) {
+    totalWeight += 0.5;
+    if (ind.roc > 5) { score += 0.4; bullets.push(`ROC +${ind.roc.toFixed(1)}% — strong upward momentum`); }
+    else if (ind.roc < -5) { score -= 0.4; bullets.push(`ROC ${ind.roc.toFixed(1)}% — strong downward momentum`); }
+    else { score += ind.roc > 0 ? 0.1 : -0.1; }
+  }
+
+  // OBV slope — S1+ addition
+  const obvSlope = calcObvSlope(candles);
+  if (obvSlope !== null) {
+    totalWeight += 0.5;
+    if (obvSlope > 0) { score += 0.4; bullets.push("OBV rising — institutional accumulation confirms direction"); }
+    else { score -= 0.4; bullets.push("OBV falling — institutional distribution, divergence risk"); }
+  }
+
+  const normalised = totalWeight > 0
+    ? Math.max(-1, Math.min(1, (score * volMult) / (totalWeight * 0.75)))
+    : 0;
+  return { score: normalised, bullets };
+}
+
+function strategyS1Plus(ind: Indicators, price: number, candles: OHLCV[]): { score: number; bullets: string[] } {
+  return scoreIndicatorsPlus(ind, price, candles);
+}
+
+// ── S2+ ───────────────────────────────────────────────────────────────────────
+
+function strategyS2Plus(ind: Indicators, price: number, candles: OHLCV[]): { score: number; bullets: string[] } {
+  const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
+  const { score: baseScore, bullets } = scoreIndicatorsPlus(ind, price, candles);
+
+  // Regime-aware weight adjustment instead of blanket vol multiplier
+  let regimeAdj = 1.0;
+  const rExtra: string[] = [];
+  if (ind.adx !== null && ind.adx > 25) {
+    regimeAdj = atrPct > 2 ? 0.88 : 1.05;
+    rExtra.push(`Trending (ADX ${ind.adx.toFixed(1)}) — trend weight applied`);
+  } else if (ind.adx !== null && ind.adx < 18) {
+    regimeAdj = 0.80;
+    rExtra.push(`Ranging (ADX ${ind.adx.toFixed(1)}) — momentum signals dampened`);
+  } else if (atrPct > 3) {
+    regimeAdj = 0.70;
+    rExtra.push(`High volatility (ATR ${atrPct.toFixed(1)}%) — reduce position size`);
+  } else if (atrPct < 0.8) {
+    regimeAdj = 1.10;
+    rExtra.push(`Low volatility (ATR ${atrPct.toFixed(1)}%) — signals more reliable`);
+  }
+
+  // Candle direction lock — penalise signals that contradict candle body direction
+  const n = candles.length;
+  let dirMult = 1.0;
+  const dExtra: string[] = [];
+  if (n > 0) {
+    const c = candles[n - 1];
+    const body = Math.abs(c.close - c.open);
+    const range = c.high - c.low;
+    const bodyPct = range > 0 ? body / range : 0;
+    const bullCandle = c.close > c.open;
+    if (bodyPct > 0.3) {
+      if (baseScore > 0.1 && !bullCandle) { dirMult = 0.72; dExtra.push("Bullish signal but red candle body — entry timing suboptimal"); }
+      else if (baseScore < -0.1 && bullCandle) { dirMult = 0.72; dExtra.push("Bearish signal but green candle body — entry timing suboptimal"); }
+      else { dExtra.push(`Candle body (${(bodyPct * 100).toFixed(0)}%) confirms signal direction`); }
+    }
+  }
+
+  const finalScore = Math.max(-1, Math.min(1, baseScore * regimeAdj * dirMult));
+  return { score: finalScore, bullets: [...rExtra, ...dExtra, ...bullets].slice(0, 6) };
+}
+
+// ── S3+ ───────────────────────────────────────────────────────────────────────
+
+function aggregateSentimentPlus(articles: NewsArticle[]): { score: number; count: number; freshHours: number } {
+  let totalWeight = 0;
+  let weightedSum = 0;
+  let relevantCount = 0;
+  let freshestHours = 999;
+
+  for (const article of articles) {
+    const { score, relevance } = scoreArticleEnhanced(article.title, article.publisher, article.publishedAt);
+    if (relevance < 0.5) continue; // stricter gate vs S3's 0.2
+    relevantCount++;
+    const hoursOld = (Date.now() - new Date(article.publishedAt).getTime()) / 3_600_000;
+    if (hoursOld < freshestHours) freshestHours = hoursOld;
+    const freshness = Math.exp(-hoursOld / 24);
+    const credibility = getSourceCredibility(article.publisher);
+    const weight = freshness * credibility * relevance;
+    weightedSum += score * weight;
+    totalWeight += weight;
+  }
+
+  return {
+    score: totalWeight > 0 ? Math.max(-1, Math.min(1, weightedSum / totalWeight)) : 0,
+    count: relevantCount,
+    freshHours: freshestHours,
+  };
+}
+
+function strategyS3Plus(
+  ind: Indicators,
+  price: number,
+  candles: OHLCV[],
+  articles: NewsArticle[],
+): { score: number; bullets: string[] } {
+  const { score: techScore, bullets: techBullets } = scoreIndicatorsPlus(ind, price, candles);
+  const { score: sentScore, count, freshHours } = aggregateSentimentPlus(articles);
+
+  let techW = 0.65;
+  let newsW = 0.35;
+  const nb: string[] = [];
+
+  if (count < 3) {
+    techW = 1.0; newsW = 0.0;
+    nb.push(`Only ${count} high-relevance article(s) found — falling back to pure technical signal`);
+  } else if (freshHours > 6) {
+    techW = 0.80; newsW = 0.20;
+    nb.push(`Latest article ${freshHours.toFixed(0)}h old — blend shifted 80/20 tech/news`);
+  } else {
+    const label = sentScore > 0.05 ? "positive" : sentScore < -0.05 ? "negative" : "neutral";
+    nb.push(`${count} high-relevance articles (${freshHours.toFixed(1)}h fresh) — sentiment ${label}, weighted 65/35`);
+  }
+
+  const blended = Math.max(-1, Math.min(1, techW * techScore + newsW * sentScore));
+  return { score: blended, bullets: [...nb, ...techBullets].slice(0, 6) };
+}
+
+// ── S4+ ───────────────────────────────────────────────────────────────────────
+
+type S4PlusRegime = "trend" | "weak_trend" | "mr" | "other";
+interface S4PlusResult { score: number; bullets: string[]; regimeType: S4PlusRegime }
+
+function strategyS4Plus(ind: Indicators, price: number, candles: OHLCV[]): S4PlusResult {
+  const bullets: string[] = [];
+  const adx = ind.adx;
+  const isTrending  = adx !== null && adx > 25;
+  const isWeakTrend = adx !== null && adx >= 18 && adx <= 25;
+  const isRanging   = adx !== null && adx < 18;
+
+  if (isTrending)  bullets.push(`Strong trend (ADX ${adx!.toFixed(1)}) — Trend Engine, threshold 0.45`);
+  else if (isWeakTrend) bullets.push(`Weak trend (ADX ${adx!.toFixed(1)}) — Trend Engine at 70% weight, threshold 0.45`);
+  else if (isRanging)   bullets.push(`Ranging (ADX ${adx!.toFixed(1)}) — Mean Reversion Engine, threshold 0.65`);
+  else                  bullets.push("Undefined regime — balanced weighting");
+
+  const currentVol = candles.length > 0 ? candles[candles.length - 1].volume : 0;
+  const volSma  = calcVolumeSma(candles);
+  const volRatio = volSma && volSma > 0 ? currentVol / volSma : 1;
+  const obvSlope = calcObvSlope(candles);
+
+  let score = 0;
+  let totalWeight = 0;
+  const trendW = isTrending ? 1.0 : isWeakTrend ? 0.70 : 0;
+  const mrActive = isRanging;
+  const regimeType: S4PlusRegime = isTrending || isWeakTrend ? (isWeakTrend ? "weak_trend" : "trend") : isRanging ? "mr" : "other";
+
+  if (trendW > 0) {
+    if (ind.ema200 !== null) {
+      totalWeight += 1.2 * trendW;
+      if (price > ind.ema200) { score += 1.2 * trendW; bullets.push("Above EMA200 — long-term uptrend"); }
+      else { score -= 1.2 * trendW; bullets.push("Below EMA200 — long-term downtrend"); }
+    }
+    if (ind.ema50 !== null) { totalWeight += 0.8 * trendW; score += (price > ind.ema50 ? 0.8 : -0.8) * trendW; }
+    if (ind.macdHistogram !== null) {
+      totalWeight += 0.8 * trendW;
+      if (ind.macdHistogram > 0) { score += 0.8 * trendW; bullets.push("MACD positive — bullish momentum"); }
+      else { score -= 0.8 * trendW; bullets.push("MACD negative — bearish momentum"); }
+    }
+    if (ind.rsi !== null) {
+      totalWeight += 0.2 * trendW;
+      if (ind.rsi > 60) score += 0.2 * trendW;
+      else if (ind.rsi < 40) score -= 0.2 * trendW;
+    }
+    if (volSma !== null) {
+      totalWeight += 1.0 * trendW;
+      if (volRatio > 1.2) {
+        score += (score >= 0 ? 1.0 : -1.0) * trendW;
+        bullets.push(`Volume ${(volRatio * 100).toFixed(0)}% of avg — participation confirms trend`);
+      } else if (volRatio < 0.7) {
+        score *= 0.7; totalWeight *= 0.7;
+      } else if (obvSlope !== null && obvSlope > 0) { score += 0.3 * trendW; bullets.push("OBV rising — smart money accumulating"); }
+      else if (obvSlope !== null && obvSlope < 0) { score -= 0.3 * trendW; }
+    }
+  } else if (mrActive) {
+    if (ind.rsi !== null) {
+      totalWeight += 1.0;
+      if (ind.rsi < 30) { score += 1.0; bullets.push(`RSI ${ind.rsi.toFixed(1)} — deeply oversold in range`); }
+      else if (ind.rsi > 70) { score -= 1.0; bullets.push(`RSI ${ind.rsi.toFixed(1)} — overbought in range`); }
+      else if (ind.rsi < 40) { score += 0.4; }
+      else if (ind.rsi > 60) { score -= 0.4; }
+    }
+    if (ind.bbUpper !== null && ind.bbLower !== null && ind.bbMid !== null) {
+      totalWeight += 1.0;
+      const bbRange = ind.bbUpper - ind.bbLower;
+      const pos = bbRange > 0 ? (price - ind.bbLower) / bbRange : 0.5;
+      if (pos < 0.15) { score += 1.0; bullets.push("At lower BB — strong rebound signal in range"); }
+      else if (pos > 0.85) { score -= 1.0; bullets.push("At upper BB — strong reversal in range"); }
+      else if (pos < 0.3) score += 0.4;
+      else if (pos > 0.7) score -= 0.4;
+    }
+    // S4+: BB width as scoring multiplier in MR engine
+    if (ind.bbWidth !== null) {
+      const bbMult = ind.bbWidth < 0.02 ? 1.30 : ind.bbWidth < 0.04 ? 1.10 : ind.bbWidth > 0.08 ? 0.70 : 1.0;
+      score *= bbMult;
+      if (bbMult > 1.1) bullets.push(`BB compression (${(ind.bbWidth * 100).toFixed(1)}%) — MR signal amplified`);
+      else if (bbMult < 0.9) bullets.push(`BB expanding (${(ind.bbWidth * 100).toFixed(1)}%) — MR signal weakened`);
+    }
+    if (ind.atr !== null) {
+      const atrPct = (ind.atr / price) * 100;
+      if (atrPct < 0.8) score *= 1.2;
+      else if (atrPct > 3) score *= 0.6;
+    }
+    if (ind.ema200 !== null) { totalWeight += 0.3; score += price > ind.ema200 ? 0.3 : -0.3; }
+    if (ind.macdHistogram !== null) { totalWeight += 0.2; score += ind.macdHistogram > 0 ? 0.2 : -0.2; }
+  } else {
+    // Undefined regime: use S1+ base
+    const { score: s, bullets: b } = scoreIndicatorsPlus(ind, price, candles);
+    return { score: s, bullets: [...bullets, ...b].slice(0, 6), regimeType: "other" };
+  }
+
+  const normalised = totalWeight > 0 ? Math.max(-1, Math.min(1, score / totalWeight)) : 0;
+  return { score: normalised, bullets: bullets.slice(0, 6), regimeType };
+}
+
+function scoreToSignalS4Plus(score: number, regime: S4PlusRegime): SignalDirection {
+  const threshold = (regime === "mr") ? 0.65 : (regime === "trend") ? 0.45 : (regime === "weak_trend") ? 0.45 : 0.35;
+  if (score > threshold) return "BUY";
+  if (score < -threshold) return "SELL";
+  return "HOLD";
+}
+
+// ── S5+ ───────────────────────────────────────────────────────────────────────
+
+function strategyS5Plus(ind: Indicators, price: number, candles: OHLCV[]): S5Result {
+  const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
+  let regime = classifyRegimeS5(atrPct, ind.adx);
+
+  // S5+: volume spike gate — volatile_trend without 1.5× volume → reclassify as quiet_range
+  const volSma = calcVolumeSma(candles);
+  const currentVol = candles.length > 0 ? candles[candles.length - 1].volume : 0;
+  const volRatio = volSma && volSma > 0 ? currentVol / volSma : 1;
+  if (regime === "volatile_trend" && volRatio < 1.5) regime = "quiet_range";
+
+  const threshold = REGIME_THRESHOLDS_S5[regime];
+  const w = REGIME_WEIGHTS_S5[regime];
+  const bullets: string[] = [];
+
+  const regimeLabel: Record<Regime5, string> = {
+    quiet_trend: "Quiet Trend", quiet_range: "Quiet Range", volatile_trend: "Volatile Trend", chaotic: "Chaotic",
+  };
+
+  if (regime === "chaotic") {
+    bullets.push(`Chaotic regime — no trade`);
+    return { score: 0, bullets, threshold, regime };
+  }
+
+  bullets.push(`${regimeLabel[regime]} (ATR ${atrPct.toFixed(1)}%, ADX ${ind.adx?.toFixed(1) ?? "N/A"}) — dynamic weights active`);
+
+  let score = 0, totalWeight = 0;
+  // S5+: track weights per bull/bear for weighted consensus gate
+  let weightedBull = 0, weightedBear = 0;
+
+  function factor(contribution: number, factorWeight: number) {
+    score += contribution;
+    totalWeight += factorWeight;
+    if (contribution > 0) weightedBull += factorWeight;
+    else if (contribution < 0) weightedBear += factorWeight;
+  }
+
+  if (ind.ema200 !== null && w.ema200 > 0) {
+    const c = price > ind.ema200 ? w.ema200 : -w.ema200;
+    factor(c, w.ema200);
+    bullets.push(price > ind.ema200 ? "Above EMA200 — long-term bullish bias" : "Below EMA200 — long-term bearish bias");
+  }
+  if (ind.ema50 !== null && w.ema50 > 0) {
+    factor(price > ind.ema50 ? w.ema50 : -w.ema50, w.ema50);
+  }
+  if (ind.macdHistogram !== null && w.macd > 0) {
+    const c = ind.macdHistogram > 0 ? w.macd : -w.macd;
+    factor(c, w.macd);
+    bullets.push(ind.macdHistogram > 0 ? "MACD positive — bullish momentum" : "MACD negative — bearish momentum");
+  }
+  if (ind.rsi !== null && w.rsi > 0) {
+    let c = 0;
+    if (regime === "quiet_range") {
+      if (ind.rsi < 30) { c = w.rsi; bullets.push(`RSI ${ind.rsi.toFixed(1)} — oversold, range rebound`); }
+      else if (ind.rsi > 70) { c = -w.rsi; bullets.push(`RSI ${ind.rsi.toFixed(1)} — overbought, range reversal`); }
+      else if (ind.rsi < 45) c = w.rsi * 0.3;
+      else if (ind.rsi > 55) c = -w.rsi * 0.3;
+    } else {
+      if (ind.rsi > 55) { c = w.rsi; bullets.push(`RSI ${ind.rsi.toFixed(1)} — bullish momentum zone`); }
+      else if (ind.rsi < 45) { c = -w.rsi; bullets.push(`RSI ${ind.rsi.toFixed(1)} — bearish momentum zone`); }
+    }
+    factor(c, w.rsi);
+  }
+  if (ind.bbUpper !== null && ind.bbLower !== null && ind.bbMid !== null && w.bollinger > 0) {
+    const bbRange = ind.bbUpper - ind.bbLower;
+    const pos = bbRange > 0 ? (price - ind.bbLower) / bbRange : 0.5;
+    let c = 0;
+    if (regime === "quiet_range") {
+      if (pos < 0.15) { c = w.bollinger; bullets.push("At lower BB — oversold in range"); }
+      else if (pos > 0.85) { c = -w.bollinger; bullets.push("At upper BB — overbought in range"); }
+      else if (pos < 0.3) c = w.bollinger * 0.4;
+      else if (pos > 0.7) c = -w.bollinger * 0.4;
+    } else {
+      if (pos > 0.7) c = w.bollinger * 0.5;
+      else if (pos < 0.3) c = -w.bollinger * 0.5;
+    }
+    factor(c, w.bollinger);
+  }
+  if (volSma !== null && w.volume > 0) {
+    if (volRatio > 1.3) {
+      const d = score >= 0 ? w.volume : -w.volume;
+      factor(d, w.volume);
+      bullets.push(`Volume ${(volRatio * 100).toFixed(0)}% of avg — confirms move`);
+    } else if (regime === "volatile_trend" && volRatio < 1.3) {
+      score *= 0.5; bullets.push("Breakout without volume — signal dampened");
+    } else {
+      const obvSlope = calcObvSlope(candles);
+      if (obvSlope !== null && obvSlope > 0) { factor(w.volume * 0.4, w.volume); bullets.push("OBV rising — institutional accumulation"); }
+      else if (obvSlope !== null && obvSlope < 0) { factor(-w.volume * 0.4, w.volume); bullets.push("OBV falling — institutional distribution"); }
+    }
+  }
+
+  // S5+: weighted consensus gate (not raw count)
+  const weightedConsensus = totalWeight > 0 ? Math.max(weightedBull, weightedBear) / totalWeight : 0;
+  const consensusMult = weightedConsensus >= 0.6 ? 1.0 : weightedConsensus >= 0.4 ? 0.55 : 0.25;
+  if (weightedConsensus < 0.6) bullets.push(`Weighted consensus ${(weightedConsensus * 100).toFixed(0)}% — conviction reduced`);
+
+  // S5+: regime-aware EMA200 stretch penalty (4% in ranging, 8% in trend)
+  let qualityPenalty = 0;
+  if (ind.ema200 !== null) {
+    const stretch = Math.abs(price - ind.ema200) / ind.ema200 * 100;
+    const stretchLimit = regime === "quiet_range" ? 4 : 8;
+    if (stretch > stretchLimit) {
+      qualityPenalty += 0.15;
+      bullets.push(`Price ${stretch.toFixed(1)}% from EMA200 — extended, exhaustion risk`);
+    }
+  }
+
+  const raw = totalWeight > 0 ? Math.max(-1, Math.min(1, score / totalWeight)) : 0;
+  const adjusted = raw * consensusMult * (1 - qualityPenalty);
+  return { score: adjusted, bullets: bullets.slice(0, 6), threshold, regime };
+}
+
+// ── S6+ ───────────────────────────────────────────────────────────────────────
+
+// Stricter source credibility — unknown publishers default to 0.35 not 0.55
+function getSourceCredibilityPlus(publisher: string): number {
+  const lower = publisher.toLowerCase();
+  for (const [key, score] of Object.entries(SOURCE_CREDIBILITY)) {
+    if (lower.includes(key)) return score;
+  }
+  return 0.35;
+}
+
+function aggregateSentimentS6Plus(articles: NewsArticle[]): { score: number; count: number; freshHours: number } {
+  let totalWeight = 0;
+  let weightedSum = 0;
+  let relevantCount = 0;
+  let freshestHours = 999;
+
+  for (const article of articles) {
+    const words = article.title.toLowerCase().split(/\s+/);
+    let bullCount = 0, bearCount = 0, relevance = 0;
+    for (let idx = 0; idx < words.length; idx++) {
+      const word = words[idx];
+      const negated = idx > 0 && NEGATION_WORDS.has(words[idx - 1]);
+      for (const bw of BULLISH_WORDS) {
+        if (word.startsWith(bw.split(" ")[0])) { relevance += 0.3; if (negated) bearCount += 0.7; else bullCount += 1; break; }
+      }
+      for (const bw of BEARISH_WORDS) {
+        if (word.startsWith(bw.split(" ")[0])) { relevance += 0.3; if (negated) bullCount += 0.7; else bearCount += 1; break; }
+      }
+    }
+    const rel = Math.min(1, relevance);
+    if (rel < 0.2) continue;
+    relevantCount++;
+    const hoursOld = (Date.now() - new Date(article.publishedAt).getTime()) / 3_600_000;
+    if (hoursOld < freshestHours) freshestHours = hoursOld;
+    const freshness = Math.exp(-hoursOld / 24);
+    const credibility = getSourceCredibilityPlus(article.publisher);
+    const net = bullCount - bearCount;
+    const total = bullCount + bearCount;
+    const rawScore = total > 0 ? net / total : 0;
+    const weight = freshness * credibility * rel;
+    weightedSum += rawScore * weight;
+    totalWeight += weight;
+  }
+
+  return {
+    score: totalWeight > 0 ? Math.max(-1, Math.min(1, weightedSum / totalWeight)) : 0,
+    count: relevantCount,
+    freshHours: freshestHours,
+  };
+}
+
+function strategyS6Plus(ind: Indicators, price: number, candles: OHLCV[], articles: NewsArticle[]): S6Result {
+  const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
+  const { techW: rawTechW, newsW: rawNewsW } = calcRegimeWeightsS6(atrPct, ind.adx);
+
+  const { score: techScore, bullets: techBullets } = strategyS2Plus(ind, price, candles);
+  const { score: sentScore, count, freshHours } = aggregateSentimentS6Plus(articles);
+
+  // S6+: stale news penalty — if ATR < 1% and news > 6h, revert to 80/20 not 60/40
+  let techW = rawTechW;
+  let newsW = rawNewsW;
+  if (atrPct < 1 && freshHours > 6) { techW = 0.80; newsW = 0.20; }
+  // S6+: min 3 articles before news weight lifts above 15%
+  if (count < 3 && newsW > 0.15) { newsW = 0.10; techW = 0.90; }
+
+  const blended = Math.max(-1, Math.min(1, techW * techScore + newsW * sentScore));
+
+  const regimeDesc =
+    atrPct > 5 ? "High-vol" :
+    atrPct < 1 ? "Low-vol" :
+    ind.adx !== null && ind.adx > 30 ? "Strong-trend" : "Neutral";
+
+  const bullets: string[] = [];
+  bullets.push(`${regimeDesc} — tech ${(techW * 100).toFixed(0)}% / news ${(newsW * 100).toFixed(0)}%`);
+  if (count < 3) bullets.push(`Only ${count} article(s) — news weight capped at 10%`);
+  else if (freshHours > 6 && atrPct < 1) bullets.push(`News ${freshHours.toFixed(0)}h old in low-vol — blend shifted 80/20`);
+  for (const b of techBullets.slice(0, 3)) bullets.push(b);
+  if (articles.length > 0) {
+    const label = sentScore > 0.05 ? "bullish" : sentScore < -0.05 ? "bearish" : "neutral";
+    bullets.push(`News ${label} (${count} relevant, credibility-weighted)`);
+  }
+
+  return { score: blended, bullets: bullets.slice(0, 6) };
+}
+
+// ── S7+ (APEX Plus) ───────────────────────────────────────────────────────────
+
+// Expanded cross-asset map for more assets
+const CROSS_ASSET_PAIRS_PLUS: Record<string, { symbol: string; inverse: boolean }> = {
+  ...CROSS_ASSET_PAIRS,
+  "EURUSD=X": { symbol: "GBPUSD=X",  inverse: false },
+  "GBPUSD=X": { symbol: "EURUSD=X",  inverse: false },
+  "GBPJPY=X": { symbol: "USDJPY=X",  inverse: false },
+  "EURJPY=X": { symbol: "EURUSD=X",  inverse: false },
+  "AUDUSD=X": { symbol: "NZDUSD=X",  inverse: false },
+  "NZDUSD=X": { symbol: "AUDUSD=X",  inverse: false },
+  "ZW=F":     { symbol: "ZC=F",      inverse: false },
+  "ZC=F":     { symbol: "ZS=F",      inverse: false },
+  "PA=F":     { symbol: "PL=F",      inverse: false },
+  "PL=F":     { symbol: "PA=F",      inverse: false },
+  "NG=F":     { symbol: "CL=F",      inverse: false },
+  "^FTSE":    { symbol: "^GDAXI",    inverse: false },
+  "^NSEI":    { symbol: "^HSI",      inverse: false },
+  "^AXJO":    { symbol: "^NSEI",     inverse: false },
+  "^FCHI":    { symbol: "^GDAXI",    inverse: false },
+  "^N225":    { symbol: "^HSI",      inverse: false },
+};
+
+// Range engine with VWAP — S7+ addition
+function apexRangeEnginePlus(ind: Indicators, price: number, candles: OHLCV[], vwap: number | null): ApexDirectionResult {
+  const bullets: string[] = [];
+  const volSma = calcVolumeSma(candles);
+  const currentVol = candles.length > 0 ? candles[candles.length - 1].volume : 0;
+  const volRatio = volSma && volSma > 0 ? currentVol / volSma : 1;
+  let score = 0, totalWeight = 0;
+
+  if (ind.bbMid !== null) bullets.push(`Ranging — mean reversion around BB midline ${ind.bbMid.toFixed(2)}`);
+
+  if (ind.rsi !== null) {
+    totalWeight += 1.2;
+    if (ind.rsi < 30) { score += 1.2; bullets.push(`RSI ${ind.rsi.toFixed(1)} — deeply oversold, rebound expected`); }
+    else if (ind.rsi > 70) { score -= 1.2; bullets.push(`RSI ${ind.rsi.toFixed(1)} — deeply overbought, reversal likely`); }
+    else if (ind.rsi < 40) { score += 0.5; }
+    else if (ind.rsi > 60) { score -= 0.5; }
+  }
+  if (ind.bbUpper !== null && ind.bbLower !== null && ind.bbMid !== null) {
+    totalWeight += 1.2;
+    const bbRange = ind.bbUpper - ind.bbLower;
+    const pos = bbRange > 0 ? (price - ind.bbLower) / bbRange : 0.5;
+    if (pos < 0.15) { score += 1.2; bullets.push("At lower BB — strong reversal zone in range"); }
+    else if (pos > 0.85) { score -= 1.2; bullets.push("At upper BB — strong reversal zone in range"); }
+    else if (pos < 0.3) score += 0.4;
+    else if (pos > 0.7) score -= 0.4;
+  }
+  // VWAP in range engine — key S7+ addition
+  if (vwap !== null) {
+    totalWeight += 0.8;
+    if (price > vwap) { score += 0.8; bullets.push(`Above VWAP (${vwap.toFixed(2)}) — bullish bias in range`); }
+    else { score -= 0.8; bullets.push(`Below VWAP (${vwap.toFixed(2)}) — bearish bias in range`); }
+  }
+  if (ind.ema200 !== null) { totalWeight += 0.3; score += price > ind.ema200 ? 0.3 : -0.3; }
+  if (ind.macdHistogram !== null) { totalWeight += 0.2; score += ind.macdHistogram > 0 ? 0.2 : -0.2; }
+  if (volSma !== null && volRatio < 0.8 && Math.abs(score) > 0.3) score *= 1.1;
+
+  return { score: totalWeight > 0 ? Math.max(-1, Math.min(1, score / totalWeight)) : 0, bullets, engineActive: true };
+}
+
+// Breakout engine with EMA50 direction lock — S7+ addition
+function apexBreakoutEnginePlus(ind: Indicators, price: number, candles: OHLCV[]): ApexDirectionResult {
+  const base = apexBreakoutEngine(ind, price, candles);
+  if (!base.engineActive) return base;
+  // EMA50 direction lock: reject breakout signals that conflict with EMA50 bias
+  if (ind.ema50 !== null) {
+    if (base.score > 0 && price < ind.ema50) {
+      return { score: 0, bullets: [`Bullish breakout but price below EMA50 (${ind.ema50.toFixed(2)}) — direction lock blocked`], engineActive: false };
+    }
+    if (base.score < 0 && price > ind.ema50) {
+      return { score: 0, bullets: [`Bearish breakout but price above EMA50 (${ind.ema50.toFixed(2)}) — direction lock blocked`], engineActive: false };
+    }
+  }
+  return base;
+}
+
+function apexDirectionEnginePlus(ind: Indicators, price: number, candles: OHLCV[], regime: ApexRegime, vwap: number | null): ApexDirectionResult {
+  switch (regime) {
+    case "strong_trend":   return apexTrendEngine(ind, price, candles, vwap, true);
+    case "weak_trend":     return apexTrendEngine(ind, price, candles, vwap, false);
+    case "ranging":        return apexRangeEnginePlus(ind, price, candles, vwap);
+    case "volatile_break": return apexBreakoutEnginePlus(ind, price, candles);
+    default:               return { score: 0, bullets: ["Chaotic market — no trade conditions"], engineActive: false };
+  }
+}
+
+function strategyAPEXPlus(
+  ind: Indicators,
+  price: number,
+  candles: OHLCV[],
+  htfCandles: OHLCV[],
+  crossAssetCandles: OHLCV[] | null,
+  crossAssetInverse: boolean,
+): ApexResult {
+  const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
+  const regime = classifyRegimeAPEX(ind.adx, atrPct, ind.bbWidth);
+  const persistence = estimateRegimePersistence(ind.adx, atrPct, regime);
+  const vwap = calcVwap(candles);
+  const { score: dirScore, bullets: dirBullets, engineActive } = apexDirectionEnginePlus(ind, price, candles, regime, vwap);
+
+  const closes = candles.map(c => c.close);
+  const rsiSeries = calcRsiSeries(closes);
+  const divergence = detectDivergence(candles, rsiSeries);
+
+  // S7+: HTF 2-bar persistence — both bars must confirm direction
+  let htfAlignment: "confirmed" | "neutral" | "blocked" = "neutral";
+  if (htfCandles.length >= 32) {
+    const htfInd1 = calculateIndicators(htfCandles);
+    const htfPrice1 = htfCandles[htfCandles.length - 1].close;
+    const htfAtrPct1 = htfInd1.atr ? (htfInd1.atr / htfPrice1) * 100 : 2;
+    const htfRegime1 = classifyRegimeAPEX(htfInd1.adx, htfAtrPct1, htfInd1.bbWidth);
+    const { score: htfScore1 } = apexDirectionEngine(htfInd1, htfPrice1, htfCandles, htfRegime1, calcVwap(htfCandles));
+
+    const htfSlice2 = htfCandles.slice(0, -1);
+    const htfInd2 = calculateIndicators(htfSlice2);
+    const htfPrice2 = htfSlice2[htfSlice2.length - 1].close;
+    const htfAtrPct2 = htfInd2.atr ? (htfInd2.atr / htfPrice2) * 100 : 2;
+    const htfRegime2 = classifyRegimeAPEX(htfInd2.adx, htfAtrPct2, htfInd2.bbWidth);
+    const { score: htfScore2 } = apexDirectionEngine(htfInd2, htfPrice2, htfSlice2, htfRegime2, null);
+
+    const bothBull = htfScore1 > 0.3 && htfScore2 > 0.3 && dirScore > 0.1;
+    const bothBear = htfScore1 < -0.3 && htfScore2 < -0.3 && dirScore < -0.1;
+    const conflictUp = (htfScore1 > 0.3 || htfScore2 > 0.3) && dirScore < -0.2;
+    const conflictDn = (htfScore1 < -0.3 || htfScore2 < -0.3) && dirScore > 0.2;
+
+    if (bothBull || bothBear) htfAlignment = "confirmed";
+    else if (conflictUp || conflictDn) htfAlignment = "blocked";
+  }
+
+  // Cross-asset with expanded pairs map
+  let crossAssetMatch: "confirms" | "contradicts" | "na" = "na";
+  if (crossAssetCandles && crossAssetCandles.length >= 30) {
+    const xInd = calculateIndicators(crossAssetCandles);
+    const xPrice = crossAssetCandles[crossAssetCandles.length - 1].close;
+    const xAtrPct = xInd.atr ? (xInd.atr / xPrice) * 100 : 2;
+    const xRegime = classifyRegimeAPEX(xInd.adx, xAtrPct, xInd.bbWidth);
+    const { score: xRaw } = apexDirectionEngine(xInd, xPrice, crossAssetCandles, xRegime, null);
+    const xScore = crossAssetInverse ? -xRaw : xRaw;
+    if ((xScore > 0.2 && dirScore > 0) || (xScore < -0.2 && dirScore < 0)) crossAssetMatch = "confirms";
+    else if ((xScore > 0.2 && dirScore < 0) || (xScore < -0.2 && dirScore > 0)) crossAssetMatch = "contradicts";
+  }
+
+  const volSma = calcVolumeSma(candles);
+  const currentVol = candles.length > 0 ? candles[candles.length - 1].volume : 0;
+  const volRatio = volSma && volSma > 0 ? currentVol / volSma : 1;
+
+  const { score: quality, bullets: qualBullets } = buildQualityScore(regime, persistence, htfAlignment, divergence, volRatio, crossAssetMatch);
+
+  const thresholds: Record<ApexRegime, number> = {
+    strong_trend: 0.45, weak_trend: 0.65, ranging: 0.55, volatile_break: 0.60, chaotic: 999,
+  };
+  const threshold = thresholds[regime];
+  const tradeable = quality >= 60 && htfAlignment !== "blocked" && engineActive && regime !== "chaotic";
+  const qualityMult = quality >= 90 ? 1.0 : quality >= 75 ? 0.85 : quality >= 60 ? 0.65 : 0;
+  const regimeMults: Record<ApexRegime, number> = {
+    strong_trend: 1.0, volatile_break: 0.6, ranging: 0.75, weak_trend: 0.5, chaotic: 0,
+  };
+  const positionRiskPct = Math.round(qualityMult * regimeMults[regime] * 100) / 100;
+
+  const bullets = [
+    `APEX+ ${regime} (ADX ${ind.adx?.toFixed(1) ?? "N/A"}, ATR ${atrPct.toFixed(1)}%) — quality ${quality}/100${tradeable ? "" : " ⚠ below threshold"}`,
+    ...dirBullets.slice(0, 3),
+    ...qualBullets.slice(0, 2),
+  ].slice(0, 6);
+
+  return { score: tradeable ? dirScore : 0, bullets, quality, regime, htfAlignment, positionRiskPct, tradeable, threshold };
+}
+
+// ── S8+ (Ensemble Plus) ───────────────────────────────────────────────────────
+
+function strategyEnsemblePlus(
+  ind: Indicators,
+  price: number,
+  candles: OHLCV[],
+  htfCandles: OHLCV[],
+  crossAssetCandles: OHLCV[] | null,
+  crossAssetInverse: boolean,
+): EnsembleResult {
+  const r7 = strategyAPEXPlus(ind, price, candles, htfCandles, crossAssetCandles, crossAssetInverse);
+  const regime = r7.regime;
+
+  if (regime === "chaotic") {
+    return { score: 0, bullets: ["Chaotic market — ensemble+ suspended"], regime, apexResult: r7, agreementCount: 0 };
+  }
+
+  const weights = REGIME_WEIGHTS[regime];
+
+  // S4 vote
+  const r4 = strategyS4Plus(ind, price, candles);
+  const s4dir = scoreToSignalS4Plus(r4.score, r4.regimeType);
+
+  // S5 vote — share S7+'s regime to reduce artificial disagreement
+  const r5raw = strategyS5Plus(ind, price, candles);
+  const s5dir: SignalDirection = r5raw.score > r5raw.threshold ? "BUY" : r5raw.score < -r5raw.threshold ? "SELL" : "HOLD";
+
+  // S7+ vote — abstain (don't vote) when quality gate fails instead of voting HOLD
+  const s7dir: SignalDirection | null = r7.tradeable
+    ? (r7.score > r7.threshold ? "BUY" : r7.score < -r7.threshold ? "SELL" : "HOLD")
+    : null; // null = abstain
+
+  // Build vote list — S7 only participates when tradeable
+  const votes: EnsembleVote[] = [
+    { strategy: "S4", direction: s4dir, weight: weights.s4 },
+    { strategy: "S5", direction: s5dir, weight: weights.s5 },
+    ...(s7dir !== null ? [{ strategy: "S7", direction: s7dir, weight: weights.s7 } as EnsembleVote] : []),
+  ];
+
+  const totalVoteWeight = votes.reduce((s, v) => s + v.weight, 0);
+  let buyWeight = 0, sellWeight = 0;
+  const buys: string[] = [], sells: string[] = [];
+  for (const v of votes) {
+    if (v.direction === "BUY")  { buyWeight  += v.weight; buys.push(v.strategy); }
+    if (v.direction === "SELL") { sellWeight += v.weight; sells.push(v.strategy); }
+  }
+  const consensus = totalVoteWeight > 0 ? (buyWeight - sellWeight) / totalVoteWeight : 0;
+
+  const buyCount  = buys.length;
+  const sellCount = sells.length;
+  const totalActive = votes.length;
+  const agreementCount = Math.max(buyCount, sellCount);
+  const minRequired = s7dir !== null ? 2 : 2; // need 2 of however many are voting
+
+  // S8+: differentiate position sizing — S7+any = stronger than S4+S5 only
+  const s7InBuys  = buys.includes("S7");
+  const s7InSells = sells.includes("S7");
+  const s7Agrees  = s7InBuys || s7InSells;
+
+  const consensusLabel = consensus > 0 ? "bullish" : consensus < 0 ? "bearish" : "mixed";
+
+  const bullets = [
+    `Ensemble+ ${regime} — ${s7dir === null ? "S7+ abstained (quality gate)" : "S7+ voted"} · ${buys.length ? buys.join("+") : "none"} buy · ${sells.length ? sells.join("+") : "none"} sell`,
+    ...r7.bullets.slice(1, 3),
+    agreementCount >= totalActive
+      ? `All ${totalActive} active engines agree — maximum conviction`
+      : agreementCount >= minRequired
+        ? `${agreementCount}/${totalActive} engines ${consensusLabel}${s7Agrees ? " (includes S7+)" : " (S4+S5 only)"}`
+        : "No consensus — engines disagree, standing aside",
+  ].filter(Boolean).slice(0, 6) as string[];
+
+  return { score: consensus, bullets, regime, apexResult: r7, agreementCount };
+}
+
+// S8+ position risk — weighted by which engines agree
+function ensemblePlusPositionRisk(r: EnsembleResult, s7Agrees: boolean): number {
+  if (r.agreementCount === 0) return 0;
+  const baseRisk = r.apexResult.positionRiskPct;
+  if (r.agreementCount >= 3) return baseRisk;
+  if (r.agreementCount === 2 && s7Agrees) return Math.round(baseRisk * 0.70 * 100) / 100;
+  if (r.agreementCount === 2) return Math.round(baseRisk * 0.50 * 100) / 100;
+  return 0;
+}
+
+// ── S9+ ───────────────────────────────────────────────────────────────────────
+
+function strategyS9Plus(candles: OHLCV[], ind: Indicators, price: number, tf: string): S9Result {
+  // S9+: extended lookbacks — sweep 20 bars (was 10), Fib over 50 bars (was 20)
+  const bullets: string[] = [];
+  const n = candles.length;
+  const SWEEP_LB_PLUS = 20;
+  const FIB_LB_PLUS   = 50;
+  if (n < FIB_LB_PLUS + SWEEP_LB_PLUS + 2) {
+    return { score: 0, bullets: ["Insufficient candle data for S9+"], swingHigh: price, swingLow: price };
+  }
+
+  const cur = candles[n - 1];
+
+  const bypassSession  = tf === "1w" || tf === "1d" || tf === "4h" || tf === "backtest";
+  const londonActive   = !bypassSession && isLondonKZ(cur.time);
+  const nyActive       = !bypassSession && isNYKZ(cur.time);
+  const postNewsActive = !bypassSession && isPostNewsCZ(cur.time);
+  const inSession      = bypassSession || londonActive || nyActive || postNewsActive;
+  const sessionLabel   = londonActive ? "London Kill Zone" : nyActive ? "New York Kill Zone"
+    : postNewsActive ? "Post-News Continuation" : bypassSession ? "session gate bypassed" : "off-session";
+
+  // Liquidity sweep over extended 20-bar lookback
+  const lookSlice = candles.slice(n - SWEEP_LB_PLUS - 1, n - 1);
+  const prevLow  = Math.min(...lookSlice.map(c => c.low));
+  const prevHigh = Math.max(...lookSlice.map(c => c.high));
+
+  const bullSweep = cur.low < prevLow  && cur.close > prevLow;
+  const bearSweep = cur.high > prevHigh && cur.close < prevHigh;
+
+  const ema9 = ind.ema9;
+  const range   = cur.high - cur.low;
+  const body    = Math.abs(cur.close - cur.open);
+  const bodyPct = range > 0 ? body / range : 0;
+  const bodyThreshold = tf === "backtest" ? 0.5 : 0.6;
+  const bullPower = bodyPct > bodyThreshold && cur.close > cur.open && ema9 !== null && cur.close > ema9;
+  const bearPower = bodyPct > bodyThreshold && cur.close < cur.open && ema9 !== null && cur.close < ema9;
+
+  // Fibonacci POI over extended 50-bar lookback
+  const fibSlice = candles.slice(n - FIB_LB_PLUS, n);
+  const swingHigh = Math.max(...fibSlice.map(c => c.high));
+  const swingLow  = Math.min(...fibSlice.map(c => c.low));
+  const fibRange  = swingHigh - swingLow;
+
+  const poiLongLow   = swingLow  + fibRange * 0.44;
+  const poiLongHigh  = swingLow  + fibRange * 0.618;
+  const poiShortLow  = swingHigh - fibRange * 0.618;
+  const poiShortHigh = swingHigh - fibRange * 0.44;
+
+  const nearFibLong  = price >= poiLongLow  * 0.998 && price <= poiLongHigh  * 1.002;
+  const nearFibShort = price >= poiShortLow * 0.998 && price <= poiShortHigh * 1.002;
+
+  const backtestMode = tf === "backtest";
+  const longSignal  = bullSweep && inSession && bullPower && (backtestMode || nearFibLong);
+  const shortSignal = bearSweep && inSession && bearPower && (backtestMode || nearFibShort);
+
+  if (longSignal) {
+    bullets.push(`Bullish sweep below ${prevLow.toFixed(3)} (${SWEEP_LB_PLUS}-bar range) — stop hunt confirmed`);
+    bullets.push(`${sessionLabel} active`);
+    bullets.push(`Power candle: body ${(bodyPct * 100).toFixed(0)}% of range, above 9 EMA (${ema9!.toFixed(3)})`);
+    bullets.push(`In 44–61.8% POI zone (${FIB_LB_PLUS}-bar Fib: ${poiLongLow.toFixed(3)}–${poiLongHigh.toFixed(3)})`);
+    bullets.push("S9+: deeper liquidity levels, wider Fib structure — more significant sweep");
+    return { score: 1.0, bullets, swingHigh, swingLow };
+  }
+
+  if (shortSignal) {
+    bullets.push(`Bearish sweep above ${prevHigh.toFixed(3)} (${SWEEP_LB_PLUS}-bar range) — stop hunt confirmed`);
+    bullets.push(`${sessionLabel} active`);
+    bullets.push(`Power candle: body ${(bodyPct * 100).toFixed(0)}% of range, below 9 EMA (${ema9!.toFixed(3)})`);
+    bullets.push(`In 44–61.8% POI zone from top (${FIB_LB_PLUS}-bar Fib: ${poiShortLow.toFixed(3)}–${poiShortHigh.toFixed(3)})`);
+    bullets.push("S9+: deeper liquidity levels, wider Fib structure — more significant sweep");
+    return { score: -1.0, bullets, swingHigh, swingLow };
+  }
+
+  if (bullSweep) bullets.push(`Bullish sweep (${SWEEP_LB_PLUS}-bar) below ${prevLow.toFixed(3)} — awaiting ${!inSession ? "session + " : ""}${!bullPower ? "power candle + " : ""}${!nearFibLong ? "POI zone" : "entry"}`);
+  else if (bearSweep) bullets.push(`Bearish sweep (${SWEEP_LB_PLUS}-bar) above ${prevHigh.toFixed(3)} — awaiting ${!inSession ? "session + " : ""}${!bearPower ? "power candle + " : ""}${!nearFibShort ? "POI zone" : "entry"}`);
+  else bullets.push(`No sweep on current bar (${SWEEP_LB_PLUS}-bar range: ${prevLow.toFixed(3)}–${prevHigh.toFixed(3)})`);
+  if (!inSession && !bypassSession) bullets.push(`Outside kill zones — ${sessionLabel}`);
   if (ema9 !== null) bullets.push(`9 EMA: ${ema9.toFixed(3)} — price ${price > ema9 ? "above" : "below"}`);
 
   return { score: 0, bullets, swingHigh, swingLow };
@@ -2190,25 +3072,78 @@ async function generateSignal(
     const r9 = strategyS9(candles, ind, currentPrice, tf);
     score = r9.score; bullets = r9.bullets;
     s9SwingHigh = r9.swingHigh; s9SwingLow = r9.swingLow;
+  // ── Enhanced strategies S1+–S9+ ──────────────────────────────────────────
+  } else if (strategy === "10") {
+    ({ score, bullets } = strategyS1Plus(ind, currentPrice, candles));
+  } else if (strategy === "11") {
+    ({ score, bullets } = strategyS2Plus(ind, currentPrice, candles));
+  } else if (strategy === "12") {
+    ({ score, bullets } = strategyS3Plus(ind, currentPrice, candles, newsArticles));
+  } else if (strategy === "13") {
+    const r = strategyS4Plus(ind, currentPrice, candles);
+    score = r.score; bullets = r.bullets;
+    // Store regime so direction dispatch can pick the right threshold
+    apexRegime = r.regimeType === "trend" || r.regimeType === "weak_trend" ? "strong_trend"
+      : r.regimeType === "mr" ? "ranging" : "weak_trend";
+  } else if (strategy === "14") {
+    const r = strategyS5Plus(ind, currentPrice, candles);
+    score = r.score; bullets = r.bullets; s5threshold = r.threshold;
+  } else if (strategy === "15") {
+    ({ score, bullets } = strategyS6Plus(ind, currentPrice, candles, newsArticles));
+  } else if (strategy === "16") {
+    const r = strategyAPEXPlus(ind, currentPrice, candles, htfCandles, crossAssetCandles, crossAssetInverse);
+    score = r.tradeable ? r.score : 0;
+    bullets = r.bullets;
+    apexQuality = r.quality; apexRegime = r.regime; apexHtfAlignment = r.htfAlignment;
+    apexPositionRisk = r.positionRiskPct; apexTradeable = r.tradeable; apexThreshold = r.threshold;
+  } else if (strategy === "17") {
+    const r = strategyEnsemblePlus(ind, currentPrice, candles, htfCandles, crossAssetCandles, crossAssetInverse);
+    const s7Agrees = r.apexResult.tradeable;
+    score = r.agreementCount >= 2 ? r.score : 0;
+    bullets = r.bullets;
+    apexQuality = r.apexResult.quality; apexRegime = r.regime; apexHtfAlignment = r.apexResult.htfAlignment;
+    apexPositionRisk = ensemblePlusPositionRisk(r, s7Agrees);
+    apexTradeable = r.agreementCount >= 2;
+    apexThreshold = 0.38;
+  } else if (strategy === "18") {
+    const r9 = strategyS9Plus(candles, ind, currentPrice, tf);
+    score = r9.score; bullets = r9.bullets;
+    s9SwingHigh = r9.swingHigh; s9SwingLow = r9.swingLow;
   } else {
     const { score: s1, bullets: b1 } = strategyS1(ind, currentPrice);
     ({ score, bullets } = strategyS3(s1, newsSentiment, b1));
   }
 
+  // S4+ uses its own regime-aware threshold dispatch
+  const isS4Plus = strategy === "13";
+  const s4PlusRegime: S4PlusRegime =
+    apexRegime === "ranging" ? "mr" : apexRegime === "strong_trend" ? "trend" : isS4Plus ? "weak_trend" : "trend";
+
+  // VIX-adaptive threshold for S5/S14: calm markets → lower bar; stress → higher conviction required
+  const vixNow = latestPrices.get("^VIX")?.price ?? null;
+  if (vixNow !== null && (strategy === "5" || strategy === "14")) {
+    const adj = vixNow < 15 ? -0.05 : vixNow > 30 ? 0.10 : 0;
+    s5threshold = Math.max(0.05, Math.min(0.95, s5threshold + adj));
+  }
+
   const direction =
+    isS4Plus ? scoreToSignalS4Plus(score, s4PlusRegime) :
     strategy === "4" ? scoreToSignalS4(score) :
-    strategy === "5" ? (score > s5threshold ? "BUY" : score < -s5threshold ? "SELL" : "HOLD") :
-    strategy === "6" ? (score > 0.45 ? "BUY" : score < -0.35 ? "SELL" : "HOLD") :
-    (strategy === "7" || strategy === "8") ? (score > apexThreshold ? "BUY" : score < -apexThreshold ? "SELL" : "HOLD") :
-    strategy === "9" ? (score > 0.5 ? "BUY" : score < -0.5 ? "SELL" : "HOLD") :
+    strategy === "5" || strategy === "14" ? (score > s5threshold ? "BUY" : score < -s5threshold ? "SELL" : "HOLD") :
+    strategy === "6"  ? (score > 0.45 ? "BUY" : score < -0.35 ? "SELL" : "HOLD") :
+    strategy === "15" ? (score > 0.45 ? "BUY" : score < -0.35 ? "SELL" : "HOLD") :
+    (strategy === "7" || strategy === "8" || strategy === "16" || strategy === "17") ? (score > apexThreshold ? "BUY" : score < -apexThreshold ? "SELL" : "HOLD") :
+    strategy === "9" || strategy === "18" ? (score > 0.5 ? "BUY" : score < -0.5 ? "SELL" : "HOLD") :
     scoreToSignal(score);
-  const confidence = (strategy === "5" || strategy === "6" || strategy === "7" || strategy === "8") ? calibrateConfidenceS5(Math.abs(score)) : scoreToConfidence(score);
+
+  const isApexFamily = strategy === "5" || strategy === "6" || strategy === "7" || strategy === "8" || strategy === "14" || strategy === "15" || strategy === "16" || strategy === "17";
+  const confidence = isApexFamily ? calibrateConfidenceS5(Math.abs(score)) : scoreToConfidence(score);
   const ivPct = ind.atr ? atrPercentile(candles.slice(-20), ind.atr) : 0.5;
   let stopLoss: number, takeProfit: number, riskReward: number;
   let ivFlag: string | null = null;
-  if (strategy === "7" || strategy === "8") {
+  if (strategy === "7" || strategy === "8" || strategy === "16" || strategy === "17") {
     ({ stopLoss, takeProfit, riskReward } = buildRiskLevelsAPEX(direction, currentPrice, ind.atr, apexRegime));
-  } else if (strategy === "9") {
+  } else if (strategy === "9" || strategy === "18") {
     const r9Risk = buildRiskLevelsS9(direction, currentPrice, s9SwingHigh, s9SwingLow, ind.atr);
     ({ stopLoss, takeProfit, riskReward } = r9Risk);
     if (direction !== "HOLD") {
@@ -2219,6 +3154,9 @@ async function generateSignal(
   }
   if (ivFlag) bullets.push(ivFlag);
 
+  const isLongForm = ["3","5","6","7","8","9","12","14","15","16","17","18"].includes(strategy);
+  const isApexMeta = strategy === "7" || strategy === "8" || strategy === "16" || strategy === "17";
+
   const result: SignalResult = {
     symbol,
     name: ASSET_MAP.get(symbol)?.name ?? symbol,
@@ -2228,13 +3166,15 @@ async function generateSignal(
     stopLoss,
     takeProfit,
     riskReward,
-    reasoning: bullets.slice(0, (strategy === "3" || strategy === "5" || strategy === "6" || strategy === "7" || strategy === "8" || strategy === "9") ? 6 : 5),
+    reasoning: bullets.slice(0, isLongForm ? 6 : 5),
     indicators: ind,
     strategy,
     timeframe: tf,
     timestamp: new Date().toISOString(),
     ivPercentile: Math.round(ivPct * 1000) / 1000,
-    ...((strategy === "7" || strategy === "8") ? { quality: apexQuality, apexRegime, positionRiskPct: apexPositionRisk, htfAlignment: apexHtfAlignment, tradeable: apexTradeable } : {}),
+    ...(isApexMeta ? { quality: apexQuality, apexRegime, positionRiskPct: apexPositionRisk, htfAlignment: apexHtfAlignment, tradeable: apexTradeable } : {}),
+    vixAtSignal: vixNow,
+    ...(strategy === "5" || strategy === "14" ? { dynamicThreshold: Math.round(s5threshold * 1000) / 1000 } : {}),
   };
 
   signalCache.set(cacheKey, { data: result, ts: Date.now() });
@@ -2245,9 +3185,14 @@ async function generateSignal(
 
 interface TradeRecord {
   n: number;
+  date: string;                      // YYYY-MM-DD of entry bar
   direction: "BUY" | "SELL";
   entryPrice: number;
+  stopLoss: number;
+  takeProfit: number;
   exitPrice: number;
+  exitReason: "SL" | "TP" | "TIMEOUT";
+  holdBars: number;
   returnPct: number;
   win: boolean;
 }
@@ -2261,57 +3206,163 @@ interface StrategyPerf {
   tradeLog: TradeRecord[];
 }
 
+type AllBacktestId = BaseStrategyId | EnhancedStrategyId;
+
 interface BacktestResult {
   symbol: string;
   timeframe: Timeframe;
-  strategies: Record<StrategyId, StrategyPerf>;
-  backtestNotes: Partial<Record<StrategyId, string>>;
+  strategies: Record<AllBacktestId, StrategyPerf>;
+  backtestNotes: Partial<Record<AllBacktestId, string>>;
   timestamp: string;
 }
 
 const backtestCache = new Map<string, { data: BacktestResult; ts: number }>();
 const BACKTEST_TTL = 10 * 60_000;
 
+// ── Old fixed-hold engine — kept for any scanner backtest callers ─────────────
 function runBacktestOnSeries(closes: number[], strategyFn: (i: number) => SignalDirection, splitRatio = 0.7): StrategyPerf {
   const splitIdx = Math.floor(closes.length * splitRatio);
   const testCloses = closes.slice(splitIdx);
   if (testCloses.length < 10) {
     return { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
   }
-
-  let wins = 0;
-  let totalTrades = 0;
+  let wins = 0, totalTrades = 0;
   const returns: number[] = [];
-  let peak = 1;
-  let equity = 1;
-  let maxDrawdown = 0;
+  let peak = 1, equity = 1, maxDrawdown = 0;
   const tradeLog: TradeRecord[] = [];
-
   const HOLD_BARS = 5;
-
   for (let i = 0; i < testCloses.length - HOLD_BARS; i++) {
     const sig = strategyFn(splitIdx + i);
     if (sig === "HOLD") continue;
-
     const entry = testCloses[i];
     const exit = testCloses[i + HOLD_BARS];
     const ret = sig === "BUY" ? (exit - entry) / entry : (entry - exit) / entry;
-
-    returns.push(ret);
-    totalTrades++;
-    if (ret > 0) wins++;
-
+    returns.push(ret); totalTrades++; if (ret > 0) wins++;
     equity *= 1 + ret;
     if (equity > peak) peak = equity;
     const dd = (peak - equity) / peak;
     if (dd > maxDrawdown) maxDrawdown = dd;
+    tradeLog.push({ n: totalTrades, date: "", direction: sig, entryPrice: Math.round(entry * 10000) / 10000, stopLoss: 0, takeProfit: 0, exitPrice: Math.round(exit * 10000) / 10000, exitReason: ret > 0 ? "TP" : "SL", holdBars: HOLD_BARS, returnPct: Math.round(ret * 10000) / 100, win: ret > 0 });
+  }
+  if (totalTrades === 0) return { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
+  const avgRet = returns.reduce((a, b) => a + b, 0) / returns.length;
+  const stdRet = returns.length > 1 ? Math.sqrt(returns.reduce((a, b) => a + (b - avgRet) ** 2, 0) / (returns.length - 1)) : 0;
+  const sharpe = stdRet > 0 ? (avgRet / stdRet) * Math.sqrt(252) : 0;
+  return { winRate: Math.round((wins / totalTrades) * 1000) / 10, totalReturn: Math.round((equity - 1) * 10000) / 100, maxDrawdown: Math.round(maxDrawdown * 10000) / 100, sharpe: Math.round(sharpe * 100) / 100, trades: totalTrades, tradeLog };
+}
 
+// ── SL/TP-aware backtest engine ───────────────────────────────────────────────
+// Each strategy supplies the same SL/TP it would use in production.
+// Exits are triggered bar-by-bar using candle highs and lows — not a fixed hold.
+// Sharpe is annualised correctly per timeframe.
+
+interface BacktestEntry {
+  direction: "BUY" | "SELL";
+  stopLoss: number;
+  takeProfit: number;
+}
+
+function btAnnFactor(tf: Timeframe): number {
+  switch (tf) {
+    case "1w": return 52;
+    case "1d": return 252;
+    case "4h": return 252 * 6;
+    case "1h": return Math.round(252 * 6.5);
+    case "5m": return 252 * 78;
+    case "1m": return 252 * 390;
+    default:   return 252;
+  }
+}
+
+function btMaxHold(tf: Timeframe): number {
+  switch (tf) {
+    case "1w": return 8;    // ~2 months
+    case "1d": return 20;   // ~4 trading weeks
+    case "4h": return 30;   // ~5 trading days
+    case "1h": return 48;   // ~2 trading days
+    case "5m": return 60;   // ~5 hours
+    case "1m": return 60;   // ~1 hour
+    default:   return 20;
+  }
+}
+
+function runBacktestWithSLTP(
+  candles: OHLCV[],
+  getEntry: (i: number) => BacktestEntry | null,
+  splitRatio: number,
+  tf: Timeframe,
+): StrategyPerf {
+  const splitIdx = Math.floor(candles.length * splitRatio);
+  const testCandles = candles.slice(splitIdx);
+  const maxHold = btMaxHold(tf);
+
+  if (testCandles.length < 10) {
+    return { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
+  }
+
+  let wins = 0, totalTrades = 0;
+  const returns: number[] = [];
+  let peak = 1, equity = 1, maxDrawdown = 0;
+  const tradeLog: TradeRecord[] = [];
+
+  for (let i = 0; i < testCandles.length - 1; i++) {
+    const entry = getEntry(splitIdx + i);
+    if (!entry) continue;
+
+    const { direction, stopLoss, takeProfit } = entry;
+    const entryBar = testCandles[i];
+    const entryPrice = entryBar.close;
+    const date = new Date((entryBar.time as number) * 1000).toISOString().split('T')[0];
+
+    // Default exit: close of last hold bar (timeout — neither SL nor TP hit)
+    let exitPrice = testCandles[Math.min(i + maxHold, testCandles.length - 1)].close;
+    let exitReason: "SL" | "TP" | "TIMEOUT" = "TIMEOUT";
+    let holdBars = Math.min(maxHold, testCandles.length - 1 - i);
+
+    for (let j = i + 1; j <= Math.min(i + maxHold, testCandles.length - 1); j++) {
+      const bar = testCandles[j];
+      if (direction === "BUY") {
+        const slHit = bar.low  <= stopLoss;
+        const tpHit = bar.high >= takeProfit;
+        if (slHit || tpHit) {
+          // Both in same bar → conservative: assume SL first
+          exitPrice  = (tpHit && !slHit) ? takeProfit : stopLoss;
+          exitReason = (tpHit && !slHit) ? "TP" : "SL";
+          holdBars = j - i;
+          break;
+        }
+      } else {
+        const slHit = bar.high >= stopLoss;
+        const tpHit = bar.low  <= takeProfit;
+        if (slHit || tpHit) {
+          exitPrice  = (tpHit && !slHit) ? takeProfit : stopLoss;
+          exitReason = (tpHit && !slHit) ? "TP" : "SL";
+          holdBars = j - i;
+          break;
+        }
+      }
+    }
+
+    const ret = direction === "BUY"
+      ? (exitPrice - entryPrice) / entryPrice
+      : (entryPrice - exitPrice) / entryPrice;
+
+    returns.push(ret); totalTrades++; if (ret > 0) wins++;
+    equity *= 1 + ret;
+    if (equity > peak) peak = equity;
+    const dd = (peak - equity) / peak;
+    if (dd > maxDrawdown) maxDrawdown = dd;
     tradeLog.push({
       n: totalTrades,
-      direction: sig,
-      entryPrice: Math.round(entry * 10000) / 10000,
-      exitPrice: Math.round(exit * 10000) / 10000,
-      returnPct: Math.round(ret * 10000) / 100,
+      date,
+      direction,
+      entryPrice:  Math.round(entryPrice  * 10000) / 10000,
+      stopLoss:    Math.round(stopLoss    * 10000) / 10000,
+      takeProfit:  Math.round(takeProfit  * 10000) / 10000,
+      exitPrice:   Math.round(exitPrice   * 10000) / 10000,
+      exitReason,
+      holdBars,
+      returnPct:   Math.round(ret * 10000) / 100,
       win: ret > 0,
     });
   }
@@ -2321,29 +3372,31 @@ function runBacktestOnSeries(closes: number[], strategyFn: (i: number) => Signal
   }
 
   const avgRet = returns.reduce((a, b) => a + b, 0) / returns.length;
-  const stdRet =
-    returns.length > 1
-      ? Math.sqrt(returns.reduce((a, b) => a + (b - avgRet) ** 2, 0) / (returns.length - 1))
-      : 0;
-  const annualisedReturn = (equity - 1) * 100;
-  const sharpe = stdRet > 0 ? (avgRet / stdRet) * Math.sqrt(252) : 0;
+  const stdRet = returns.length > 1
+    ? Math.sqrt(returns.reduce((a, b) => a + (b - avgRet) ** 2, 0) / (returns.length - 1))
+    : 0;
+  const sharpe = stdRet > 0 ? (avgRet / stdRet) * Math.sqrt(btAnnFactor(tf)) : 0;
+
+  // Stats are computed over the full history; trade log is trimmed to the past 1 year for display.
+  const oneYearAgoStr = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const displayLog = tradeLog.filter(t => !t.date || t.date >= oneYearAgoStr);
 
   return {
-    winRate: Math.round((wins / totalTrades) * 1000) / 10,
-    totalReturn: Math.round(annualisedReturn * 100) / 100,
-    maxDrawdown: Math.round(maxDrawdown * 10000) / 100,
-    sharpe: Math.round(sharpe * 100) / 100,
-    trades: totalTrades,
-    tradeLog,
+    winRate:      Math.round((wins / totalTrades) * 1000) / 10,
+    totalReturn:  Math.round((equity - 1) * 10000) / 100,
+    maxDrawdown:  Math.round(maxDrawdown * 10000) / 100,
+    sharpe:       Math.round(sharpe * 100) / 100,
+    trades:       totalTrades,
+    tradeLog:     displayLog,
   };
 }
 
 async function runBacktest(symbol: string, tf: Timeframe): Promise<BacktestResult | null> {
-  const cacheKey = `${symbol}|${tf}`;
+  const cacheKey = `${symbol}|${tf}|v18`;
   const cached = backtestCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < BACKTEST_TTL) return cached.data;
 
-  const candles = await fetchHistory(symbol, tf);
+  const candles = await fetchHistoryBt(symbol, tf);
   if (candles.length < 60) return null;
 
   const closes = candles.map(c => c.close);
@@ -2351,86 +3404,221 @@ async function runBacktest(symbol: string, tf: Timeframe): Promise<BacktestResul
   const WARMUP = 30;
 
   for (let i = WARMUP; i <= closes.length; i++) {
-    const slice = candles.slice(0, i);
-    inds.push(calculateIndicators(slice));
+    inds.push(calculateIndicators(candles.slice(0, i)));
   }
 
-  const getSignal = (i: number, strat: StrategyId): SignalDirection => {
+  // ── S7/S8: Pre-fetch HTF + cross-asset candles once, then timestamp-align per bar ──
+  // HTF: one timeframe above the backtest TF (none for daily — daily is already top).
+  // Cross-asset: correlated asset at the same TF, aligned by Unix timestamp.
+  // Both are fetched in parallel before the per-bar loop to avoid per-bar I/O.
+  const BT_HTF_MAP: Record<Timeframe, Timeframe | null> = {
+    "1m": "1h", "5m": "1h", "1h": "4h", "4h": "1d", "1d": null, "1w": null,
+  };
+  const htfTf = BT_HTF_MAP[tf];
+  const crossPair = CROSS_ASSET_PAIRS[symbol];
+  const [htfAllCandles, crossAllCandles] = await Promise.all([
+    htfTf ? fetchHistoryBt(symbol, htfTf) : Promise.resolve([] as OHLCV[]),
+    crossPair ? fetchHistoryBt(crossPair.symbol, tf) : Promise.resolve(null as OHLCV[] | null),
+  ]);
+
+  // Returns { direction, stopLoss, takeProfit } using the same builders as live signals.
+  // Returns null for HOLD (no trade this bar).
+  const getEntry = (i: number, strat: StrategyId): BacktestEntry | null => {
     const idx = i - WARMUP;
-    if (idx < 0 || idx >= inds.length) return "HOLD";
+    if (idx < 0 || idx >= inds.length) return null;
     const ind = inds[idx];
+    if (!ind) return null;
     const price = closes[i];
-    if (!ind) return "HOLD";
-    let score: number;
-    if (strat === "1") score = scoreIndicators(ind, price).score;
-    else if (strat === "2") {
+    const candleSlice = candles.slice(0, i + 1);
+    const ivPct = ind.atr ? atrPercentile(candleSlice.slice(-20), ind.atr) : 0.5;
+
+    let direction: SignalDirection;
+    let sl: number, tp: number;
+
+    if (strat === "1") {
+      direction = scoreToSignal(scoreIndicators(ind, price).score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "2") {
       const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
-      score = strategyS2(ind, price, atrPct).score;
+      direction = scoreToSignal(strategyS2(ind, price, atrPct).score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "3") {
+      // No historical news — fallback to S1 signal; SL/TP from live builder
+      direction = scoreToSignal(scoreIndicators(ind, price).score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
     } else if (strat === "4") {
-      const candleSlice = candles.slice(0, i + 1);
-      score = strategyS4(ind, price, candleSlice).score;
-      return scoreToSignalS4(score);
+      const { score } = strategyS4(ind, price, candleSlice);
+      direction = scoreToSignalS4(score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
     } else if (strat === "5") {
-      const candleSlice = candles.slice(0, i + 1);
-      const r = strategyS5(ind, price, candleSlice);
-      return r.score > r.threshold ? "BUY" : r.score < -r.threshold ? "SELL" : "HOLD";
+      const r5 = strategyS5(ind, price, candleSlice);
+      direction = r5.score > r5.threshold ? "BUY" : r5.score < -r5.threshold ? "SELL" : "HOLD";
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
     } else if (strat === "6") {
-      // No historical news in backtest — use S2 score with S6 asymmetric thresholds
+      // No historical news — S2 signal with S6 asymmetric thresholds; live SL/TP
       const atrPct = ind.atr ? (ind.atr / price) * 100 : 2;
-      const { score: s6score } = strategyS2(ind, price, atrPct);
-      return s6score > 0.45 ? "BUY" : s6score < -0.35 ? "SELL" : "HOLD";
-    } else if (strat === "7") {
-      // No HTF/cross-asset data in backtest — APEX runs with available candles only
-      const candleSlice = candles.slice(0, i + 1);
-      const r = strategyAPEX(ind, price, candleSlice, [], null, false);
-      return r.tradeable && r.score > r.threshold ? "BUY" : r.tradeable && r.score < -r.threshold ? "SELL" : "HOLD";
-    } else if (strat === "8") {
-      const candleSlice = candles.slice(0, i + 1);
-      const r = strategyEnsemble(ind, price, candleSlice, [], null, false);
-      return r.agreementCount >= 2 && r.score > 0.40 ? "BUY" : r.agreementCount >= 2 && r.score < -0.40 ? "SELL" : "HOLD";
+      const { score } = strategyS2(ind, price, atrPct);
+      direction = score > 0.45 ? "BUY" : score < -0.35 ? "SELL" : "HOLD";
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "7" || strat === "8" || strat === "16" || strat === "17") {
+      // Timestamp-align HTF and cross-asset to current bar — no lookahead.
+      const curTime = candles[i].time;
+      const htfSlice  = htfAllCandles.filter(c => c.time <= curTime);
+      const crossSlice = crossAllCandles ? crossAllCandles.filter(c => c.time <= curTime) : null;
+      const crossInverse = crossPair?.inverse ?? false;
+
+      if (strat === "7") {
+        const r7 = strategyAPEX(ind, price, candleSlice, htfSlice, crossSlice, crossInverse);
+        direction = r7.tradeable && r7.score > r7.threshold ? "BUY"
+          : r7.tradeable && r7.score < -r7.threshold ? "SELL" : "HOLD";
+        const rl = buildRiskLevelsAPEX(direction, price, ind.atr, r7.regime);
+        sl = rl.stopLoss; tp = rl.takeProfit;
+      } else if (strat === "8") {
+        const r8 = strategyEnsemble(ind, price, candleSlice, htfSlice, crossSlice, crossInverse);
+        direction = r8.agreementCount >= 2 && r8.score > 0.40 ? "BUY"
+          : r8.agreementCount >= 2 && r8.score < -0.40 ? "SELL" : "HOLD";
+        const rl = buildRiskLevelsAPEX(direction, price, ind.atr, r8.regime);
+        sl = rl.stopLoss; tp = rl.takeProfit;
+      } else if (strat === "16") {
+        const r16 = strategyAPEXPlus(ind, price, candleSlice, htfSlice, crossSlice, crossInverse);
+        direction = r16.tradeable && r16.score > r16.threshold ? "BUY"
+          : r16.tradeable && r16.score < -r16.threshold ? "SELL" : "HOLD";
+        const rl = buildRiskLevelsAPEX(direction, price, ind.atr, r16.regime);
+        sl = rl.stopLoss; tp = rl.takeProfit;
+      } else {
+        const r17 = strategyEnsemblePlus(ind, price, candleSlice, htfSlice, crossSlice, crossInverse);
+        direction = r17.agreementCount >= 2 && r17.score > 0.38 ? "BUY"
+          : r17.agreementCount >= 2 && r17.score < -0.38 ? "SELL" : "HOLD";
+        const rl = buildRiskLevelsAPEX(direction, price, ind.atr, r17.regime);
+        sl = rl.stopLoss; tp = rl.takeProfit;
+      }
+    // ── S1+–S6+ enhanced strategies ─────────────────────────────────────────
+    } else if (strat === "10") {
+      const { score } = strategyS1Plus(ind, price, candleSlice);
+      direction = scoreToSignal(score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "11") {
+      const { score } = strategyS2Plus(ind, price, candleSlice);
+      direction = scoreToSignal(score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "12") {
+      // No historical news — S3Plus falls back to pure S1Plus (count < 3 gate)
+      const { score } = strategyS3Plus(ind, price, candleSlice, []);
+      direction = scoreToSignal(score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "13") {
+      const r13 = strategyS4Plus(ind, price, candleSlice);
+      direction = scoreToSignalS4Plus(r13.score, r13.regimeType);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "14") {
+      const r14 = strategyS5Plus(ind, price, candleSlice);
+      direction = r14.score > r14.threshold ? "BUY" : r14.score < -r14.threshold ? "SELL" : "HOLD";
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
+    } else if (strat === "15") {
+      // No historical news — S6Plus with empty articles falls back mostly to S2Plus
+      const { score } = strategyS6Plus(ind, price, candleSlice, []);
+      direction = score > 0.45 ? "BUY" : score < -0.35 ? "SELL" : "HOLD";
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
     } else {
-      const { score: s } = strategyS1(ind, price);
-      score = s; // no news in backtest
+      direction = scoreToSignal(strategyS1(ind, price).score);
+      const r = buildRiskLevels(direction, price, ind.atr, ivPct);
+      sl = r.stopLoss; tp = r.takeProfit;
     }
-    return scoreToSignal(score);
+
+    if (direction === "HOLD") return null;
+    return { direction, stopLoss: sl!, takeProfit: tp! };
   };
 
   const strategyIds = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
-  const strategyResults = await Promise.all(
-    strategyIds.map((id) =>
-      Promise.resolve(runBacktestOnSeries(closes, (i) => getSignal(i, id)))
-    )
-  );
+  const enhancedIds = ["10", "11", "12", "13", "14", "15", "16", "17"] as const;
 
-  // S9 backtest runs on intraday candles. Try 1h first; fall back to 4h if < 50 bars
-  // (Yahoo Finance has limited 1h history for some futures symbols, e.g. SI=F).
-  const S9_WARMUP = 32; // FIB_LB(20) + SWEEP_LB(10) + buffer
+  const [strategyResults, enhancedResults] = await Promise.all([
+    Promise.all(strategyIds.map((id) =>
+      Promise.resolve(runBacktestWithSLTP(candles, (i) => getEntry(i, id), 0, tf))
+    )),
+    Promise.all(enhancedIds.map((id) =>
+      Promise.resolve(runBacktestWithSLTP(candles, (i) => getEntry(i, id as StrategyId), 0, tf))
+    )),
+  ]);
+
+  // ── S9: intraday candles with real session gates enabled on 1h bars ────────
+  // Pass the actual timeframe to strategyS9 instead of "backtest".
+  // On 1h bars: isLondonKZ/isNYKZ check candle.time (Unix seconds) — works on
+  // historical bars. On 4h fallback: bypassSession remains true (4h bars are
+  // too coarse to pinpoint a kill zone, so bypassing is still correct there).
+  const S9_WARMUP = 32;
   let s9Perf: StrategyPerf = { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
-  const s9CandlesRaw = await fetchHistory(symbol, "1h");
-  const s9Candles = s9CandlesRaw.length >= 50 ? s9CandlesRaw : await fetchHistory(symbol, "4h");
+  const s9CandlesRaw = await fetchHistoryBt(symbol, "1h");
+  const s9Candles = s9CandlesRaw.length >= 50 ? s9CandlesRaw : await fetchHistoryBt(symbol, "4h");
+  const s9Tf: Timeframe = s9CandlesRaw.length >= 50 ? "1h" : "4h";
   if (s9Candles.length >= S9_WARMUP + 10) {
     const s9Closes = s9Candles.map(c => c.close);
     const s9Inds: (Indicators | null)[] = [];
-    // Include bar i itself so ema9 is current (not lagged by 1 bar)
     for (let i = S9_WARMUP; i < s9Candles.length; i++) {
       s9Inds.push(calculateIndicators(s9Candles.slice(0, i + 1)));
     }
-    // S9 is purely rule-based (no fitted parameters) so split the full series
-    // to avoid the 70/30 train window swallowing the rare signal events.
-    s9Perf = runBacktestOnSeries(s9Closes, (i) => {
+    s9Perf = runBacktestWithSLTP(s9Candles, (i) => {
       const idx = i - S9_WARMUP;
-      if (idx < 0 || idx >= s9Inds.length) return "HOLD";
+      if (idx < 0 || idx >= s9Inds.length) return null;
       const ind9 = s9Inds[idx];
-      if (!ind9) return "HOLD";
+      if (!ind9) return null;
       const slice = s9Candles.slice(0, i + 1);
-      const { score: s9score } = strategyS9(slice, ind9, s9Closes[i], "backtest");
-      return s9score > 0.5 ? "BUY" : s9score < -0.5 ? "SELL" : "HOLD";
-    }, 0);
+      // Use s9Tf (not "backtest") so session gates and POI zones fire on 1h bars
+      const { score: s9score, swingHigh, swingLow } = strategyS9(slice, ind9, s9Closes[i], s9Tf);
+      const dir: SignalDirection = s9score > 0.5 ? "BUY" : s9score < -0.5 ? "SELL" : "HOLD";
+      if (dir === "HOLD") return null;
+      const { stopLoss, takeProfit } = buildRiskLevelsS9(dir, s9Closes[i], swingHigh, swingLow, ind9.atr);
+      return { direction: dir, stopLoss, takeProfit };
+    }, 0, s9Tf);
   }
+
+  // ── S9+: same session-gate fix as S9, extended sweep/fib lookbacks ──────────
+  const S9_PLUS_WARMUP = 75; // FIB_LB_PLUS(50) + SWEEP_LB_PLUS(20) + buffer
+  let s9PlusPerf: StrategyPerf = { winRate: 0, totalReturn: 0, maxDrawdown: 0, sharpe: 0, trades: 0, tradeLog: [] };
+  if (s9Candles.length >= S9_PLUS_WARMUP + 10) {
+    const s9Closes = s9Candles.map(c => c.close);
+    const s9PlusInds: (Indicators | null)[] = [];
+    for (let i = S9_PLUS_WARMUP; i < s9Candles.length; i++) {
+      s9PlusInds.push(calculateIndicators(s9Candles.slice(0, i + 1)));
+    }
+    s9PlusPerf = runBacktestWithSLTP(s9Candles, (i) => {
+      const idx = i - S9_PLUS_WARMUP;
+      if (idx < 0 || idx >= s9PlusInds.length) return null;
+      const ind9p = s9PlusInds[idx];
+      if (!ind9p) return null;
+      const slice = s9Candles.slice(0, i + 1);
+      const { score: s9pScore, swingHigh, swingLow } = strategyS9Plus(slice, ind9p, s9Closes[i], s9Tf);
+      const dir: SignalDirection = s9pScore > 0.5 ? "BUY" : s9pScore < -0.5 ? "SELL" : "HOLD";
+      if (dir === "HOLD") return null;
+      const { stopLoss, takeProfit } = buildRiskLevelsS9(dir, s9Closes[i], swingHigh, swingLow, ind9p.atr);
+      return { direction: dir, stopLoss, takeProfit };
+    }, 0, s9Tf);
+  }
+
+  const htfNote = htfTf
+    ? `HTF candles (${htfTf}) and cross-asset data aligned by timestamp — full S7/S8 backtest.`
+    : "Daily TF has no higher timeframe available — S7/S8 run without HTF alignment (same as live for daily signals). Cross-asset correlation still applied.";
+  const s9SessionNote = s9Tf === "1h"
+    ? "Session gates (London/NY kill zones) and POI zones are active — 1h bar timestamps checked against UTC session windows."
+    : "Using 4h fallback — session gates bypass still applies (4h bars span multiple kill zones).";
 
   const strategies = {
     ...Object.fromEntries(strategyIds.map((id, idx) => [id, strategyResults[idx]])),
     "9": s9Perf,
+    ...Object.fromEntries(enhancedIds.map((id, idx) => [id, enhancedResults[idx]])),
+    "18": s9PlusPerf,
   } as BacktestResult["strategies"];
 
   const result: BacktestResult = {
@@ -2438,9 +3626,16 @@ async function runBacktest(symbol: string, tf: Timeframe): Promise<BacktestResul
     timeframe: tf,
     strategies,
     backtestNotes: {
-      "3": "S3 (Hybrid) is backtested without live news — news sentiment is fixed at 0 for all bars, so results approximate S1. Live signals incorporate real-time news weighting.",
-      "6": "S6 (Adaptive Hybrid) is backtested using S2 technical scores only — source-credibility news weighting is not applied. Live signals incorporate real-time news.",
-      "9": "S9 (Silver Liquidity Sweep) is backtested across all available intraday candles (no train/test split — S9 has no fitted parameters). Session gate and POI zone bypassed — 1h candles are too broad for Fibonacci entry precision; core signal is liquidity sweep + 9 EMA power candle. Live signals additionally require London (03:00–06:00 ET), NY (08:30–10:00 ET), or Post-News (10:00–11:00 ET) kill-zone timing and 44–61.8% POI confluence.",
+      "3": "S3 backtested without live news (no historical per-bar sentiment available). Results approximate S1. Exits use live ATR-based SL/TP.",
+      "6": "S6 backtested with S2 tech scores only — historical news not available. Exits use live ATR-based SL/TP.",
+      "7": htfNote,
+      "8": htfNote,
+      "9": `S9 backtested across all intraday candles (no train/test split — no fitted parameters). ${s9SessionNote} Exits use Fibonacci SL/TP.`,
+      "12": "S3+ backtested without live news — falls back to S1+ tech scoring (min 3 articles gate not met). Exits use live ATR-based SL/TP.",
+      "15": "S6+ backtested with S2+ tech scores only — historical news not available. Exits use live ATR-based SL/TP.",
+      "16": htfNote.replace("S7/S8", "S7+/S8+"),
+      "17": htfNote.replace("S7/S8", "S7+/S8+"),
+      "18": `S9+ backtested with 20-bar sweep / 50-bar Fib lookbacks across all intraday candles. ${s9SessionNote} Exits use Fibonacci SL/TP.`,
     },
     timestamp: new Date().toISOString(),
   };
@@ -2748,7 +3943,7 @@ const STRATEGY_DEFS = [
     label: "S5",
     title: "Professional Systematic",
     description: "Four-regime classification with dynamic indicator weights, consensus gate, and calibrated confidence — built for high-probability setups.",
-    detail: "Quiet Trend (0.45) · Quiet Range (0.60) · Volatile Trend (0.65) · Chaotic → No Trade · ≥60% consensus required · OBV + volume confirmation · score-to-win-rate calibration",
+    detail: "Quiet Trend (0.45) · Quiet Range (0.60) · Volatile Trend (0.65) · Chaotic → No Trade · ≥60% consensus required · OBV + volume confirmation · score-to-win-rate calibration · VIX-adaptive threshold: −0.05 when VIX<15, +0.10 when VIX>30 (applies to S5 and S5+)",
     accentHex: "#FFB84D",
   },
   {
@@ -2781,6 +3976,79 @@ const STRATEGY_DEFS = [
     title: "Silver Liquidity Sweep",
     description: "Session-gated stop-hunt entries at Fibonacci confluence — optimised for Silver (SI=F) intraday. Fires only when all four conditions align simultaneously.",
     detail: "London KZ (02:00–05:00 ET) · NY KZ (07:00–10:00 ET) · Liquidity sweep (wick beyond recent H/L, close back inside) · 9 EMA power candle (body >60% of range) · Fib 0.618/0.786 long · Fib 0.236/0.382 short",
+    accentHex: "#C0C0C0",
+  },
+  // ── Enhanced strategies (S1+–S9+) ─────────────────────────────────────────
+  {
+    id: "10",
+    label: "S1+",
+    title: "Technical Analysis+",
+    description: "S1 enhanced with OBV institutional flow scoring and volume-participation gate — thin-volume signals are automatically dampened.",
+    detail: "All S1 indicators + OBV slope (confirms/contradicts trend) + volume participation gate (sub-50% avg → 0.55× mult, sub-80% → 0.82×) + MACD near-crossover bonus (within 8% of line) · Threshold: 0.35",
+    accentHex: "#00D4AA",
+  },
+  {
+    id: "11",
+    label: "S2+",
+    title: "Multi-Factor+",
+    description: "S2 with regime-aware weight shifting instead of blanket volatility multiplier, plus a candle-body direction lock that penalises entries against the prevailing bar.",
+    detail: "S1+ base + ADX regime weights (trending: 1.05×, ranging: 0.80×, high-vol: 0.70×) + candle direction lock (opposing body >30% of range → 0.72×) · Threshold: 0.35",
+    accentHex: "#FFB84D",
+  },
+  {
+    id: "12",
+    label: "S3+",
+    title: "Hybrid+",
+    description: "S3 with stricter news quality gate (min 3 high-relevance articles, relevance ≥0.5) and adaptive tech/news blend that shifts to 80/20 when news is stale (>6h).",
+    detail: "S1+ base (65%) + enhanced sentiment (35%) · Relevance gate 0.5 (vs 0.2 in S3) · Min 3 articles before news weight activates · Stale-news shift 80/20 when >6h old · Freshness decay + credibility weighting",
+    accentHex: "#FF4D6A",
+  },
+  {
+    id: "13",
+    label: "S4+",
+    title: "Regime-Adaptive+",
+    description: "S4 with a fixed neutral-zone engine (ADX 18–25 no longer falls through), Bollinger Width amplifier in MR mode, and volume-confirmation scoring in Trend mode.",
+    detail: "ADX >25 → Trend Engine · ADX 18–25 → Weak Trend Engine (0.70× weight) · ADX <18 → MR Engine + BB-width amplifier (compressed: 1.30×) · Trend mode: vol 1.2× avg confirms (1.0× weight), OBV slope tie-breaker · Split thresholds: Trend 0.45 · MR 0.65 · Other 0.35",
+    accentHex: "#00C49A",
+  },
+  {
+    id: "14",
+    label: "S5+",
+    title: "Professional Systematic+",
+    description: "S5 with volume-spike gate on Volatile Trend regime, weighted consensus gate (replacing raw count), and regime-aware EMA200 stretch penalty.",
+    detail: "All S5 regimes + Volatile Trend gate: vol must be ≥1.5× avg or regime reclassified to Quiet Range · Weighted consensus ≥60% required (vs raw count) · EMA200 stretch >4% in range / >8% in trend → 15% quality penalty · Same 4 regime thresholds: 0.45/0.60/0.65/chaos",
+    accentHex: "#FFB84D",
+  },
+  {
+    id: "15",
+    label: "S6+",
+    title: "Adaptive Hybrid+",
+    description: "S6 with stricter source credibility (unknown publishers score 0.35 vs 0.55), stale-news penalty when ATR<1% + news>6h, and minimum 3-article gate before news weight exceeds 15%.",
+    detail: "S2+ tech base + enhanced S6+ sentiment · Unknown source credibility → 0.35 (was 0.55) · Low-vol + stale news → 80/20 split · Min 3 articles for news >10% weight · All original regime weights inherited",
+    accentHex: "#00D4AA",
+  },
+  {
+    id: "16",
+    label: "S7+",
+    title: "APEX+ — 2-Bar HTF · Expanded Cross-Asset",
+    description: "APEX with 2-bar higher-timeframe persistence (both bars must confirm), VWAP added to the ranging engine, EMA50 direction lock on breakouts, and an expanded 25-pair cross-asset map.",
+    detail: "All S7 engines + HTF 2-bar confirmation (prev bar re-checked on same slice) · Range engine: VWAP confirmation (0.8× weight) · Breakout engine: EMA50 direction lock (opposite → abstain) · Cross-asset: +15 forex/index/commodity pairs (25 total) · Quality gate 60/100 unchanged",
+    accentHex: "#FF4D6A",
+  },
+  {
+    id: "17",
+    label: "S8+",
+    title: "Ensemble+ — Regime-Shared · S7 Abstention",
+    description: "S8 improved: S7+ abstains instead of voting HOLD when quality gate fails, all sub-strategies share S7+'s regime classification, and position size is differentiated by whether S7+ is among the agreeing engines.",
+    detail: "Votes: S4+ + S5+ + S7+ (abstains if quality <60) · Shared regime across all engines (no conflicting classification) · S7+ in majority → 100% risk · S4++S5+ only → 50% risk · Full agreement → 100% risk · Threshold 0.38",
+    accentHex: "#00C49A",
+  },
+  {
+    id: "18",
+    label: "S9+",
+    title: "Silver Liquidity Sweep+",
+    description: "S9 with extended lookbacks — sweep detection over 20 bars (was 10) and Fibonacci structure over 50 bars (was 20) — capturing deeper, more significant institutional liquidity levels.",
+    detail: "London KZ + NY KZ + Post-News CZ · Liquidity sweep: 20-bar range (was 10) · Power candle: body >60% range + above/below 9 EMA · Fib POI: 44–61.8% of 50-bar swing (was 20-bar) · TP2 0.618 extension runner",
     accentHex: "#C0C0C0",
   },
 ] as const;
@@ -4688,6 +5956,8 @@ interface BacktestSignalEvent {
   epsApplicable: boolean;
   priceAtSignal: number;
   returns: BacktestForwardReturns;
+  dow?: string;           // "Mon"–"Fri" — day of week for DOW bucket analysis
+  vixAtDate?: number | null; // VIX close on signal date for VIX bucket analysis
 }
 
 interface BacktestSummaryStats {
@@ -4702,6 +5972,11 @@ interface BacktestSummaryStats {
   avgReturn6m: number;
   avgReturn3y: number;
   sampleSize3y: number; // how many events had ≥3y of forward data
+  // New: breakdown analytics
+  byDayOfWeek?: Record<string, { events: number; winRate1m: number }>;
+  byVixBucket?: Record<string, { events: number; winRate1m: number }>;
+  winRateLower95?: number | null;
+  winRateUpper95?: number | null;
 }
 
 interface BacktestAssetResult {
@@ -4758,6 +6033,27 @@ function evalEpsRecordQuarter(
   return { recordQuarter, epsApplicable: true };
 }
 
+function dayOfWeek(dateStr: string): string {
+  return ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][new Date(dateStr).getDay()];
+}
+
+function bootstrapCI(wins: boolean[], nResamples = 1000): { lower95: number | null; upper95: number | null } {
+  if (wins.length < 10) return { lower95: null, upper95: null };
+  const rates: number[] = [];
+  for (let i = 0; i < nResamples; i++) {
+    let w = 0;
+    for (let j = 0; j < wins.length; j++) {
+      if (wins[Math.floor(Math.random() * wins.length)]) w++;
+    }
+    rates.push(w / wins.length);
+  }
+  rates.sort((a, b) => a - b);
+  return {
+    lower95: Math.round(rates[Math.floor(nResamples * 0.025)] * 1000) / 10,
+    upper95: Math.round(rates[Math.floor(nResamples * 0.975)] * 1000) / 10,
+  };
+}
+
 function buildAssetResult(
   symbol: string, name: string, category: string, flag: string,
   events: BacktestSignalEvent[]
@@ -4773,6 +6069,32 @@ function buildAssetResult(
     const returns3y = evs.map(e => e.returns.d756).filter((v): v is number => v !== null);
     const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 100) / 100 : 0;
     const winRate = (arr: number[]) => arr.length ? Math.round(arr.filter(v => v > 0).length / arr.length * 1000) / 10 : 0;
+
+    // DOW breakdown
+    const dowBuckets: Record<string, boolean[]> = {};
+    for (const e of evs) {
+      if (!e.dow || e.returns.d21 === null) continue;
+      (dowBuckets[e.dow] ??= []).push(e.returns.d21 > 0);
+    }
+    const byDayOfWeek: Record<string, { events: number; winRate1m: number }> = {};
+    for (const [d, wins] of Object.entries(dowBuckets)) {
+      byDayOfWeek[d] = { events: wins.length, winRate1m: Math.round(wins.filter(Boolean).length / wins.length * 1000) / 10 };
+    }
+
+    // VIX bucket breakdown
+    const vixGroups: Record<string, boolean[]> = { "0-15": [], "15-25": [], "25+": [] };
+    for (const e of evs) {
+      if (e.vixAtDate == null || e.returns.d21 === null) continue;
+      const bkt = e.vixAtDate < 15 ? "0-15" : e.vixAtDate < 25 ? "15-25" : "25+";
+      vixGroups[bkt].push(e.returns.d21 > 0);
+    }
+    const byVixBucket: Record<string, { events: number; winRate1m: number }> = {};
+    for (const [bkt, wins] of Object.entries(vixGroups)) {
+      if (wins.length > 0) byVixBucket[bkt] = { events: wins.length, winRate1m: Math.round(wins.filter(Boolean).length / wins.length * 1000) / 10 };
+    }
+
+    const { lower95, upper95 } = bootstrapCI(returns1m.map(v => v > 0));
+
     bySignalCount[String(n)] = {
       events: evs.length,
       winRate1m: winRate(returns1m),
@@ -4785,6 +6107,10 @@ function buildAssetResult(
       avgReturn6m: avg(returns6m),
       avgReturn3y: avg(returns3y),
       sampleSize3y: returns3y.length,
+      byDayOfWeek,
+      byVixBucket,
+      winRateLower95: lower95,
+      winRateUpper95: upper95,
     };
   }
   return { symbol, name, category, flag, totalEvents: events.length, bySignalCount, events };
@@ -4800,6 +6126,14 @@ async function backtestSymbol(
   try {
     const allCandles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", "5y")) as OHLCV[];
     if (allCandles.length < 300) return null;
+
+    // Historical VIX for VIX bucket analysis — in-flight dedup coalesces across concurrent calls
+    const vixCandles = await (yahooProvider.fetchHistoryCandles("^VIX", "1d", "5y") as Promise<OHLCV[]>)
+      .catch(() => [] as OHLCV[]);
+    const vixByDate = new Map<string, number>();
+    for (const c of vixCandles) {
+      vixByDate.set(new Date(c.time * 1000).toISOString().slice(0, 10), c.close);
+    }
 
     // Fetch EPS once (non-stocks return [] immediately)
     let epsData: FinnhubEarningsItem[] = [];
@@ -4861,6 +6195,8 @@ async function backtestSymbol(
         epsApplicable,
         priceAtSignal: c.close,
         returns: computeForwardReturns(allCandles, i, c.close),
+        dow: dayOfWeek(dateStr),
+        vixAtDate: vixByDate.get(dateStr) ?? null,
       });
     }
 
@@ -4889,11 +6225,41 @@ function buildAggregate(assets: BacktestAssetResult[]): ScannerBacktestResponse[
     const r3y = evs.map(e => e.returns.d756).filter((v): v is number => v !== null);
     const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length * 100) / 100 : 0;
     const wr = (arr: number[]) => arr.length ? Math.round(arr.filter(v => v > 0).length / arr.length * 1000) / 10 : 0;
+
+    // DOW breakdown (aggregate)
+    const dowBuckets: Record<string, boolean[]> = {};
+    for (const e of evs) {
+      if (!e.dow || e.returns.d21 === null) continue;
+      (dowBuckets[e.dow] ??= []).push(e.returns.d21 > 0);
+    }
+    const byDayOfWeek: Record<string, { events: number; winRate1m: number }> = {};
+    for (const [d, wins] of Object.entries(dowBuckets)) {
+      byDayOfWeek[d] = { events: wins.length, winRate1m: Math.round(wins.filter(Boolean).length / wins.length * 1000) / 10 };
+    }
+
+    // VIX bucket breakdown (aggregate)
+    const vixGroups: Record<string, boolean[]> = { "0-15": [], "15-25": [], "25+": [] };
+    for (const e of evs) {
+      if (e.vixAtDate == null || e.returns.d21 === null) continue;
+      const bkt = e.vixAtDate < 15 ? "0-15" : e.vixAtDate < 25 ? "15-25" : "25+";
+      vixGroups[bkt].push(e.returns.d21 > 0);
+    }
+    const byVixBucket: Record<string, { events: number; winRate1m: number }> = {};
+    for (const [bkt, wins] of Object.entries(vixGroups)) {
+      if (wins.length > 0) byVixBucket[bkt] = { events: wins.length, winRate1m: Math.round(wins.filter(Boolean).length / wins.length * 1000) / 10 };
+    }
+
+    const { lower95, upper95 } = bootstrapCI(r1m.map(v => v > 0));
+
     bySignalCount[k] = {
       events: evs.length,
       winRate1m: wr(r1m), winRate3m: wr(r3m), winRate6m: wr(r6m), winRate1y: wr(r1y), winRate3y: wr(r3y),
       avgReturn1m: avg(r1m), avgReturn3m: avg(r3m), avgReturn6m: avg(r6m), avgReturn3y: avg(r3y),
       sampleSize3y: r3y.length,
+      byDayOfWeek,
+      byVixBucket,
+      winRateLower95: lower95,
+      winRateUpper95: upper95,
     };
   }
   return { totalEvents, bySignalCount };
@@ -5002,6 +6368,254 @@ setTimeout(() => {
   }, next.getTime() - now.getTime());
 })();
 
+// ── Adv Correlation — universe, computation, background pre-warm ────────────
+// Fully separate from the existing /api/trading/correlation endpoint/cache
+// above (TRADING_ASSETS, _correlationCache) — this feeds a new, additive
+// "Adv Correlation" tab and never touches the old one.
+
+type AdvCorrelationWindow = "1m" | "3m" | "6m" | "1y";
+const ADV_CORRELATION_WINDOWS: AdvCorrelationWindow[] = ["1m", "3m", "6m", "1y"];
+const ADV_CORRELATION_WINDOW_DAYS: Record<AdvCorrelationWindow, number> = {
+  "1m": 30, "3m": 90, "6m": 182, "1y": 365,
+};
+const ADV_CORRELATION_TTL = 4 * 60 * 60 * 1000; // 4h
+
+interface AdvCorrelationData {
+  symbols: CorrelationAsset[];
+  matrix: number[][];
+  window: AdvCorrelationWindow;
+  cacheWarm: boolean;
+  staleSymbols: string[];
+  lastUpdated: string;
+}
+
+const _advCorrelationCacheByWindow = new Map<AdvCorrelationWindow, { data: AdvCorrelationData; ts: number }>();
+
+// Per-symbol last-known-good daily close series, carried forward across warm
+// cycles when a fetch fails — a transient Yahoo blip degrades to "one symbol
+// slightly stale" instead of silently zeroing that symbol's correlations.
+const _advCloseSeriesCache = new Map<string, Map<string, number>>();
+
+const _advRedis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
+  ? new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    })
+  : null;
+
+async function fetchClosesWithRetry(symbol: string, range: string): Promise<Map<string, number> | null> {
+  let delay = 1_000;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const candles = (await yahooProvider.fetchHistoryCandles(symbol, "1d", range)) as OHLCV[];
+    if (candles.length > 0) {
+      const byDate = new Map<string, number>();
+      for (const c of candles) {
+        if (c.time && c.close) {
+          byDate.set(new Date(c.time * 1000).toISOString().slice(0, 10), c.close);
+        }
+      }
+      return byDate;
+    }
+    if (attempt < 2) await new Promise(r => setTimeout(r, delay));
+    delay = Math.min(delay * 2, 30_000);
+  }
+  return null; // exhausted retries — caller decides whether to carry forward
+}
+
+function pearson(mapI: Map<string, number>, mapJ: Map<string, number>): number {
+  const dates = [...mapI.keys()].filter(d => mapJ.has(d)).sort();
+  if (dates.length < 5) return 0;
+  const xs = dates.map(d => mapI.get(d)!);
+  const ys = dates.map(d => mapJ.get(d)!);
+  const k = dates.length;
+  const meanX = xs.reduce((a, b) => a + b, 0) / k;
+  const meanY = ys.reduce((a, b) => a + b, 0) / k;
+  let num = 0, denX = 0, denY = 0;
+  for (let t = 0; t < k; t++) {
+    const dx = xs[t] - meanX;
+    const dy = ys[t] - meanY;
+    num += dx * dy;
+    denX += dx * dx;
+    denY += dy * dy;
+  }
+  const denom = Math.sqrt(denX * denY);
+  const r = denom > 0 ? Math.max(-1, Math.min(1, num / denom)) : 0;
+  return Math.round(r * 100) / 100;
+}
+
+// ── Weekly market-cap-ranked "Stocks" slice ──────────────────────────────────
+// Market-cap rank within an already-curated pool shifts slowly — recomputing
+// it every 4h alongside the matrix itself would be wasted Yahoo load. Runs on
+// its own weekly cadence; the 4h matrix warm always reads whatever is cached.
+
+let _correlationStockSelection: { data: CorrelationAsset[]; ts: number } | null = null;
+const ADV_STOCK_SELECTION_REDIS_KEY = "correlation:advanced:stock-selection";
+
+async function refreshCorrelationStockSelection(): Promise<void> {
+  console.log("[AdvCorrelation] refreshing stock selection...");
+  const picked: CorrelationAsset[] = [];
+  for (const pool of CORRELATION_STOCK_POOLS) {
+    try {
+      const quotes = await fetchYahooQuoteSummaryBatch(pool.symbols);
+      const ranked = [...quotes.entries()]
+        .filter(([, q]) => typeof q.marketCap === "number" && (q.marketCap as number) > 0)
+        .sort((a, b) => (b[1].marketCap ?? 0) - (a[1].marketCap ?? 0))
+        .slice(0, pool.topN);
+      for (const [symbol, q] of ranked) {
+        picked.push({
+          symbol,
+          name: q.longName ?? q.shortName ?? symbol,
+          category: "Stocks",
+          flag: pool.flag,
+        });
+      }
+      console.log(`[AdvCorrelation] ${pool.region}: selected ${ranked.length}/${pool.topN}`);
+    } catch (err) {
+      console.error(`[AdvCorrelation] stock selection failed for ${pool.region}:`, err);
+    }
+  }
+  if (picked.length === 0) {
+    console.warn("[AdvCorrelation] stock selection produced 0 symbols — keeping previous selection");
+    return;
+  }
+  _correlationStockSelection = { data: picked, ts: Date.now() };
+  if (_advRedis) {
+    try {
+      await _advRedis.set(ADV_STOCK_SELECTION_REDIS_KEY, picked, { ex: 10 * 24 * 60 * 60 });
+    } catch (err) {
+      console.warn("[AdvCorrelation] failed to persist stock selection to Redis:", err);
+    }
+  }
+}
+
+async function hydrateCorrelationStockSelectionFromRedis(): Promise<void> {
+  if (!_advRedis || _correlationStockSelection) return;
+  try {
+    const cached = await _advRedis.get<CorrelationAsset[]>(ADV_STOCK_SELECTION_REDIS_KEY);
+    if (cached && cached.length > 0) {
+      _correlationStockSelection = { data: cached, ts: Date.now() };
+      console.log(`[AdvCorrelation] hydrated stock selection from Redis (${cached.length} symbols)`);
+    }
+  } catch (err) {
+    console.warn("[AdvCorrelation] failed to hydrate stock selection from Redis:", err);
+  }
+}
+
+function currentCorrelationUniverse(): CorrelationAsset[] {
+  return [...CORRELATION_FIXED_ASSETS, ...(_correlationStockSelection?.data ?? [])];
+}
+
+// ── Base matrix compute ──────────────────────────────────────────────────────
+// Fetches each symbol's 1y daily closes ONCE per warm cycle; all 4 windows are
+// then derived from that same in-memory series (pure CPU, no extra network).
+
+async function fetchAllCloseSeries(universe: CorrelationAsset[]): Promise<string[]> {
+  const staleSymbols: string[] = [];
+  await runWithConcurrency(universe, async (asset) => {
+    const series = await fetchClosesWithRetry(asset.symbol, "1y");
+    if (series) {
+      _advCloseSeriesCache.set(asset.symbol, series);
+    } else if (_advCloseSeriesCache.has(asset.symbol)) {
+      staleSymbols.push(asset.symbol);
+    } else {
+      _advCloseSeriesCache.set(asset.symbol, new Map());
+    }
+    return null;
+  }, 10);
+  return staleSymbols;
+}
+
+function buildAdvMatrixForWindow(
+  universe: CorrelationAsset[],
+  window: AdvCorrelationWindow,
+  staleSymbols: string[],
+): AdvCorrelationData {
+  const cutoff = window === "1y" ? null : Date.now() - ADV_CORRELATION_WINDOW_DAYS[window] * 24 * 60 * 60 * 1000;
+  const n = universe.length;
+  const matrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+  const windowedSeries = universe.map(asset => {
+    const full = _advCloseSeriesCache.get(asset.symbol) ?? new Map<string, number>();
+    if (!cutoff) return full;
+    const filtered = new Map<string, number>();
+    for (const [date, close] of full) {
+      if (new Date(date).getTime() >= cutoff) filtered.set(date, close);
+    }
+    return filtered;
+  });
+
+  for (let i = 0; i < n; i++) {
+    matrix[i][i] = 1;
+    for (let j = i + 1; j < n; j++) {
+      const r = pearson(windowedSeries[i], windowedSeries[j]);
+      matrix[i][j] = r;
+      matrix[j][i] = r;
+    }
+  }
+
+  return {
+    symbols: universe,
+    matrix,
+    window,
+    cacheWarm: true,
+    staleSymbols,
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+async function runAdvCorrelationWarm(): Promise<void> {
+  const universe = currentCorrelationUniverse();
+  console.log(`[AdvCorrelationWarm] fetching ${universe.length} symbols...`);
+  const staleSymbols = await fetchAllCloseSeries(universe);
+  for (const window of ADV_CORRELATION_WINDOWS) {
+    try {
+      const data = buildAdvMatrixForWindow(universe, window, staleSymbols);
+      _advCorrelationCacheByWindow.set(window, { data, ts: Date.now() });
+      if (_advRedis) {
+        try {
+          await _advRedis.set(`correlation:advanced:${window}`, data, { ex: 26 * 60 * 60 });
+        } catch (err) {
+          console.warn(`[AdvCorrelationWarm] Redis snapshot write failed for ${window}:`, err);
+        }
+      }
+      console.log(`[AdvCorrelationWarm] done window=${window} (${staleSymbols.length} stale)`);
+    } catch (err) {
+      console.error(`[AdvCorrelationWarm] window=${window} failed:`, err);
+    }
+  }
+}
+
+// Startup: 2.5 min after boot (offset from BacktestWarm's 2-min slot so the two
+// don't collide on deploy), leader-only.
+setTimeout(() => {
+  if (!isLeader()) {
+    console.log("[AdvCorrelationWarm] skipping startup warm — follower");
+    return;
+  }
+  (async () => {
+    await hydrateCorrelationStockSelectionFromRedis();
+    if (!_correlationStockSelection) await refreshCorrelationStockSelection();
+    await runAdvCorrelationWarm();
+  })().catch(err => console.error("[AdvCorrelationWarm] startup failed:", err));
+}, 2.5 * 60_000);
+
+// Refresh every 4h — a fixed interval, not market-close-timed. Daily-close
+// data only changes once per exchange per trading day, but this 180-symbol
+// universe spans exchanges closing at very different UTC times across DST
+// changes; a flat 4h loop caps staleness uniformly without calendar logic.
+setInterval(() => {
+  if (isLeader()) {
+    runAdvCorrelationWarm().catch(err => console.error("[AdvCorrelationWarm] periodic failed:", err));
+  }
+}, 4 * 60 * 60_000);
+
+// Weekly stock-selection re-rank — independent, much slower cadence than the
+// 4h matrix warm above.
+setInterval(() => {
+  if (isLeader()) {
+    refreshCorrelationStockSelection().catch(err => console.error("[AdvCorrelation] weekly stock selection failed:", err));
+  }
+}, 7 * 24 * 60 * 60_000);
+
 export function createTradingRouter(): Router {
   const router = Router();
 
@@ -5034,8 +6648,8 @@ export function createTradingRouter(): Router {
     res.json({ quotes, timestamp: new Date().toISOString() });
   });
 
-  const VALID_TF: Timeframe[] = ["1m", "5m", "1h", "4h", "1d"];
-  const VALID_STRAT: StrategyId[] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  const VALID_TF: Timeframe[] = ["1m", "5m", "1h", "4h", "1d", "1w"];
+  const VALID_STRAT: StrategyId[] = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18"];
 
   /** Resolve timeframe from `interval` (spec) or `timeframe` (alias), defaulting to "1d". */
   function resolveTimeframe(query: Request["query"]): Timeframe | null {
@@ -5065,33 +6679,34 @@ export function createTradingRouter(): Router {
       return res.status(400).json({ error: "Invalid strategy. Use: 1, 2, 3, 4, 5, 6, 7, 8" });
     }
 
-    // Strategies 4-9 require Pro plan
-    const advancedStrategies = ["4", "5", "6", "7", "8", "9"] as const;
-    if ((advancedStrategies as readonly string[]).includes(strategy) && !isPro(getDevicePlan(req))) {
+    // Strategies 4–9 and all enhanced (10–18) require Pro plan
+    const advancedStrategies = new Set(["4","5","6","7","8","9","10","11","12","13","14","15","16","17","18"]);
+    if (advancedStrategies.has(strategy) && !isPro(getDevicePlan(req))) {
       return res.status(403).json({ error: "Strategy requires Pro plan.", code: "PLAN_REQUIRED" });
     }
 
-    // S3 and S6 need news; S7 needs HTF candles + cross-asset candles
+    // Determine data requirements per strategy
+    const needsNews    = ["3","6","12","15"].includes(strategy);
+    const needsApexData = ["7","8","16","17"].includes(strategy);
+
     let newsSentiment = 0;
     let newsArticles: NewsArticle[] = [];
-    if (strategy === "3" || strategy === "6" || strategy === "7") {
-      if (strategy !== "7") {
-        const news = await fetchNewsForSymbol(symbol);
-        newsSentiment = news.aggregateSentiment;
-        newsArticles = news.articles;
-      }
+    if (needsNews) {
+      const news = await fetchNewsForSymbol(symbol);
+      newsSentiment = news.aggregateSentiment;
+      newsArticles = news.articles;
     }
 
     const HTF_MAP: Record<Timeframe, Timeframe | null> = {
-      "1m": "1h", "5m": "1h", "1h": "4h", "4h": "1d", "1d": null,
+      "1m": "1h", "5m": "1h", "1h": "4h", "4h": "1d", "1d": null, "1w": null,
     };
     let htfCandles: OHLCV[] = [];
     let crossAssetCandles: OHLCV[] | null = null;
     let crossAssetInverse = false;
-    if (strategy === "7" || strategy === "8") {
+    if (needsApexData) {
       const htfTf = HTF_MAP[tf!];
       if (htfTf) htfCandles = await fetchHistory(symbol, htfTf);
-      const crossPair = CROSS_ASSET_PAIRS[symbol];
+      const crossPair = CROSS_ASSET_PAIRS_PLUS[symbol] ?? CROSS_ASSET_PAIRS[symbol];
       if (crossPair) {
         crossAssetCandles = await fetchHistory(crossPair.symbol, tf!);
         crossAssetInverse = crossPair.inverse;
@@ -5103,9 +6718,76 @@ export function createTradingRouter(): Router {
     if (!signal) {
       return res.status(503).json({ error: "Insufficient historical data to generate signal" });
     }
+
+    // VWAP enrichment — intraday 5m bars for the current session. Non-critical;
+    // null when market is closed or Yahoo returns insufficient bars.
+    let vwap: number | null = null;
+    let vwapDeviation: number | null = null;
+    try {
+      const intraday = (await yahooProvider.fetchHistoryCandles(symbol, "5m", "1d") as OHLCV[])
+        .filter(c => (c.volume ?? 0) > 0);
+      if (intraday.length >= 5) {
+        vwap = calcVwapIntraday(intraday);
+        if (vwap && signal.entry) {
+          vwapDeviation = Math.round(((signal.entry - vwap) / vwap) * 10000) / 100;
+        }
+      }
+    } catch { /* non-critical */ }
+
     // private — strategies 4–9 are plan-gated and the response is per-device-plan
     res.setHeader("Cache-Control", "private, max-age=15, stale-while-revalidate=30");
-    return res.json(signal);
+    return res.json({ ...signal, vwap, vwapDeviation });
+  });
+
+  // GET /api/trading/signals-compare/:symbol
+  // Returns all 9 base + 9 enhanced strategy signals in parallel pairs for comparison.
+  // Plan-gated: Pro+ (signals_advanced). Intentionally un-cached — always fresh.
+  router.get("/signals-compare/:symbol", async (req: Request, res: Response) => {
+    const symbol = paramStr(req.params.symbol);
+    if (!symbolSchema.safeParse(symbol).success) {
+      return res.status(400).json({ error: "Invalid symbol format." });
+    }
+    if (!isPro(getDevicePlan(req))) {
+      return res.status(403).json({ error: "Strategy comparison requires Pro plan.", code: "PLAN_REQUIRED" });
+    }
+
+    const tf = resolveTimeframe(req.query) ?? "1d";
+    const HTF_MAP: Record<Timeframe, Timeframe | null> = {
+      "1m": "1h", "5m": "1h", "1h": "4h", "4h": "1d", "1d": null, "1w": null,
+    };
+    const htfTf = HTF_MAP[tf];
+    const [newsData, htfCandles] = await Promise.all([
+      fetchNewsForSymbol(symbol),
+      htfTf ? fetchHistory(symbol, htfTf) : Promise.resolve([] as OHLCV[]),
+    ]);
+    const { aggregateSentiment: newsSentiment, articles: newsArticles } = newsData;
+    const crossPair = CROSS_ASSET_PAIRS_PLUS[symbol];
+    const crossAssetCandles = crossPair ? await fetchHistory(crossPair.symbol, tf) : null;
+    const crossAssetInverse = crossPair?.inverse ?? false;
+
+    const BASE_STRATS: BaseStrategyId[] = ["1","2","3","4","5","6","7","8","9"];
+    const PLUS_STRATS: EnhancedStrategyId[] = ["10","11","12","13","14","15","16","17","18"];
+
+    const [baseSettled, plusSettled] = await Promise.all([
+      Promise.allSettled(BASE_STRATS.map(s =>
+        generateSignal(symbol, tf, s, newsSentiment, false, newsArticles, htfCandles, crossAssetCandles, crossAssetInverse)
+      )),
+      Promise.allSettled(PLUS_STRATS.map(s =>
+        generateSignal(symbol, tf, s, newsSentiment, false, newsArticles, htfCandles, crossAssetCandles, crossAssetInverse)
+      )),
+    ]);
+    const baseResults = baseSettled.map(r => r.status === 'fulfilled' ? r.value : null);
+    const plusResults = plusSettled.map(r => r.status === 'fulfilled' ? r.value : null);
+
+    const pairs = BASE_STRATS.map((baseId, i) => ({
+      baseId,
+      enhancedId: PLUS_STRATS[i],
+      base: baseResults[i],
+      enhanced: plusResults[i],
+    }));
+
+    res.setHeader("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
+    return res.json({ symbol, timeframe: tf, pairs, timestamp: new Date().toISOString() });
   });
 
   // GET /api/trading/analyst-note/:symbol
@@ -5126,6 +6808,17 @@ export function createTradingRouter(): Router {
     const direction = (req.query.direction as string) ?? "HOLD";
     const confidence = parseFloat(req.query.confidence as string) || 50;
     const key = `${symbol}_${strategy}_${direction}`;
+
+    // Track the button tap regardless of cache hit/miss
+    const _db = adminFirestore();
+    const _deviceId = req.headers["x-device-id"] as string | undefined;
+    if (_db && _deviceId) {
+      _db.doc(`ai_usage/${_deviceId}`).set({
+        anthropicCalls: FieldValue.increment(1),
+        lastSeen: new Date().toISOString(),
+        routes: { "/api/trading/analyst-note/:symbol": FieldValue.increment(1) },
+      }, { merge: true }).catch(() => {});
+    }
 
     res.setHeader("Cache-Control", "private, max-age=900"); // 15m — Pro+ gated
     const cached = _noteCache.get(key);
@@ -6064,6 +7757,189 @@ export function createTradingRouter(): Router {
     } catch (err) {
       console.error("[Correlation]", err);
       return res.status(503).json({ error: "Correlation temporarily unavailable" });
+    }
+  });
+
+  // ── GET /api/trading/correlation/advanced ──────────────────────────────────
+  // New, additive "Adv Correlation" tab — 180-symbol universe, background-only
+  // compute (never on the request path). See runAdvCorrelationWarm above.
+  router.get("/correlation/advanced", async (req: Request, res: Response) => {
+    const window = (req.query.window as string) || "3m";
+    if (!ADV_CORRELATION_WINDOWS.includes(window as AdvCorrelationWindow)) {
+      return res.status(400).json({ error: `window must be one of: ${ADV_CORRELATION_WINDOWS.join(", ")}` });
+    }
+    const w = window as AdvCorrelationWindow;
+    const cached = _advCorrelationCacheByWindow.get(w);
+    if (cached && Date.now() - cached.ts < ADV_CORRELATION_TTL) {
+      res.setHeader("Cache-Control", "public, max-age=900, stale-while-revalidate=3600");
+      return res.json(cached.data);
+    }
+    if (_advRedis) {
+      try {
+        const snapshot = await _advRedis.get<AdvCorrelationData>(`correlation:advanced:${w}`);
+        if (snapshot) {
+          _advCorrelationCacheByWindow.set(w, { data: snapshot, ts: Date.now() });
+          res.setHeader("Cache-Control", "public, max-age=900, stale-while-revalidate=3600");
+          return res.json(snapshot);
+        }
+      } catch (err) {
+        console.warn("[AdvCorrelation] Redis snapshot read failed:", err);
+      }
+    }
+    return res.status(503).json({ error: "Adv correlation matrix warming up, try again shortly", cacheWarm: false });
+  });
+
+  // ── GET /api/trading/correlation/advanced/custom ───────────────────────────
+  // User-pinned symbols, correlated against each other + a fixed reference-
+  // anchor set (not the full 180-symbol base universe — see plan doc for why).
+  const ADV_CUSTOM_MAX_SYMBOLS = 12;
+  const ADV_CUSTOM_CACHE_MAX_ENTRIES = 200;
+  const ADV_CUSTOM_CACHE_TTL = 45 * 60 * 1000;
+  const _advCorrelationCustomCache = new Map<string, { data: AdvCorrelationData; ts: number }>();
+  const ADV_CORRELATION_REFERENCE_ANCHORS = [
+    "SPY", "QQQ", "GC=F", "CL=F", "DX-Y.NYB", "BTC-USD", "^VIX", "EURUSD=X", "^TNX", "HG=F",
+  ];
+
+  router.get("/correlation/advanced/custom", async (req: Request, res: Response) => {
+    const rawSymbols = String(req.query.symbols ?? "").split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
+    const symbols = [...new Set(rawSymbols)];
+    if (symbols.length === 0) return res.status(400).json({ error: "symbols required" });
+    if (symbols.length > ADV_CUSTOM_MAX_SYMBOLS) {
+      return res.status(400).json({ error: `max ${ADV_CUSTOM_MAX_SYMBOLS} symbols` });
+    }
+    const window = (req.query.window as string) || "3m";
+    if (!ADV_CORRELATION_WINDOWS.includes(window as AdvCorrelationWindow)) {
+      return res.status(400).json({ error: `window must be one of: ${ADV_CORRELATION_WINDOWS.join(", ")}` });
+    }
+    const w = window as AdvCorrelationWindow;
+    const cacheKey = `${w}:${[...symbols].sort().join(",")}`;
+    const cached = _advCorrelationCustomCache.get(cacheKey);
+    if (cached && Date.now() - cached.ts < ADV_CUSTOM_CACHE_TTL) {
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.json(cached.data);
+    }
+
+    try {
+      const anchors = ADV_CORRELATION_REFERENCE_ANCHORS.filter(a => !symbols.includes(a));
+      const universeSymbols = [...symbols, ...anchors];
+      const seriesMap = new Map<string, Map<string, number>>();
+      await runWithConcurrency(universeSymbols, async (symbol) => {
+        const series = await fetchClosesWithRetry(symbol, "1y");
+        seriesMap.set(symbol, series ?? new Map());
+        return null;
+      }, 10);
+
+      const knownUniverse = currentCorrelationUniverse();
+      const cutoff = w === "1y" ? null : Date.now() - ADV_CORRELATION_WINDOW_DAYS[w] * 24 * 60 * 60 * 1000;
+      const symbolsMeta: CorrelationAsset[] = universeSymbols.map(s => {
+        const known = knownUniverse.find(a => a.symbol === s);
+        return known ?? { symbol: s, name: s, category: "Stocks", flag: "" };
+      });
+      const n = universeSymbols.length;
+      const matrix: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+      const windowed = universeSymbols.map(s => {
+        const full = seriesMap.get(s) ?? new Map<string, number>();
+        if (!cutoff) return full;
+        const filtered = new Map<string, number>();
+        for (const [date, close] of full) {
+          if (new Date(date).getTime() >= cutoff) filtered.set(date, close);
+        }
+        return filtered;
+      });
+      for (let i = 0; i < n; i++) {
+        matrix[i][i] = 1;
+        for (let j = i + 1; j < n; j++) {
+          const r = pearson(windowed[i], windowed[j]);
+          matrix[i][j] = r;
+          matrix[j][i] = r;
+        }
+      }
+
+      const data: AdvCorrelationData = {
+        symbols: symbolsMeta,
+        matrix,
+        window: w,
+        cacheWarm: true,
+        staleSymbols: [],
+        lastUpdated: new Date().toISOString(),
+      };
+      if (_advCorrelationCustomCache.size >= ADV_CUSTOM_CACHE_MAX_ENTRIES) {
+        const oldestKey = _advCorrelationCustomCache.keys().next().value;
+        if (oldestKey) _advCorrelationCustomCache.delete(oldestKey);
+      }
+      _advCorrelationCustomCache.set(cacheKey, { data, ts: Date.now() });
+      res.setHeader("Cache-Control", "private, max-age=60");
+      return res.json(data);
+    } catch (err) {
+      console.error("[AdvCorrelationCustom]", err);
+      return res.status(503).json({ error: "Custom correlation temporarily unavailable" });
+    }
+  });
+
+  // ── GET /api/trading/correlation/advanced/history ──────────────────────────
+  // 30-day rolling Pearson r for a symbol pair, downsampled to weekly steps
+  // over a trailing 1y — the drill-down chart for a matrix cell / pairs row.
+  const ADV_HISTORY_TTL = 4 * 60 * 60 * 1000;
+  const ADV_HISTORY_CACHE_MAX_ENTRIES = 200;
+  const ADV_HISTORY_ROLLING_DAYS = 30;
+  const _advCorrelationHistoryCache = new Map<string, { data: unknown; ts: number }>();
+
+  router.get("/correlation/advanced/history", async (req: Request, res: Response) => {
+    const a = String(req.query.a ?? "").toUpperCase().trim();
+    const b = String(req.query.b ?? "").toUpperCase().trim();
+    if (!a || !b || a === b) {
+      return res.status(400).json({ error: "a and b (distinct symbols) required" });
+    }
+    const key = [a, b].sort().join("|");
+    const cached = _advCorrelationHistoryCache.get(key);
+    if (cached && Date.now() - cached.ts < ADV_HISTORY_TTL) {
+      res.setHeader("Cache-Control", "public, max-age=900, stale-while-revalidate=3600");
+      return res.json(cached.data);
+    }
+    try {
+      const [seriesA, seriesB] = await Promise.all([
+        fetchClosesWithRetry(a, "1y"),
+        fetchClosesWithRetry(b, "1y"),
+      ]);
+      const mapA = seriesA ?? new Map<string, number>();
+      const mapB = seriesB ?? new Map<string, number>();
+      const dates = [...mapA.keys()].filter(d => mapB.has(d)).sort();
+
+      const points: { date: string; r: number }[] = [];
+      for (let i = ADV_HISTORY_ROLLING_DAYS - 1; i < dates.length; i += 5) {
+        const windowDates = dates.slice(i - ADV_HISTORY_ROLLING_DAYS + 1, i + 1);
+        const xs = windowDates.map(d => mapA.get(d)!);
+        const ys = windowDates.map(d => mapB.get(d)!);
+        const k = xs.length;
+        const meanX = xs.reduce((s, v) => s + v, 0) / k;
+        const meanY = ys.reduce((s, v) => s + v, 0) / k;
+        let num = 0, denX = 0, denY = 0;
+        for (let t = 0; t < k; t++) {
+          const dx = xs[t] - meanX, dy = ys[t] - meanY;
+          num += dx * dy; denX += dx * dx; denY += dy * dy;
+        }
+        const denom = Math.sqrt(denX * denY);
+        const r = denom > 0 ? Math.max(-1, Math.min(1, num / denom)) : 0;
+        points.push({ date: dates[i], r: Math.round(r * 100) / 100 });
+      }
+
+      const data = {
+        a: { symbol: a },
+        b: { symbol: b },
+        points,
+        windowDays: ADV_HISTORY_ROLLING_DAYS,
+        lastUpdated: new Date().toISOString(),
+      };
+      if (_advCorrelationHistoryCache.size >= ADV_HISTORY_CACHE_MAX_ENTRIES) {
+        const oldestKey = _advCorrelationHistoryCache.keys().next().value;
+        if (oldestKey) _advCorrelationHistoryCache.delete(oldestKey);
+      }
+      _advCorrelationHistoryCache.set(key, { data, ts: Date.now() });
+      res.setHeader("Cache-Control", "public, max-age=900, stale-while-revalidate=3600");
+      return res.json(data);
+    } catch (err) {
+      console.error("[AdvCorrelationHistory]", err);
+      return res.status(503).json({ error: "Correlation history temporarily unavailable" });
     }
   });
 

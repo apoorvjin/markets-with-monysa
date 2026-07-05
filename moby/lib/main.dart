@@ -32,24 +32,27 @@ void main() async {
     systemNavigationBarColor: Colors.black,
   ));
 
-  // Initialise Remote Config early so typed accessors return live values
-  // (not just hard-coded defaults) as soon as the first widget builds.
-  await RemoteConfigService.init();
-
   final prefs = await SharedPreferences.getInstance();
 
-  // If a user is already signed in (returning launch), seed local SharedPreferences
-  // from Firestore before the ProviderScope mounts so synchronous providers
-  // (theme, chartProvider) reflect any cross-device preference changes.
+  // Remote Config: init in background — defaults are used until fetch completes.
+  // Never await this; a missing Firebase Console setup must not block startup.
+  RemoteConfigService.init().catchError((_) {});
+
+  // Firestore backfill + prefs seed for returning signed-in users.
+  // Both are fire-and-forget — startup must not stall on network.
   final firebaseUser = FirebaseAuth.instance.currentUser;
   if (firebaseUser != null) {
-    await FirestoreService.seedPrefsFromFirestore(firebaseUser.uid, prefs)
+    FirestoreService.createUserDoc(
+      firebaseUser.uid,
+      firebaseUser.email ?? '',
+    ).catchError((_) {});
+    FirestoreService.seedPrefsFromFirestore(firebaseUser.uid, prefs)
         .catchError((_) {});
+    PushNotificationService.init().catchError((_) {});
   }
 
   // Seed the chart renderer so the Dio interceptor stamps the correct
-  // X-Chart-Renderer header on the very first request, before any widget
-  // mounts ChartProviderNotifier.
+  // X-Chart-Renderer header on the very first request.
   final savedRenderer = prefs.getString('chart_provider');
   if (savedRenderer == 'tradingview' || savedRenderer == 'inhouse') {
     currentChartRenderer = savedRenderer!;
@@ -85,11 +88,6 @@ void main() async {
         EntitlementService.updateFromCustomerInfo);
   }
 
-  // Initialise push notifications for already-signed-in users (returning launch).
-  if (firebaseUser != null) {
-    PushNotificationService.init().catchError((_) {});
-  }
-
   const sentryDsn = String.fromEnvironment('SENTRY_DSN');
   await SentryFlutter.init(
     (options) {
@@ -105,6 +103,5 @@ void main() async {
     )),
   );
 
-  // Log app_open event after the widget tree is running.
   FirebaseAnalytics.instance.logAppOpen().catchError((_) {});
 }

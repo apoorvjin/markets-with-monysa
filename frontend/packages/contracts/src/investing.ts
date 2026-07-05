@@ -27,6 +27,8 @@ export const CountryTariff = z
     debtToUSA: z.array(DebtDetail).nullish(),
     laymanExplanation: z.string().nullish(),
     lastUpdated: z.string().nullish(),
+    /** 0-100 weighted exposure score: headline rate + sector breadth + USD exposure. */
+    impactScore: z.number().nullish(),
   })
   .passthrough();
 export type CountryTariff = z.infer<typeof CountryTariff>;
@@ -49,6 +51,8 @@ export const QuiverItem = z
     rank: z.number().nullish(),
     badge: z.string().nullish(),
     badgeLabel: z.string().nullish(),
+    /** QoQ lobbying-spend growth badge (e.g. "+42%") when this ticker also tops the lobbying list. */
+    lobbyingGrowth: z.string().nullish(),
   })
   .passthrough();
 export type QuiverItem = z.infer<typeof QuiverItem>;
@@ -77,6 +81,7 @@ export const CongressTrade = z
     amountMidpoint: z.number().nullish(),
     party: z.string().nullish(),
     state: z.string().nullish(),
+    lobbyingGrowth: z.string().nullish(),
   })
   .passthrough();
 export type CongressTrade = z.infer<typeof CongressTrade>;

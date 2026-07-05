@@ -19,8 +19,8 @@ import '../../shared/widgets/theme_toggle.dart';
 import '../exposure/exposure_screen.dart';
 import 'best_setups_card.dart';
 import 'multibaggers_screen.dart';
-import 'house_trades_tab.dart';
 import 'earnings_calendar_tab.dart';
+import 'etf_explorer_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -67,21 +67,10 @@ final _sectorBestSetupsProvider =
   },
 );
 
-final _congressTradesProvider =
-    FutureProvider.autoDispose<CongressTradesResponse>((ref) {
-  ref.keepAlive(); // 2h server TTL
-  return TradingRepository.instance.fetchCongressTrades();
-});
-
 final _trumpTransactionsProvider =
     FutureProvider.autoDispose<OgeTransactionsResponse>((ref) {
   ref.keepAlive(); // 24h server TTL (OGE PDF pipeline)
   return TradingRepository.instance.fetchTrumpTransactions();
-});
-
-final _quiverCongressProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
-  ref.keepAlive(); // 2h server TTL
-  return TradingRepository.instance.fetchQuiverCongress();
 });
 
 final _quiverLobbyingProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
@@ -123,7 +112,7 @@ class _InvestingScreenState extends State<InvestingScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 8, vsync: this);
+    _tab = TabController(length: 7, vsync: this);
   }
 
   @override
@@ -158,10 +147,9 @@ class _InvestingScreenState extends State<InvestingScreen>
             Tab(text: 'Dashboard'),
             Tab(text: 'Multibaggers'),
             Tab(text: 'Presidential'),
-            Tab(text: 'Congress'),
             Tab(text: 'Smart \$'),
-            Tab(text: 'House Trades'),
-            Tab(text: 'Earnings'),
+            Tab(text: 'Earnings Calendar'),
+            Tab(text: 'ETFs'),
           ],
         ),
       ),
@@ -172,10 +160,9 @@ class _InvestingScreenState extends State<InvestingScreen>
           _InvestingDashboardTab(),
           MultibaggersBody(),
           _PresidentialTab(),
-          _CongressTradesTab(),
           _QuiverTab(),
-          HouseTradesTab(),
           EarningsCalendarTab(),
+          EtfExplorerTab(),
         ],
       ),
     );
@@ -1180,207 +1167,6 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-// ── Congress Trades Tab ───────────────────────────────────────────────────────
-
-class _CongressTradesTab extends ConsumerStatefulWidget {
-  const _CongressTradesTab();
-
-  @override
-  ConsumerState<_CongressTradesTab> createState() => _CongressTradesTabState();
-}
-
-class _CongressTradesTabState extends ConsumerState<_CongressTradesTab> {
-  String _chamber = 'All'; // All | Senate | House
-  String _type    = 'All'; // All | Buys | Sells
-  String _party   = 'All'; // All | Republican | Democratic
-  String _sort    = 'date'; // date | amount
-  final _searchCtrl = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    _searchCtrl.addListener(() => setState(() {}));
-  }
-
-  @override
-  void dispose() {
-    _searchCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final async = ref.watch(_congressTradesProvider);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header + filters
-        Container(
-          color: c.surface,
-          padding: const EdgeInsets.fromLTRB(
-              AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s3),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.account_balance_rounded, size: 16, color: c.accent),
-                  const SizedBox(width: AppSpacing.s2),
-                  Text(
-                    'Congress Trades',
-                    style: AppTypography.labelMd.copyWith(
-                        color: c.textPrimary, fontWeight: FontWeight.w700),
-                  ),
-                  const Spacer(),
-                  async.whenOrNull(
-                        data: (r) => Text(
-                          '${r.total} trades · 12-month window',
-                          style: AppTypography.xs.copyWith(color: c.textMuted),
-                        ),
-                      ) ??
-                      const SizedBox.shrink(),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.s3),
-              _SearchField(
-                controller: _searchCtrl,
-                hint: 'Search stock, symbol, or member name…',
-                c: c,
-              ),
-              const SizedBox(height: AppSpacing.s3),
-              // Chamber + Type
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    Text('Chamber:',
-                        style: AppTypography.xs.copyWith(color: c.textMuted)),
-                    const SizedBox(width: AppSpacing.s2),
-                    for (final label in ['All', 'Senate', 'House']) ...[
-                      _FilterChip(
-                        label: label,
-                        active: _chamber == label,
-                        onTap: () => setState(() => _chamber = label),
-                      ),
-                      if (label != 'House') const SizedBox(width: AppSpacing.s2),
-                    ],
-                    const SizedBox(width: AppSpacing.s5),
-                    Text('Type:',
-                        style: AppTypography.xs.copyWith(color: c.textMuted)),
-                    const SizedBox(width: AppSpacing.s2),
-                    for (final label in ['All', 'Buys', 'Sells']) ...[
-                      _FilterChip(
-                        label: label,
-                        active: _type == label,
-                        onTap: () => setState(() => _type = label),
-                      ),
-                      if (label != 'Sells') const SizedBox(width: AppSpacing.s2),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.s2),
-              // Party + Sort
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    Text('Party:',
-                        style: AppTypography.xs.copyWith(color: c.textMuted)),
-                    const SizedBox(width: AppSpacing.s2),
-                    for (final label in ['All', 'Republican', 'Democratic']) ...[
-                      _FilterChip(
-                        label: label,
-                        active: _party == label,
-                        onTap: () => setState(() => _party = label),
-                      ),
-                      if (label != 'Democratic') const SizedBox(width: AppSpacing.s2),
-                    ],
-                    const SizedBox(width: AppSpacing.s5),
-                    Text('Sort:',
-                        style: AppTypography.xs.copyWith(color: c.textMuted)),
-                    const SizedBox(width: AppSpacing.s2),
-                    _FilterChip(
-                      label: 'Date ↓',
-                      active: _sort == 'date',
-                      onTap: () => setState(() => _sort = 'date'),
-                    ),
-                    const SizedBox(width: AppSpacing.s2),
-                    _FilterChip(
-                      label: 'Amount ↓',
-                      active: _sort == 'amount',
-                      onTap: () => setState(() => _sort = 'amount'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        // Body
-        Expanded(
-          child: async.when(
-            loading: () => _CongressTradesSkeleton(c: c),
-            error: (_, __) => _CongressNoData(
-              c: c,
-              onRetry: () => ref.invalidate(_congressTradesProvider),
-            ),
-            data: (resp) {
-              final query = _searchCtrl.text.toLowerCase().trim();
-
-              var filtered = resp.trades.where((t) {
-                if (_chamber == 'Senate' && t.chamber != 'Senate') return false;
-                if (_chamber == 'House'  && t.chamber != 'House')  return false;
-                if (_type == 'Buys'  && t.type != 'buy')  return false;
-                if (_type == 'Sells' && t.type != 'sell') return false;
-                if (_party == 'Republican' && t.party != 'R') return false;
-                if (_party == 'Democratic' && t.party != 'D') return false;
-                if (query.isNotEmpty) {
-                  final name   = (t.name ?? '').toLowerCase();
-                  final ticker = t.ticker.toLowerCase();
-                  final member = t.memberName.toLowerCase();
-                  if (!name.contains(query) && !ticker.contains(query) && !member.contains(query)) return false;
-                }
-                return true;
-              }).toList();
-
-              if (_sort == 'amount') {
-                filtered.sort((a, b) =>
-                    (b.amountMidpoint ?? 0).compareTo(a.amountMidpoint ?? 0));
-              }
-
-              if (filtered.isEmpty) {
-                return _CongressNoData(
-                  c: c,
-                  onRetry: () => ref.invalidate(_congressTradesProvider),
-                  message: resp.total == 0
-                      ? 'No Data'
-                      : 'No trades match the current filter.',
-                );
-              }
-
-              return RefreshIndicator(
-                onRefresh: () => ref.refresh(_congressTradesProvider.future),
-                child: ListView.builder(
-                  padding: EdgeInsets.only(
-                    top: AppSpacing.s3,
-                    bottom: AppSpacing.s5 +
-                        MediaQuery.of(context).padding.bottom,
-                  ),
-                  itemCount: filtered.length,
-                  itemBuilder: (_, i) => _CongressTradeCard(trade: filtered[i]),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 // ── Search Field ──────────────────────────────────────────────────────────────
 
 class _SearchField extends StatelessWidget {
@@ -1427,233 +1213,6 @@ class _SearchField extends StatelessWidget {
   }
 }
 
-// ── Congress Trade Card ───────────────────────────────────────────────────────
-
-class _CongressTradeCard extends StatelessWidget {
-  const _CongressTradeCard({required this.trade});
-
-  final CongressTrade trade;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final isBuy = trade.type == 'buy';
-    final typeColor = isBuy ? c.positive : c.danger;
-    final partyColor = _partyColor(trade.party, c);
-
-    return GestureDetector(
-      onTap: () => context.push(
-        '/asset/${Uri.encodeComponent(trade.ticker)}'
-        '?name=${Uri.encodeComponent(trade.displayName)}',
-      ),
-      child: GlassCard(
-        margin: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
-        padding: const EdgeInsets.all(AppSpacing.s4),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Row 1: stock name · buy/sell badge
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    trade.displayName,
-                    style: AppTypography.labelMd
-                        .copyWith(color: c.textPrimary, fontWeight: FontWeight.w700),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: typeColor.withAlpha(25),
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                    border: Border.all(color: typeColor.withAlpha(80)),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        isBuy
-                            ? Icons.arrow_upward_rounded
-                            : Icons.arrow_downward_rounded,
-                        size: 10,
-                        color: typeColor,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        isBuy ? 'BUY' : 'SELL',
-                        style: AppTypography.xs.copyWith(
-                            color: typeColor, fontWeight: FontWeight.w800),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.s2),
-            // Row 2: ticker chip · member name
-            Row(
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: c.surfaceCard,
-                    borderRadius: BorderRadius.circular(AppRadius.xs),
-                    border: Border.all(color: c.border),
-                  ),
-                  child: Text(
-                    trade.ticker,
-                    style: AppTypography.xs.copyWith(
-                        color: c.textSecondary, fontWeight: FontWeight.w700),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => context.push(
-                      '/politician?name=${Uri.encodeComponent(trade.memberName)}'
-                      '&chamber=${Uri.encodeComponent(trade.chamber)}',
-                    ),
-                    child: Text(
-                      trade.memberName,
-                      style: AppTypography.xs.copyWith(
-                          color: c.accent, fontWeight: FontWeight.w600),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.s2),
-            // Row 3: chamber · party label · state · amount badge
-            Row(
-              children: [
-                _MetaPill(label: trade.chamber, c: c),
-                if (trade.party != null && trade.party!.isNotEmpty) ...[
-                  const SizedBox(width: AppSpacing.s2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: partyColor.withAlpha(20),
-                      borderRadius: BorderRadius.circular(AppRadius.full),
-                      border: Border.all(color: partyColor.withAlpha(60)),
-                    ),
-                    child: Text(
-                      _partyLabel(trade.party),
-                      style: AppTypography.xs.copyWith(
-                          color: partyColor, fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ],
-                if (trade.state != null && trade.state!.isNotEmpty) ...[
-                  const SizedBox(width: AppSpacing.s2),
-                  Text(
-                    trade.state!,
-                    style: AppTypography.xs.copyWith(color: c.textMuted),
-                  ),
-                ],
-                const Spacer(),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: c.accent.withAlpha(15),
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                    border: Border.all(color: c.accent.withAlpha(45)),
-                  ),
-                  child: Text(
-                    _fmtAmount(trade.amount),
-                    style: AppTypography.xs.copyWith(
-                        color: c.accent, fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.s2),
-            // Row 4: trade date · filing date
-            Row(
-              children: [
-                Icon(Icons.swap_horiz_rounded, size: 12, color: c.textFaint),
-                const SizedBox(width: 4),
-                Text(
-                  'Traded ${_fmtDate(trade.transactionDate)}',
-                  style: AppTypography.xs.copyWith(color: c.textMuted),
-                ),
-                if (trade.filingDate.isNotEmpty) ...[
-                  Text('  ·  ',
-                      style: AppTypography.xs.copyWith(color: c.textFaint)),
-                  Text(
-                    'Filed ${_fmtDate(trade.filingDate)}',
-                    style: AppTypography.xs.copyWith(color: c.textFaint),
-                  ),
-                ],
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Color _partyColor(String? party, AppPalette c) {
-    switch (party) {
-      case 'D': return const Color(0xFF3B82F6);
-      case 'R': return c.danger;
-      default:  return c.textMuted;
-    }
-  }
-
-  String _partyLabel(String? party) {
-    switch (party) {
-      case 'D': return 'Democratic';
-      case 'R': return 'Republican';
-      case 'I': return 'Independent';
-      default:  return party ?? '';
-    }
-  }
-
-  String _fmtAmount(String raw) {
-    // "$1,001 - $15,000" → "$1K–$15K"
-    final clean = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
-    if (clean.isEmpty) return '—';
-    // Compact large numbers
-    return clean
-        .replaceAllMapped(RegExp(r'\$(\d{1,3}(?:,\d{3})*)'),
-            (m) => '\$${_compact(m.group(1)!)}')
-        .replaceAll(' - ', '–');
-  }
-
-  String _compact(String numStr) {
-    final n = int.tryParse(numStr.replaceAll(',', '')) ?? 0;
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000)    return '${(n / 1000).toStringAsFixed(0)}K';
-    return numStr;
-  }
-
-  String _fmtDate(String iso) {
-    if (iso.length < 10) return iso;
-    try {
-      final dt = DateTime.parse(iso);
-      const months = [
-        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-      ];
-      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
-    } catch (_) {
-      return iso;
-    }
-  }
-}
-
 // ── Congress Trades Skeleton ──────────────────────────────────────────────────
 
 class _CongressTradesSkeleton extends StatelessWidget {
@@ -1678,89 +1237,6 @@ class _CongressTradesSkeleton extends StatelessWidget {
   }
 }
 
-// ── Congress No Data / Error ──────────────────────────────────────────────────
-
-class _CongressNoData extends StatelessWidget {
-  const _CongressNoData({
-    required this.c,
-    required this.onRetry,
-    this.message = 'No Data',
-  });
-
-  final AppPalette c;
-  final VoidCallback onRetry;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.s8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.account_balance_outlined,
-                size: 40, color: c.textFaint),
-            const SizedBox(height: AppSpacing.s4),
-            Text(
-              message,
-              style: AppTypography.headingSm.copyWith(color: c.textSecondary),
-              textAlign: TextAlign.center,
-            ),
-            if (message == 'No Data') ...[
-              const SizedBox(height: AppSpacing.s2),
-              Text(
-                'Live congressional trade data is currently unavailable. The data provider may require an updated subscription.',
-                style: AppTypography.xs.copyWith(
-                    color: c.textMuted, height: 1.5),
-                textAlign: TextAlign.center,
-              ),
-            ],
-            const SizedBox(height: AppSpacing.s5),
-            GestureDetector(
-              onTap: onRetry,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s5, vertical: AppSpacing.s3),
-                decoration: BoxDecoration(
-                  border: Border.all(color: c.border),
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-                child: Text('Retry',
-                    style: AppTypography.xs.copyWith(color: c.textSecondary)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ── Meta Pill ─────────────────────────────────────────────────────────────────
-
-class _MetaPill extends StatelessWidget {
-  const _MetaPill({required this.label, required this.c});
-  final String label;
-  final AppPalette c;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: c.surfaceCard,
-        borderRadius: BorderRadius.circular(AppRadius.full),
-        border: Border.all(color: c.border),
-      ),
-      child: Text(
-        label,
-        style:
-            AppTypography.xs.copyWith(color: c.textSecondary),
-      ),
-    );
-  }
-}
 // ── Best Setups Info Sheet ────────────────────────────────────────────────────
 
 String _fmtRelative(String iso) {
@@ -2613,37 +2089,32 @@ class _QuiverTab extends ConsumerStatefulWidget {
 }
 
 class _QuiverTabState extends ConsumerState<_QuiverTab> {
-  int _strategy = 0; // 0=Congress, 1=Lobbying, 2=Insider
+  int _strategy = 0; // 0=Lobbying, 1=Insider
 
   AsyncValue<QuiverScanResponse> get _async {
     return switch (_strategy) {
-      1 => ref.watch(_quiverLobbyingProvider),
-      2 => ref.watch(_quiverInsiderProvider),
-      _ => ref.watch(_quiverCongressProvider),
+      1 => ref.watch(_quiverInsiderProvider),
+      _ => ref.watch(_quiverLobbyingProvider),
     };
   }
 
   Future<void> _refresh() {
     return switch (_strategy) {
-      1 => ref.refresh(_quiverLobbyingProvider.future),
-      2 => ref.refresh(_quiverInsiderProvider.future),
-      _ => ref.refresh(_quiverCongressProvider.future),
+      1 => ref.refresh(_quiverInsiderProvider.future),
+      _ => ref.refresh(_quiverLobbyingProvider.future),
     };
   }
 
   void _invalidate() {
     switch (_strategy) {
       case 1:
-        ref.invalidate(_quiverLobbyingProvider);
-      case 2:
         ref.invalidate(_quiverInsiderProvider);
       default:
-        ref.invalidate(_quiverCongressProvider);
+        ref.invalidate(_quiverLobbyingProvider);
     }
   }
 
   static const _strategies = [
-    ('Congress Buys', Icons.account_balance_rounded),
     ('Lobbying Growth', Icons.trending_up_rounded),
     ('Insider Buys', Icons.person_pin_rounded),
   ];
@@ -2796,26 +2267,14 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
                     .copyWith(color: c.textPrimary)),
             const SizedBox(height: AppSpacing.s2),
             Text(
-                'Three data-driven portfolios built from public disclosure data — tracking money flows before markets react.',
+                'Two data-driven portfolios built from public disclosure data — tracking money flows before markets react.',
                 style: AppTypography.xs
                     .copyWith(color: c.textMuted, height: 1.6)),
             const SizedBox(height: AppSpacing.s5),
             _QuiverInfoBlock(
-              icon: Icons.account_balance_rounded,
-              color: c.accent,
-              label: 'S1',
-              title: 'Congress Buys',
-              rule: 'Top-10 tickers by aggregate STOCK Act disclosed purchase amount (12-month window)',
-              explanation:
-                  'US senators and representatives must disclose trades within 30-45 days. This strategy ranks stocks by the total disclosed purchase value from all members, surfacing names that insiders in government are accumulating.',
-              examples: 'NVDA, MSFT, TSM',
-              c: c,
-            ),
-            const SizedBox(height: AppSpacing.s5),
-            _QuiverInfoBlock(
               icon: Icons.trending_up_rounded,
               color: c.warning,
-              label: 'S2',
+              label: 'S1',
               title: 'Lobbying Growth',
               rule: 'Top-10 by largest QoQ increase in Senate LDA lobbying spend',
               explanation:
@@ -2827,7 +2286,7 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
             _QuiverInfoBlock(
               icon: Icons.person_pin_rounded,
               color: c.danger,
-              label: 'S3',
+              label: 'S2',
               title: 'Insider Buys',
               rule: 'Top-10 by insider Form 4 buy count via SEC EDGAR (90-day window)',
               explanation:
@@ -2967,6 +2426,23 @@ class _QuiverItemRow extends StatelessWidget {
                 ],
               ),
             ),
+            if (item.lobbyingGrowth != null) ...[
+              const SizedBox(width: AppSpacing.s2),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: c.warning.withAlpha(20),
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  border: Border.all(color: c.warning.withAlpha(60)),
+                ),
+                child: Text(
+                  '${item.lobbyingGrowth} lobbying',
+                  style: AppTypography.xs.copyWith(
+                      color: c.warning, fontWeight: FontWeight.w700, fontSize: 9),
+                ),
+              ),
+            ],
             const SizedBox(width: AppSpacing.s3),
             // Price + change
             if (item.price != null)

@@ -61,10 +61,10 @@ final _kStats = <_Stat>[
       icon: Icons.pie_chart),
   _Stat(
       id: 'annual_deficit',
-      label: 'Annual Deficit',
-      value: r'$1.83 Trillion',
+      label: 'Deficit (Fiscal YTD)',
+      value: r'$1.2T YTD',
       explanation:
-          "Each year the government spends \$1.83 trillion more than it collects in taxes. That gap becomes new debt.",
+          "So far this fiscal year the government has spent more than it collected in taxes. That gap becomes new debt.",
       category: 'big_picture',
       icon: Icons.arrow_circle_down),
   _Stat(
@@ -93,37 +93,13 @@ final _kStats = <_Stat>[
       category: 'personal',
       icon: Icons.person),
   _Stat(
-      id: 'debt_per_taxpayer',
-      label: 'Debt Per Taxpayer',
-      value: r'$241,000',
-      explanation:
-          "Only about half of Americans pay federal income tax, so each taxpayer's share is ~\$241,000 -- a second mortgage you never signed.",
-      category: 'personal',
-      icon: Icons.group),
-  _Stat(
       id: 'revenue_vs_spending',
-      label: 'Revenue vs. Spending',
-      value: r'$4.9T in / $6.7T out',
+      label: 'Revenue vs. Spending (FYTD)',
+      value: r'$3.7T in / $4.9T out (YTD)',
       explanation:
-          "The government collects \$4.9T in taxes but spends \$6.7T. Like earning \$4,900/month but spending \$6,700.",
+          "So far this fiscal year the government has collected less than it has spent. That gap becomes new debt.",
       category: 'personal',
       icon: Icons.credit_card),
-  _Stat(
-      id: 'ss_obligations',
-      label: 'Social Security Unfunded',
-      value: r'$22.4 Trillion',
-      explanation:
-          "The government has promised \$22.4 trillion more in Social Security than it expects to collect. Benefits could be cut around 2035 without changes.",
-      category: 'personal',
-      icon: Icons.shield),
-  _Stat(
-      id: 'medicare_obligations',
-      label: 'Medicare Unfunded',
-      value: r'$48.3 Trillion',
-      explanation:
-          "Medicare's future promises exceed expected revenue by \$48.3 trillion -- the biggest long-term financial challenge.",
-      category: 'personal',
-      icon: Icons.favorite),
   // Foreign Holders
   _Stat(
       id: 'japan_holdings',
@@ -246,14 +222,14 @@ const _kCats = <String, _CatCfg>{
     bg: Color(0x145B8DEF),
     icon: Icons.language,
     title: 'Who Owns Our Debt',
-    subtitle: 'The biggest foreign holders of U.S. Treasury securities · 2024 data',
+    subtitle: 'The biggest foreign holders of U.S. Treasury securities · Treasury TIC data as of Jan 2023 (most recent published)',
   ),
   'spending': (
     accent: Color(0xFFA78BFA),
     bg: Color(0x14A78BFA),
     icon: Icons.pie_chart,
     title: 'Where The Money Goes',
-    subtitle: 'Federal spending breakdown — fiscal year 2024',
+    subtitle: 'Federal spending breakdown — fiscal year to date',
   ),
 };
 
@@ -276,10 +252,7 @@ List<_Stat> _applyLiveData(Map<String, dynamic> live) {
     'interest_payments':        live['interestPayments']   as String? ?? '',
     'historical_growth':        live['debtGrowth20yr']     as String? ?? '',
     'debt_per_citizen':         live['debtPerCitizen']     as String? ?? '',
-    'debt_per_taxpayer':        live['debtPerTaxpayer']    as String? ?? '',
     'revenue_vs_spending':      live['revenueVsSpending']  as String? ?? '',
-    'ss_obligations':           live['ssUnfunded']         as String? ?? '',
-    'medicare_obligations':     live['medicareUnfunded']   as String? ?? '',
     'japan_holdings':           fh['japan']                as String? ?? '',
     'china_holdings':           fh['china']                as String? ?? '',
     'uk_holdings':              fh['uk']                   as String? ?? '',

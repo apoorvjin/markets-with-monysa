@@ -100,11 +100,30 @@ abstract final class TvSymbol {
   /// Yahoo Finance display name from catalog, or null if not listed.
   static String? yahooName(String yahooSymbol) => _catalog[yahooSymbol]?.yahooName;
 
+  /// Resolves a symbol for the *embedded* TradingView widget (in-app WebView).
+  ///
+  /// Catalog hits only — no suffix or bare-ticker guessing. The free embed
+  /// widget shows an in-widget "chart available only on TradingView" paywall
+  /// card for symbols outside its free data feeds, and that failure is
+  /// undetectable from Flutter (it renders inside the loaded page). Guessed
+  /// symbols are exactly the class that hits it, so they are never eligible
+  /// here; callers fall back to the Yahoo/LWC chart on null.
+  static String? resolveForEmbeddedWidget(String yahooSymbol) {
+    if (yahooSymbol.startsWith('^')) return null; // all indices are paywalled
+    final hit = tvSymbol(yahooSymbol);
+    if (hit == null) return null;
+    return hit.contains('!') ? null : hit; // continuous futures need TV Pro
+  }
+
   /// Resolves a Yahoo Finance symbol to a TradingView-compatible identifier.
   ///
   /// Returns null when no reliable mapping exists (unmapped futures/forex/crypto
   /// with Yahoo-specific suffixes like =F, =X, -USD, ^). In that case, callers
   /// should fall back to the Yahoo Finance / LWC chart path.
+  ///
+  /// Guessed mappings (exchange-suffix and bare-ticker rules) are safe for
+  /// external browser deep-links only — do NOT feed them to the embedded
+  /// widget; use [resolveForEmbeddedWidget] for that.
   static String? resolveForTv(String yahooSymbol) {
     // Indices (^ prefix) are NEVER shown in TradingView embedded widget — all
     // require a paid subscription regardless of namespace. Always fall back to LWC.

@@ -1,7 +1,9 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
@@ -13,6 +15,7 @@ import '../../providers/strategy_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/entitlement_service.dart';
+import '../../services/push_notification_service.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -38,17 +41,9 @@ class ProfileScreen extends ConsumerWidget {
         children: const [
           _IdentitySection(),
           SizedBox(height: AppSpacing.s5),
-          _SubscriptionCard(),
+          _SettingsSection(),
           SizedBox(height: AppSpacing.s6),
-          _ThemeSection(),
-          SizedBox(height: AppSpacing.s6),
-          _FontSizeSection(),
-          SizedBox(height: AppSpacing.s6),
-          _ChartProviderSection(),
-          SizedBox(height: AppSpacing.s6),
-          _DevPlanSection(),
-          SizedBox(height: AppSpacing.s6),
-          _AccountActionsSection(),
+          _AccountSection(),
           SizedBox(height: AppSpacing.s6),
           _AboutSection(),
         ],
@@ -136,6 +131,65 @@ class _LoggedInHeader extends StatelessWidget {
   }
 }
 
+// ── Settings Section ──────────────────────────────────────────────────────────
+
+class _SettingsSection extends StatelessWidget {
+  const _SettingsSection();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'SETTINGS',
+          style: AppTypography.labelSm.copyWith(
+            color: c.textMuted,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Container(
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: c.border),
+          ),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.s4),
+                child: _DevPlanSection(),
+              ),
+              Divider(height: 1, color: c.border),
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.s4),
+                child: _ThemeSection(),
+              ),
+              Divider(height: 1, color: c.border),
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.s4),
+                child: _NotificationsSection(),
+              ),
+              Divider(height: 1, color: c.border),
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.s4),
+                child: _ChartProviderSection(),
+              ),
+              Divider(height: 1, color: c.border),
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.s4),
+                child: _FontSizeSection(),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 // ── Subscription Card ─────────────────────────────────────────────────────────
 
 class _SubscriptionCard extends StatelessWidget {
@@ -144,58 +198,142 @@ class _SubscriptionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Container(
-      padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
-      decoration: BoxDecoration(
-        color: c.surfaceCard,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: c.border),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.s3, vertical: AppSpacing.s1),
-            decoration: BoxDecoration(
-              color: c.accentDim,
-              borderRadius: BorderRadius.circular(AppRadius.full),
-            ),
-            child: Text(
-              'FREE',
-              style: AppTypography.labelSm.copyWith(
-                  color: c.accent, fontWeight: FontWeight.w700),
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s3, vertical: AppSpacing.s1),
+          decoration: BoxDecoration(
+            color: c.accentDim,
+            borderRadius: BorderRadius.circular(AppRadius.full),
+          ),
+          child: Text(
+            'FREE',
+            style: AppTypography.labelSm.copyWith(
+                color: c.accent, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.s3),
+        Expanded(
+          child: Text(
+            'Free Plan',
+            style: AppTypography.md.copyWith(color: c.textPrimary),
+          ),
+        ),
+        GestureDetector(
+          onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Pro plan coming soon.'),
+              duration: Duration(seconds: 2),
             ),
           ),
-          const SizedBox(width: AppSpacing.s3),
-          Expanded(
-            child: Text(
-              'Free Plan',
-              style: AppTypography.md.copyWith(color: c.textPrimary),
-            ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Upgrade to Pro',
+                style: AppTypography.labelMd.copyWith(color: c.accent),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.arrow_forward_ios_rounded, size: 12, color: c.accent),
+            ],
           ),
-          GestureDetector(
-            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Pro plan coming soon.'),
-                duration: Duration(seconds: 2),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Notifications Section ─────────────────────────────────────────────────────
+
+class _NotificationsSection extends StatefulWidget {
+  const _NotificationsSection();
+
+  @override
+  State<_NotificationsSection> createState() => _NotificationsSectionState();
+}
+
+class _NotificationsSectionState extends State<_NotificationsSection> {
+  bool _enabled = false;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkStatus();
+  }
+
+  Future<void> _checkStatus() async {
+    final enabled = await PushNotificationService.isEnabled();
+    if (!mounted) return;
+    setState(() {
+      _enabled = enabled;
+      _loading = false;
+    });
+  }
+
+  Future<void> _toggle(bool value) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    if (value) {
+      final ok = await PushNotificationService.enable();
+      if (!mounted) return;
+      setState(() {
+        _enabled = ok;
+        _loading = false;
+        _error = ok ? null : 'Could not enable — check notification permission in Settings';
+      });
+    } else {
+      await PushNotificationService.disable();
+      if (!mounted) return;
+      setState(() {
+        _enabled = false;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Notifications',
+                style: AppTypography.md.copyWith(color: c.textPrimary),
               ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Upgrade to Pro',
-                  style: AppTypography.labelMd.copyWith(color: c.accent),
-                ),
-                const SizedBox(width: 4),
-                Icon(Icons.arrow_forward_ios_rounded,
-                    size: 12, color: c.accent),
-              ],
-            ),
+            _loading
+                ? SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: c.accent,
+                    ),
+                  )
+                : CupertinoSwitch(
+                    value: _enabled,
+                    activeTrackColor: c.accent,
+                    onChanged: _toggle,
+                  ),
+          ],
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: AppSpacing.s2),
+          Text(
+            _error!,
+            style: AppTypography.sm.copyWith(color: c.danger),
           ),
         ],
-      ),
+      ],
     );
   }
 }
@@ -214,11 +352,8 @@ class _ThemeSection extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'THEME',
-          style: AppTypography.labelSm.copyWith(
-            color: c.textMuted,
-            letterSpacing: 1.2,
-          ),
+          'Theme',
+          style: AppTypography.md.copyWith(color: c.textPrimary),
         ),
         const SizedBox(height: AppSpacing.s3),
         Container(
@@ -328,11 +463,8 @@ class _FontSizeSection extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'FONT SIZE',
-          style: AppTypography.labelSm.copyWith(
-            color: c.textMuted,
-            letterSpacing: 1.2,
-          ),
+          'Font Size',
+          style: AppTypography.md.copyWith(color: c.textPrimary),
         ),
         const SizedBox(height: AppSpacing.s3),
         Container(
@@ -458,11 +590,8 @@ class _ChartProviderSection extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'CHART PROVIDER',
-          style: AppTypography.labelSm.copyWith(
-            color: c.textMuted,
-            letterSpacing: 1.2,
-          ),
+          'Chart Provider',
+          style: AppTypography.md.copyWith(color: c.textPrimary),
         ),
         const SizedBox(height: AppSpacing.s3),
         Container(
@@ -585,11 +714,8 @@ class _DevPlanSection extends ConsumerWidget {
         Row(
           children: [
             Text(
-              'PLAN SIMULATOR',
-              style: AppTypography.labelSm.copyWith(
-                color: c.textMuted,
-                letterSpacing: 1.2,
-              ),
+              'Plan Simulator',
+              style: AppTypography.md.copyWith(color: c.textPrimary),
             ),
             const SizedBox(width: AppSpacing.s2),
             Container(
@@ -690,8 +816,8 @@ class _PlanChip extends ConsumerWidget {
 
 // ── Account Actions ───────────────────────────────────────────────────────────
 
-class _AccountActionsSection extends ConsumerWidget {
-  const _AccountActionsSection();
+class _AccountSection extends ConsumerWidget {
+  const _AccountSection();
 
   Future<void> _signOut(BuildContext context) async {
     final c = context.colors;
@@ -722,7 +848,9 @@ class _AccountActionsSection extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
-    await AuthService.signOut();
+    try {
+      await AuthService.signOut();
+    } catch (_) {}
     if (context.mounted) context.go('/auth');
   }
 
@@ -734,15 +862,30 @@ class _AccountActionsSection extends ConsumerWidget {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Password reset email sent to $email'),
+            content: Text(
+              'Password reset email sent to $email. Check spam/junk if it doesn\'t arrive.',
+            ),
             behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              bottom: 80 + MediaQuery.of(context).padding.bottom,
+            ),
           ),
         );
       }
     } on AuthException catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message), behavior: SnackBarBehavior.floating),
+          SnackBar(
+            content: Text(e.message),
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              bottom: 80 + MediaQuery.of(context).padding.bottom,
+            ),
+          ),
         );
       }
     }
@@ -818,7 +961,15 @@ class _AccountActionsSection extends ConsumerWidget {
     } on AuthException catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message), behavior: SnackBarBehavior.floating),
+          SnackBar(
+            content: Text(e.message),
+            behavior: SnackBarBehavior.floating,
+            margin: EdgeInsets.only(
+              left: 16,
+              right: 16,
+              bottom: 80 + MediaQuery.of(context).padding.bottom,
+            ),
+          ),
         );
       }
     } finally {
@@ -848,6 +999,11 @@ class _AccountActionsSection extends ConsumerWidget {
           ),
           child: Column(
             children: [
+              const Padding(
+                padding: EdgeInsets.all(AppSpacing.s4),
+                child: _SubscriptionCard(),
+              ),
+              Divider(height: 1, color: c.border),
               _ActionRow(
                 icon: Icons.lock_reset_rounded,
                 label: 'Reset Password',
@@ -943,10 +1099,55 @@ class _AboutSection extends StatelessWidget {
               const _AboutRow(label: 'App', value: 'Moby'),
               Divider(height: 1, color: c.border),
               const _AboutRow(label: 'Version', value: '1.0.0'),
+              Divider(height: 1, color: c.border),
+              const _AboutLinkRow(
+                label: 'Privacy Policy',
+                url:
+                    'https://whimsical-viper-e07.notion.site/Monysa-Privacy-Policy-80062190796b4888a92b122d59836d68',
+              ),
+              Divider(height: 1, color: c.border),
+              const _AboutLinkRow(
+                label: 'Support',
+                url:
+                    'https://whimsical-viper-e07.notion.site/Monysa-Support-c7331ad04c204cfbaf30cdc42b46f827?pvs=74',
+              ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+class _AboutLinkRow extends StatelessWidget {
+  const _AboutLinkRow({required this.label, required this.url});
+  final String label;
+  final String url;
+
+  Future<void> _open() async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return InkWell(
+      onTap: _open,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+        child: Row(
+          children: [
+            Text(label,
+                style: AppTypography.md.copyWith(color: c.textSecondary)),
+            const Spacer(),
+            Icon(Icons.open_in_new_rounded, size: 16, color: c.textMuted),
+          ],
+        ),
+      ),
     );
   }
 }

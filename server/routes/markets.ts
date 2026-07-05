@@ -2,6 +2,8 @@ import type { Express } from "express";
 import { fetchYahooPrice, fetchRangeData, fetchBatch } from "./shared";
 import { yahooProvider } from "../providers";
 import { findPivots } from "../lib/pivots";
+import { computeIndicators } from "../lib/indicators";
+import type { OHLCVCandle } from "../providers/types";
 
 const COUNTRY_EXCHANGE_MAP: Record<string, { exchanges: string[]; region: string; suffix: string }> = {
   CN: { exchanges: ["SSE", "SZSE"], region: "China", suffix: ".SS" },
@@ -871,9 +873,19 @@ export function registerMarketsRoutes(app: Express): void {
     const maxAgeSec = Math.floor(cacheTtl / 1000 / 2); // CDN max-age = half the server TTL
     res.set("Cache-Control", `public, max-age=${maxAgeSec}, stale-while-revalidate=${maxAgeSec * 2}`);
 
+    // Indicators are computed per-request AFTER the cache lookup — O(n) over
+    // in-memory candles — so the candle cache stays shared across requests
+    // with different ?indicators= params. Never mutate the cached object.
+    const indicatorSpec =
+      typeof req.query.indicators === "string" ? req.query.indicators : null;
+    const withIndicators = (data: object & { candles: OHLCVCandle[] }) =>
+      indicatorSpec
+        ? { ...data, indicators: computeIndicators(data.candles, indicatorSpec) }
+        : data;
+
     const cached = chartCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < cacheTtl) {
-      return res.json(cached.data);
+      return res.json(withIndicators(cached.data as { candles: OHLCVCandle[] }));
     }
 
     try {
@@ -887,7 +899,7 @@ export function registerMarketsRoutes(app: Express): void {
         ? { ...baseResponse, levels: findPivots(candles) }
         : baseResponse;
       chartCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
-      res.json(responseData);
+      res.json(withIndicators(responseData));
     } catch (e) {
       console.error("Chart data error:", e);
       res.status(500).json({ error: "Failed to fetch chart data" });
@@ -976,4 +988,10 @@ export function registerMarketsRoutes(app: Express): void {
       source: "Central bank official policy rates",
     });
   });
+}
+
+export function bustMarketQuotesCache() {
+  futuresCache.delete("indices");
+  futuresCache.delete("commodities");
+  futuresCache.delete("forex");
 }

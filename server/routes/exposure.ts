@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { getDevicePlan, isPro } from "../plan-enforcement";
+import { adminFirestore } from "../lib/firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 
 const _anthropic = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -21,6 +23,17 @@ export function registerExposureRoutes(app: Express): void {
 
     if (!isPro(getDevicePlan(req))) {
       return res.status(403).json({ error: "AI Tariff Analysis requires Pro plan.", code: "PLAN_REQUIRED" });
+    }
+
+    // Track the button tap regardless of cache hit/miss
+    const _db = adminFirestore();
+    const _deviceId = req.headers["x-device-id"] as string | undefined;
+    if (_db && _deviceId) {
+      _db.doc(`ai_usage/${_deviceId}`).set({
+        anthropicCalls: FieldValue.increment(1),
+        lastSeen: new Date().toISOString(),
+        routes: { "/api/exposure/analysis": FieldValue.increment(1) },
+      }, { merge: true }).catch(() => {});
     }
 
     const key = `${country}_${sector}_${tariffRate}`;

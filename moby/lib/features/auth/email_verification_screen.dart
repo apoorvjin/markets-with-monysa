@@ -63,7 +63,9 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Verification email sent to $_email'),
+            content: Text(
+              'Verification email sent to $_email. Check spam/junk if it doesn\'t arrive.',
+            ),
             behavior: SnackBarBehavior.floating,
           ),
         );
@@ -151,6 +153,15 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
               const SizedBox(height: AppSpacing.s4),
               Text(
                 'Click the link in the email to verify your account.\nThis screen will advance automatically.',
+                style: AppTypography.sm.copyWith(
+                  color: c.textMuted,
+                  height: 1.6,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.s2),
+              Text(
+                "Don't see it? Check your spam or junk folder.",
                 style: AppTypography.sm.copyWith(
                   color: c.textMuted,
                   height: 1.6,

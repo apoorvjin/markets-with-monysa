@@ -1,20 +1,23 @@
 import type { z } from "zod";
 import {
+  AdvCorrelationHistoryResponse,
+  AdvCorrelationResponse,
   BacktestResponse,
   BestSetupsResponse,
   BondsResponse,
   BriefingResponse,
   ChartResponse,
-  CongressTradesResponse,
   CorrelationResponse,
   CotResponse,
   CrisesResponse,
   EarningsResponse,
   EconomyEventsResponse,
+  EtfListResponse,
+  EtfProfileResponse,
+  EtfRotationResponse,
   FearGreedResponse,
   FuturesResponse,
   HeatmapResponse,
-  HouseTradesResponse,
   InstitutionalFlowResponse,
   MoversResponse,
   MULTIBAGGER_COUNTRIES,
@@ -32,8 +35,10 @@ import {
   TreemapResponse,
   UsaDebtResponse,
   VolatilityAssetsResponse,
+  VixTermStructureResponse,
   YieldCurveHistoryResponse,
   type ChartRange,
+  type EtfCategory,
   type InstitutionalFlowType,
   type MultibaggerCountry,
   type ScannerVersion,
@@ -125,8 +130,11 @@ export function createApiClient(opts: ApiClientOptions) {
     getIndices: () => get("/api/futures/indices", FuturesResponse),
     getCommodities: () => get("/api/futures/commodities", FuturesResponse),
     getForex: () => get("/api/futures/forex", FuturesResponse),
-    getChart: (symbol: string, range: ChartRange = "3mo") =>
-      get(`/api/chart/${encodeURIComponent(symbol)}${qs({ range })}`, ChartResponse),
+    getChart: (symbol: string, range: ChartRange = "3mo", indicators?: string) =>
+      get(
+        `/api/chart/${encodeURIComponent(symbol)}${qs({ range, ...(indicators ? { indicators } : {}) })}`,
+        ChartResponse,
+      ),
     getTreemap: (
       index: TreemapIndexParam,
       timeframe: TreemapTimeframe = "1d",
@@ -177,11 +185,22 @@ export function createApiClient(opts: ApiClientOptions) {
       get(`/api/trading/news/${encodeURIComponent(symbol)}`, NewsResponse),
     search: (q: string) => get(`/api/search${qs({ q })}`, SearchResponse),
     getCorrelation: () => get("/api/trading/correlation", CorrelationResponse),
+    getAdvCorrelation: (window: "1m" | "3m" | "6m" | "1y" = "3m") =>
+      get(`/api/trading/correlation/advanced${qs({ window })}`, AdvCorrelationResponse),
+    getAdvCorrelationCustom: (symbols: string[], window: "1m" | "3m" | "6m" | "1y" = "3m") =>
+      get(
+        `/api/trading/correlation/advanced/custom${qs({ symbols: symbols.join(","), window })}`,
+        AdvCorrelationResponse,
+      ),
+    getAdvCorrelationHistory: (a: string, b: string) =>
+      get(`/api/trading/correlation/advanced/history${qs({ a, b })}`, AdvCorrelationHistoryResponse),
 
     // ── Macro ────────────────────────────────────────────────────────────
     getVolatilityAssets: () =>
       get("/api/volatility/assets", VolatilityAssetsResponse),
     getFearGreed: () => get("/api/volatility/fear-greed", FearGreedResponse),
+    getVixTermStructure: () =>
+      get("/api/volatility/vix-term-structure", VixTermStructureResponse),
     getBonds: () => get("/api/bonds", BondsResponse),
     getSectors: () => get("/api/sectors", SectorsResponse),
     getCrises: () => get("/api/crises", CrisesResponse),
@@ -195,14 +214,15 @@ export function createApiClient(opts: ApiClientOptions) {
 
     // ── Investing ────────────────────────────────────────────────────────
     getTariffs: () => get("/api/tariffs", TariffsResponse),
-    getQuiverCongress: () => get("/api/quiver/congress", QuiverResponse),
     getQuiverLobbying: () => get("/api/quiver/lobbying", QuiverResponse),
     getQuiverInsider: () => get("/api/quiver/insider", QuiverResponse),
-    getCongressTrades: (memberName?: string) =>
-      get(`/api/quiver/congress-trades${qs({ memberName })}`, CongressTradesResponse),
-    getHouseTrades: () => get("/api/house-trades", HouseTradesResponse),
     getOgeTransactions: () =>
       get("/api/oge/trump-transactions", OgeResponse),
+    getEtfList: (category?: EtfCategory) =>
+      get(`/api/etf/list${qs({ category })}`, EtfListResponse),
+    getEtfProfile: (symbol: string) =>
+      get(`/api/etf/${encodeURIComponent(symbol)}/profile`, EtfProfileResponse),
+    getEtfRotation: () => get("/api/etf/rotation", EtfRotationResponse),
   };
 }
 

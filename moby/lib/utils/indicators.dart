@@ -310,3 +310,218 @@ IchimokuLines ichimoku(
     chikou: chikou,
   );
 }
+
+class StochasticSeries {
+  const StochasticSeries(this.k, this.d);
+  final List<IndicatorPoint> k;
+  final List<IndicatorPoint> d;
+}
+
+/// Slow Stochastic oscillator. Fast %K = 100 × (close − LL) / (HH − LL) over
+/// `kPeriod` bars; slow %K = SMA(fast %K, `smooth`); %D = SMA(slow %K,
+/// `dPeriod`). Defaults (14, 3, 3) match the TradingView "Stoch" defaults.
+StochasticSeries stochastic(List<Candle> candles,
+    {int kPeriod = 14, int smooth = 3, int dPeriod = 3}) {
+  if (candles.length < kPeriod + smooth + dPeriod - 2) {
+    return const StochasticSeries([], []);
+  }
+  final fastK = <IndicatorPoint>[];
+  for (var i = kPeriod - 1; i < candles.length; i++) {
+    var hi = -double.infinity;
+    var lo = double.infinity;
+    for (var k = i - kPeriod + 1; k <= i; k++) {
+      if (candles[k].high > hi) hi = candles[k].high;
+      if (candles[k].low < lo) lo = candles[k].low;
+    }
+    final range = hi - lo;
+    fastK.add(IndicatorPoint(
+        candles[i].time, range == 0 ? 50 : 100 * (candles[i].close - lo) / range));
+  }
+  List<IndicatorPoint> smaOfPoints(List<IndicatorPoint> pts, int period) {
+    if (pts.length < period) return const [];
+    final out = <IndicatorPoint>[];
+    double sum = 0;
+    for (var i = 0; i < period; i++) {
+      sum += pts[i].value;
+    }
+    out.add(IndicatorPoint(pts[period - 1].time, sum / period));
+    for (var i = period; i < pts.length; i++) {
+      sum += pts[i].value - pts[i - period].value;
+      out.add(IndicatorPoint(pts[i].time, sum / period));
+    }
+    return out;
+  }
+
+  final slowK = smaOfPoints(fastK, smooth);
+  final d = smaOfPoints(slowK, dPeriod);
+  return StochasticSeries(slowK, d);
+}
+
+/// Wilder's Average True Range. TR = max(high − low, |high − prevClose|,
+/// |low − prevClose|); seeded with the simple average of the first `period`
+/// TRs, then smoothed with Wilder's recursion. Starts at index `period`.
+List<IndicatorPoint> atr(List<Candle> candles, {int period = 14}) {
+  if (candles.length < period + 1) return const [];
+  double tr(int i) {
+    final h = candles[i].high;
+    final l = candles[i].low;
+    final pc = candles[i - 1].close;
+    return math.max(h - l, math.max((h - pc).abs(), (l - pc).abs()));
+  }
+
+  double sum = 0;
+  for (var i = 1; i <= period; i++) {
+    sum += tr(i);
+  }
+  double prev = sum / period;
+  final out = <IndicatorPoint>[IndicatorPoint(candles[period].time, prev)];
+  for (var i = period + 1; i < candles.length; i++) {
+    prev = (prev * (period - 1) + tr(i)) / period;
+    out.add(IndicatorPoint(candles[i].time, prev));
+  }
+  return out;
+}
+
+class AdxSeries {
+  const AdxSeries(this.adx, this.plusDi, this.minusDi);
+  final List<IndicatorPoint> adx;
+  final List<IndicatorPoint> plusDi;
+  final List<IndicatorPoint> minusDi;
+}
+
+/// Wilder's ADX with +DI/−DI. Directional movement and TR are Wilder-smoothed
+/// over `period` bars; ADX is the Wilder-smoothed average of DX, so it starts
+/// at index `2 * period`.
+AdxSeries adx(List<Candle> candles, {int period = 14}) {
+  if (candles.length < 2 * period + 1) {
+    return const AdxSeries([], [], []);
+  }
+  double tr(int i) {
+    final h = candles[i].high;
+    final l = candles[i].low;
+    final pc = candles[i - 1].close;
+    return math.max(h - l, math.max((h - pc).abs(), (l - pc).abs()));
+  }
+
+  double smTr = 0, smPlus = 0, smMinus = 0;
+  for (var i = 1; i <= period; i++) {
+    final upMove = candles[i].high - candles[i - 1].high;
+    final downMove = candles[i - 1].low - candles[i].low;
+    smTr += tr(i);
+    smPlus += (upMove > downMove && upMove > 0) ? upMove : 0;
+    smMinus += (downMove > upMove && downMove > 0) ? downMove : 0;
+  }
+
+  final plusDi = <IndicatorPoint>[];
+  final minusDi = <IndicatorPoint>[];
+  final dxValues = <double>[];
+  final adxOut = <IndicatorPoint>[];
+
+  void emitDi(int i) {
+    final p = smTr == 0 ? 0.0 : 100 * smPlus / smTr;
+    final m = smTr == 0 ? 0.0 : 100 * smMinus / smTr;
+    plusDi.add(IndicatorPoint(candles[i].time, p));
+    minusDi.add(IndicatorPoint(candles[i].time, m));
+    final sum = p + m;
+    dxValues.add(sum == 0 ? 0 : 100 * (p - m).abs() / sum);
+  }
+
+  emitDi(period);
+  for (var i = period + 1; i < candles.length; i++) {
+    final upMove = candles[i].high - candles[i - 1].high;
+    final downMove = candles[i - 1].low - candles[i].low;
+    final plusDm = (upMove > downMove && upMove > 0) ? upMove : 0.0;
+    final minusDm = (downMove > upMove && downMove > 0) ? downMove : 0.0;
+    smTr = smTr - smTr / period + tr(i);
+    smPlus = smPlus - smPlus / period + plusDm;
+    smMinus = smMinus - smMinus / period + minusDm;
+    emitDi(i);
+  }
+
+  // ADX = Wilder-smoothed DX, seeded with the average of the first `period` DXs.
+  if (dxValues.length >= period) {
+    double sum = 0;
+    for (var i = 0; i < period; i++) {
+      sum += dxValues[i];
+    }
+    double prev = sum / period;
+    // dxValues[j] corresponds to candle index `period + j`.
+    adxOut.add(IndicatorPoint(candles[2 * period - 1].time, prev));
+    for (var j = period; j < dxValues.length; j++) {
+      prev = (prev * (period - 1) + dxValues[j]) / period;
+      adxOut.add(IndicatorPoint(candles[period + j].time, prev));
+    }
+  }
+  return AdxSeries(adxOut, plusDi, minusDi);
+}
+
+class PivotLevel {
+  const PivotLevel(this.label, this.price);
+  final String label;
+  final double price;
+}
+
+enum PivotType { classic, camarilla }
+
+/// Pivot points from the last *complete* calendar period before the one the
+/// final candle sits in: previous day for intraday charts, previous month for
+/// daily-and-slower charts. Returns [] when there's no complete prior period.
+List<PivotLevel> pivotPoints(List<Candle> candles,
+    {PivotType type = PivotType.classic}) {
+  if (candles.length < 2) return const [];
+  final barIntervalMs = (candles.last.time.millisecondsSinceEpoch -
+          candles.first.time.millisecondsSinceEpoch) ~/
+      (candles.length - 1);
+  final intraday = barIntervalMs < Duration.millisecondsPerDay;
+
+  ({int y, int sub}) periodOf(DateTime t) =>
+      intraday ? (y: t.year, sub: t.month * 100 + t.day) : (y: t.year, sub: t.month);
+
+  final current = periodOf(candles.last.time);
+  double hi = -double.infinity;
+  double lo = double.infinity;
+  double? close;
+  ({int y, int sub})? found;
+  // Walk backward: skip the current period, then aggregate exactly one
+  // complete prior period.
+  for (var i = candles.length - 1; i >= 0; i--) {
+    final p = periodOf(candles[i].time);
+    if (p == current) continue;
+    if (found == null) {
+      found = p;
+    } else if (p != found) {
+      break;
+    }
+    if (candles[i].high > hi) hi = candles[i].high;
+    if (candles[i].low < lo) lo = candles[i].low;
+    close ??= candles[i].close; // first hit walking backward = period close
+  }
+  if (found == null || close == null) return const [];
+
+  final c = close;
+  final range = hi - lo;
+  switch (type) {
+    case PivotType.classic:
+      final p = (hi + lo + c) / 3;
+      return [
+        PivotLevel('P', p),
+        PivotLevel('R1', 2 * p - lo),
+        PivotLevel('S1', 2 * p - hi),
+        PivotLevel('R2', p + range),
+        PivotLevel('S2', p - range),
+        PivotLevel('R3', hi + 2 * (p - lo)),
+        PivotLevel('S3', lo - 2 * (hi - p)),
+      ];
+    case PivotType.camarilla:
+      return [
+        PivotLevel('R4', c + range * 1.1 / 2),
+        PivotLevel('R3', c + range * 1.1 / 4),
+        PivotLevel('R2', c + range * 1.1 / 6),
+        PivotLevel('R1', c + range * 1.1 / 12),
+        PivotLevel('S1', c - range * 1.1 / 12),
+        PivotLevel('S2', c - range * 1.1 / 6),
+        PivotLevel('S3', c - range * 1.1 / 4),
+        PivotLevel('S4', c - range * 1.1 / 2),
+      ];
+  }
+}

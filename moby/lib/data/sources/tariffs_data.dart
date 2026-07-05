@@ -47,6 +47,7 @@ class CountryTariff {
     required this.debtToUSA,
     required this.laymanExplanation,
     this.lastUpdated = '',
+    this.impactScore,
   });
 
   final String countryName;
@@ -56,6 +57,7 @@ class CountryTariff {
   final List<DebtDetail> debtToUSA;
   final String laymanExplanation;
   final String lastUpdated;
+  final double? impactScore; // 0-100 weighted exposure: rate + sector breadth + USD exposure
 
   factory CountryTariff.fromJson(Map<String, dynamic> j) => CountryTariff(
         countryName: j['countryName'] as String,
@@ -69,6 +71,7 @@ class CountryTariff {
             .toList(),
         laymanExplanation: j['laymanExplanation'] as String? ?? '',
         lastUpdated: j['lastUpdated'] as String? ?? '',
+        impactScore: (j['impactScore'] as num?)?.toDouble(),
       );
 
   String get flag {

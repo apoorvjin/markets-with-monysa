@@ -1,13 +1,14 @@
 import type { Express } from "express";
 import { Redis } from "@upstash/redis";
+import Anthropic from "@anthropic-ai/sdk";
 
 // ── Cache ─────────────────────────────────────────────────────────────────────
 // Two-layer: Redis (persistent across restarts) + in-memory (fast, avoids
 // a Redis round-trip on every request).  Redis is optional — if the env vars
 // are absent (local dev) the in-memory layer works standalone.
 
-const CACHE_TTL_S  = 24 * 60 * 60;        // 24 h in seconds (Redis TTL)
-const CACHE_TTL_MS = CACHE_TTL_S * 1000;  // 24 h in ms (in-memory check)
+const CACHE_TTL_S  = 7 * 24 * 60 * 60;    // 7 d in seconds (Redis TTL)
+const CACHE_TTL_MS = CACHE_TTL_S * 1000;  // 7 d in ms (in-memory check)
 const REDIS_KEY    = "oge:trump-transactions";
 
 const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
@@ -73,24 +74,7 @@ const AMOUNT_MAP: Record<string, number> = {
   "Over $5,000,000":          7_500_000,
 };
 
-// Fuzzy matchers keyed by the distinguishing numbers (tolerates OCR spacing/char noise)
-const FUZZY_AMOUNTS: Array<{ re: RegExp; label: string; mid: number }> = [
-  { re: /[Oo]ver\s+[\$Ss][\s\d,\.]+000[\s,\.]?000/i,                                   label: "Over $5,000,000",         mid: 7_500_000 },
-  { re: /[\$Ss][\s\d,\.oOlI]*1[\s,\.]?000[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*5[\s,\.]?000/i, label: "$1,000,001 - $5,000,000",  mid: 3_000_000 },
-  { re: /[\$Ss][\s\d,\.oOlI]*500[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*1[\s,\.]?000/i,          label: "$500,001 - $1,000,000",    mid: 750_000 },
-  { re: /[\$Ss][\s\d,\.oOlI]*250[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*500[\s,\.]?000/i,        label: "$250,001 - $500,000",      mid: 375_000 },
-  { re: /[\$Ss][\s\d,\.oOlI]*100[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*250[\s,\.]?000/i,        label: "$100,001 - $250,000",      mid: 175_000 },
-  { re: /[\$Ss][\s\d,\.oOlI]*50[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*100[\s,\.]?000/i,         label: "$50,001 - $100,000",       mid: 75_000 },
-  { re: /[\$Ss][\s\d,\.oOlI]*15[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*50[\s,\.]?000/i,          label: "$15,001 - $50,000",        mid: 32_500 },
-  { re: /[\$Ss][\s\d,\.oOlI]*1[\s,\.]?0+1[\s\S]{0,8}[\$Ss][\s\d,\.oOlI]*15[\s,\.]?000/i,           label: "$1,001 - $15,000",         mid: 8_000 },
-];
-
-function matchAmount(text: string): { label: string; mid: number } | null {
-  for (const { re, label, mid } of FUZZY_AMOUNTS) {
-    if (re.test(text)) return { label, mid };
-  }
-  return null;
-}
+const MIN_AMOUNT = 100_001;
 
 // ── PDF text extraction (pdfjs-dist, already installed) ───────────────────────
 
@@ -112,171 +96,120 @@ async function extractPdfText(buf: Buffer): Promise<string> {
   return text;
 }
 
-// ── Transaction parser ────────────────────────────────────────────────────────
+// ── Transaction parser (LLM-structured) ───────────────────────────────────────
 
 export interface OgeTransaction {
   description: string;
   type: "purchase" | "sale" | "exchange";
-  date: string;          // always "" — OCR dates are unreliable; UI shows filingDate only
+  date: string;          // ISO YYYY-MM-DD transaction date, read from the PDF row by the LLM
   amount: string;
   amountMidpoint: number;
   filingDate: string;    // ISO date from OGE API index — always reliable
   source: string;        // PDF filename
 }
 
-function detectType(window: string): "purchase" | "sale" | "exchange" {
-  const s = window.toLowerCase();
-  if (/exch/.test(s)) return "exchange";
-  if (/\bsal\b|nle\b|sell/.test(s)) return "sale";
-  return "purchase"; // Trump's 278-T is predominantly purchases
+const _anthropic = process.env.ANTHROPIC_API_KEY
+  ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+  : null;
+
+// Only brackets at/above MIN_AMOUNT are legal LLM output — enforced via schema enum
+// so the model can't return a below-floor row even if it wanted to.
+const ALLOWED_AMOUNTS = Object.entries(AMOUNT_MAP)
+  .filter(([, mid]) => mid >= MIN_AMOUNT)
+  .map(([label]) => label);
+
+interface RawLLMTransaction {
+  description: string;
+  type: string;
+  date: string;
+  amount: string;
 }
 
-// OCR variants of "sale", "purchase", "exchange" in the type column.
-// Uses a loose prefix-match to tolerate character substitutions (salo, lourch, etc.)
-const TYPE_KEYWORD_RE = /\b[a-z]?(?:sal\w*|sell|purch\w+|nurch\w+|ourch\w+|durch\w+|exch\w+)\b/gi;
-
-// Corporate suffix anchors — used to locate the company name boundary in extracted text
-const COMPANY_SUFFIXES = new Set(["INC", "CORP", "LLC", "LTD", "ETF", "FUND", "TRUST", "PLC"]);
-
-// Common English stop-words that never appear in company names
-const STOP_WORDS = new Set([
-  "YOUR", "YOU", "THE", "OF", "FOR", "BY", "AT", "IN", "TO", "AND", "OR",
-  "WITH", "FROM", "AN", "MY", "THEIR", "THIS", "THAT",
-]);
-
-// OCR noise patterns from adjacent PDF columns
-const NOISE_TOKEN_RE = /urch|yea|yoa|yos|vos|nos|daw|aoont|unsol|amount|acct|brok|aclod/i;
-
-const VOWELS = new Set("AEIOU");
-function hasLongConsRun(word: string): boolean {
-  let run = 0;
-  for (const ch of word) {
-    run = VOWELS.has(ch) ? 0 : run + 1;
-    if (run >= 4) return true;
-  }
-  return false;
-}
-
-function isNoise(word: string): boolean {
-  return NOISE_TOKEN_RE.test(word) || STOP_WORDS.has(word) || hasLongConsRun(word);
-}
-
-// Returns every distinct company name found in the lookback window.
-// A single 300-char window may span multiple PDF rows (due to column bleed),
-// so we scan all corporate suffixes left-to-right and emit one entry per anchor.
-function extractAllCompanyNames(lookback: string): string[] {
-  // Row layout: [row#] [description] [type] [date] [N/A] → amount
-  const typeMatches = [...lookback.matchAll(TYPE_KEYWORD_RE)];
-  const beforeType = typeMatches.length > 0
-    ? lookback.slice(0, typeMatches[typeMatches.length - 1].index!)
-    : lookback;
-
-  const segment = beforeType.slice(-300);
-
-  const cleaned = segment
-    .replace(/\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}/g, " ")  // dates
-    .replace(/\b\d{1,3}\b/g, " ")                         // row numbers / small nums
-    .replace(/\b\d{4,}\b/g, " ")                          // large standalone numbers
-    .replace(/[^A-Za-z\s\-&]/g, " ")                      // keep letters
-    .replace(/\b[A-Za-z]\b/g, " ")                        // lone letters
-    .replace(/\bINC(?=[A-Z])/g, "INC ")                   // split INCCL → INC CL
-    .replace(/\bCORP(?=[A-Z])/g, "CORP ")                 // split CORPA → CORP A
-    .replace(/\s{2,}/g, " ")
-    .trim()
-    .toUpperCase();
-
-  const words = cleaned.split(/\s+/).filter((w) => w.length >= 2);
-  if (words.length === 0) return [];
-
-  const results: string[] = [];
-
-  // Scan every corporate suffix in order — each is an anchor for one company entry.
-  for (let si = 0; si < words.length; si++) {
-    if (!COMPANY_SUFFIXES.has(words[si])) continue;
-
-    // Collect up to 2 post-suffix qualifiers (e.g. "COM", "CL", "CLASS").
-    // Stop immediately at noise — it means we've crossed into the type column.
-    const after: string[] = [];
-    for (let i = si + 1; i < words.length && after.length < 2; i++) {
-      const w = words[i];
-      if (NOISE_TOKEN_RE.test(w) || w.length < 2) break;
-      if (COMPANY_SUFFIXES.has(w)) break; // next company starts
-      after.push(w);
-    }
-
-    // Walk backwards collecting the company name, stopping at the previous suffix
-    // (that row's name is already captured by an earlier iteration).
-    // Use break (not continue) on noise — the first bad word is a hard boundary.
-    // "Transaction of your broker ADOBE INC": hitting YOUR stops the walk cleanly.
-    const before: string[] = [];
-    for (let i = si - 1; i >= 0 && before.length < 3; i--) {
-      const w = words[i];
-      if (COMPANY_SUFFIXES.has(w)) break; // previous row boundary
-      if (w.length < 3) continue;         // skip lone letters / short tokens
-      if (isNoise(w)) break;              // hard stop at first bad word
-      before.unshift(w);
-    }
-
-    if (before.length > 0) {
-      results.push([...before, words[si], ...after].join(" "));
-    }
-  }
-
-  // Fallback: last 6 words (no corporate suffix — e.g. ETFs, crypto tickers)
-  if (results.length === 0) {
-    return [words.slice(-6).join(" ")];
-  }
-
-  return results;
-}
-
-function parseTransactionsFromText(
+async function structureTransactionsWithLLM(
   text: string,
-  minMidpoint: number,
   filingDate: string,
   source: string,
-): OgeTransaction[] {
-  const results: OgeTransaction[] = [];
-
-  for (const { re, label, mid } of FUZZY_AMOUNTS) {
-    if (mid < minMidpoint) continue;
-
-    const localRe = new RegExp(re.source, "gi");
-    let m;
-    while ((m = localRe.exec(text)) !== null) {
-      const lookback = text.slice(Math.max(0, m.index - 300), m.index);
-      const txType = detectType(lookback.slice(-150));
-      const descriptions = extractAllCompanyNames(lookback);
-      for (const description of descriptions) {
-        results.push({ description, type: txType, date: "", amount: label, amountMidpoint: mid, filingDate, source });
-      }
-    }
+): Promise<OgeTransaction[]> {
+  if (!_anthropic) {
+    console.warn("[oge] ANTHROPIC_API_KEY not configured — skipping LLM structuring");
+    return [];
   }
 
-  // Deduplicate: same filing + amount + type + description
+  let raw: RawLLMTransaction[];
+  try {
+    const stream = _anthropic.messages.stream({
+      model: "claude-haiku-4-5-20251001",
+      max_tokens: 32000,
+      system: "You extract stock transaction rows from OCR'd OGE Form 278-T financial disclosure text. The OCR has errors (e.g. \"lourchaso\" for \"purchase\", \"salo\" for \"sale\", garbled company names) — use your knowledge of real public companies and securities to correct them.",
+      messages: [{
+        role: "user",
+        content: `Extract every transaction row in this OGE Form 278-T text whose disclosed amount range is $100,001 or greater. For each row return the cleaned company/security description, the transaction type, the transaction date shown in that row (not a filing date), and its amount range label exactly as one of the allowed values.\n\nText:\n${text}`,
+      }],
+      output_config: {
+        format: {
+          type: "json_schema",
+          schema: {
+            type: "object",
+            properties: {
+              transactions: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    description: { type: "string" },
+                    type: { type: "string", enum: ["purchase", "sale", "exchange"] },
+                    date: { type: "string", description: "ISO 8601 date, YYYY-MM-DD" },
+                    amount: { type: "string", enum: ALLOWED_AMOUNTS },
+                  },
+                  required: ["description", "type", "date", "amount"],
+                  additionalProperties: false,
+                },
+              },
+            },
+            required: ["transactions"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+
+    const msg = await stream.finalMessage();
+    const block = msg.content[0];
+    if (!block || block.type !== "text") return [];
+    raw = (JSON.parse(block.text) as { transactions: RawLLMTransaction[] }).transactions;
+  } catch (e) {
+    console.error(`[oge] LLM structuring failed for ${source}:`, (e as Error).message);
+    return [];
+  }
+
+  // Deduplicate exact repeats only (same filing sometimes lists a transaction twice,
+  // or "(1)"/"(2)" PDF variants filed the same day overlap) — same description with a
+  // different date/type/amount is a distinct transaction and must be kept.
   const seen = new Set<string>();
-  return results
-    .filter((t) => {
-      // Drop pure-noise entries
-      if (t.description === t.amount) return false; // fell back to amount label
-      if (!t.description.split(" ").some((w) => w.length >= 5)) return false; // no word ≥ 5 chars
-      // Drop descriptions made entirely of transaction-type garbage words
-      const uniqueWords = new Set(t.description.split(" ").map((w) => w.toLowerCase()));
-      const noiseWords = new Set(["purchase", "sale", "exchange", "ourchase", "nurchl", "yes", "vos", "yoa", "yos", "yea", "nos", "non"]);
-      if ([...uniqueWords].every((w) => noiseWords.has(w))) return false;
-      const key = `${t.filingDate}|${t.amount}|${t.type}|${t.description}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .sort((a, b) => b.filingDate.localeCompare(a.filingDate));
+  const results: OgeTransaction[] = [];
+  for (const t of raw) {
+    if (!t.description || AMOUNT_MAP[t.amount] === undefined) continue;
+    const key = `${filingDate}|${t.date}|${t.amount}|${t.type}|${t.description}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({
+      description: t.description,
+      type: (t.type as OgeTransaction["type"]) ?? "purchase",
+      date: t.date ?? "",
+      amount: t.amount,
+      amountMidpoint: AMOUNT_MAP[t.amount],
+      filingDate,
+      source,
+    });
+  }
+
+  return results.sort((a, b) => b.filingDate.localeCompare(a.filingDate));
 }
 
 // ── OGE index fetch + PDF pipeline ───────────────────────────────────────────
 
 const OGE_API = "https://extapps2.oge.gov/201/Presiden.nsf/API.xsp/v2/rest?draw=1&start=0&length=16747";
 const OGE_REFERER = "https://www.oge.gov/web/OGE.nsf/Officials%20Individual%20Disclosures%20Search%20Collection?OpenForm";
-const MIN_AMOUNT = 100_001;
 
 async function fetchTrumpTransactions(): Promise<OgeTransaction[]> {
   // Step 1 — fetch OGE index
@@ -332,11 +265,11 @@ async function fetchTrumpTransactions(): Promise<OgeTransaction[]> {
       const buf = Buffer.from(await pdfResp.arrayBuffer());
       const text = await extractPdfText(buf);
 
-      const txns = parseTransactionsFromText(text, MIN_AMOUNT, filing.filingDate, filing.source);
+      const txns = await structureTransactionsWithLLM(text, filing.filingDate, filing.source);
       console.log(`[oge] ${filing.source}: extracted ${txns.length} txns ≥$100K`);
 
       for (const t of txns) {
-        const key = `${t.filingDate}|${t.amount}|${t.type}|${t.description}`;
+        const key = `${t.filingDate}|${t.date}|${t.amount}|${t.type}|${t.description}`;
         if (!globalSeen.has(key)) {
           globalSeen.add(key);
           allTransactions.push(t);
@@ -370,7 +303,7 @@ async function releaseLock() {
   try { await redis.del(LOCK_KEY); } catch {}
 }
 
-async function bustCache() {
+export async function bustCache() {
   memCache = null;
   _lockFailTs = 0;
   _fetching = false; // allow immediate re-trigger from /refresh endpoint
@@ -569,8 +502,17 @@ export function registerOgeRoutes(app: Express) {
   });
 
   // Force-bust cache and re-run the PDF pipeline immediately.
-  // Hit this once after deploying parser fixes to avoid waiting 24h.
-  app.post("/api/oge/trump-transactions/refresh", async (_req, res) => {
+  // Hit this once after deploying parser fixes to avoid waiting 7d.
+  // Admin-only — this route pays for an LLM run on every call (~$0.35-0.40, one
+  // per filing) and bypasses the normal retrigger cooldown. Must not be public.
+  app.post("/api/oge/trump-transactions/refresh", async (req, res) => {
+    const adminSecret = process.env.ADMIN_SECRET;
+    if (!adminSecret) {
+      return res.status(503).json({ error: "ADMIN_SECRET not configured" });
+    }
+    if (req.headers["authorization"] !== `Bearer ${adminSecret}`) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
     await bustCache();
     triggerPipeline();
     res.json({ ok: true, message: "Cache cleared — pipeline running in background" });
@@ -580,7 +522,7 @@ export function registerOgeRoutes(app: Express) {
     const cached = await getCached();
     if (cached) {
       const pipelineRanAt = memCache ? new Date(memCache.ts).toISOString() : new Date().toISOString();
-      res.set("Cache-Control", "public, max-age=21600, stale-while-revalidate=43200"); // 6h / 12h SWR
+      res.set("Cache-Control", "public, max-age=302400, stale-while-revalidate=604800"); // 3.5d / 7d SWR
       return res.json({ transactions: cached, total: cached.length, lastUpdated: pipelineRanAt });
     }
 

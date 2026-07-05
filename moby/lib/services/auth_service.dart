@@ -24,8 +24,7 @@ abstract final class AuthService {
         password: password,
       );
       await cred.user!.sendEmailVerification();
-      // Create a Firestore user document so preferences and alerts can sync.
-      await FirestoreService.createUserDoc(cred.user!.uid, email.trim());
+      FirestoreService.createUserDoc(cred.user!.uid, email.trim()).catchError((_) {});
       FirebaseAnalytics.instance.logSignUp(signUpMethod: 'email').catchError((_) {});
     } on FirebaseAuthException catch (e) {
       throw AuthException(_friendlyMessage(e.code));
@@ -46,9 +45,15 @@ abstract final class AuthService {
         );
       }
       await _linkRevenueCat(user.uid);
+      // Backfill Firestore doc for users who existed before Firestore was added.
+      // merge:true means this never overwrites existing fields.
+      FirestoreService.createUserDoc(user.uid, user.email ?? email.trim())
+          .catchError((_) {});
       FirebaseAnalytics.instance.logLogin(loginMethod: 'email').catchError((_) {});
-      // Initialise push notifications now that we have an authenticated uid.
-      PushNotificationService.init().catchError((_) {});
+      // Push notification init is intentionally NOT called here.
+      // Calling native FCM APIs (requestPermission / getAPNSToken) mid-navigation
+      // can crash on iOS. main.dart calls init() on the next launch when the user
+      // is already signed in — one-session delay is acceptable.
     } on AuthException {
       rethrow;
     } on FirebaseAuthException catch (e) {
@@ -73,10 +78,12 @@ abstract final class AuthService {
   }
 
   static Future<void> signOut() async {
-    await PushNotificationService.onSignOut().catchError((_) {});
-    try {
-      await Purchases.logOut();
-    } catch (_) {}
+    PushNotificationService.onSignOut().catchError((_) {}); // fire-and-forget
+    if (EntitlementService.isRevenueCatConfigured) {
+      try {
+        await Purchases.logOut();
+      } catch (_) {}
+    }
     await _auth.signOut();
   }
 
@@ -89,9 +96,11 @@ abstract final class AuthService {
         password: password,
       );
       await user.reauthenticateWithCredential(cred);
-      try {
-        await Purchases.logOut();
-      } catch (_) {}
+      if (EntitlementService.isRevenueCatConfigured) {
+        try {
+          await Purchases.logOut();
+        } catch (_) {}
+      }
       await user.delete();
     } on FirebaseAuthException catch (e) {
       throw AuthException(_friendlyMessage(e.code));
@@ -99,6 +108,7 @@ abstract final class AuthService {
   }
 
   static Future<void> _linkRevenueCat(String uid) async {
+    if (!EntitlementService.isRevenueCatConfigured) return;
     try {
       final result = await Purchases.logIn(uid);
       EntitlementService.updateFromCustomerInfo(result.customerInfo);

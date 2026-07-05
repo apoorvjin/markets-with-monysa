@@ -159,6 +159,7 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
                                     BorderRadius.circular(AppRadius.sm),
                                 child: SectorTreemap(
                                   stocks: data.stocks,
+                                  marketState: data.marketState,
                                   onSectorTap: (sector) =>
                                       _openSectorDrillIn(context, data, sector),
                                 ),
@@ -673,7 +674,7 @@ class _SectorDrillInScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(AppRadius.sm),
                   // onSectorTap: null → no further drill-in from inside the
                   // already-focused sector view.
-                  child: SectorTreemap(stocks: stocks),
+                  child: SectorTreemap(stocks: stocks, marketState: marketState),
                 ),
               ),
             ],

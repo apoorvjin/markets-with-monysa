@@ -1,7 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { STRATEGIES, type ChartRange } from "@monysa/contracts";
-import { CandlestickChart } from "@monysa/charts";
+import { useMemo, useState } from "react";
+import {
+  STRATEGIES,
+  type ChartRange,
+  type IndicatorPoint,
+  type IndicatorSeries,
+} from "@monysa/contracts";
+import {
+  CandlestickChart,
+  OscillatorPane,
+  type ChartOverlay,
+  type ChartPriceLine,
+} from "@monysa/charts";
 import {
   Card,
   changeClass,
@@ -20,15 +30,48 @@ import { api } from "../../lib/api";
 
 const RANGES: ChartRange[] = ["1mo", "3mo", "6mo", "1y", "5y"];
 
+// Indicator chips → server ?indicators= spec entries. Colors mirror the
+// mobile in-house chart defaults (indicator_prefs_provider.dart).
+const INDICATOR_CHIPS: { label: string; spec: string; color: string }[] = [
+  { label: "SMA 20", spec: "sma:20", color: "#8fcbff" },
+  { label: "SMA 50", spec: "sma:50", color: "#5b9cff" },
+  { label: "SMA 200", spec: "sma:200", color: "#8b5cf6" },
+  { label: "EMA 21", spec: "ema:21", color: "#6e7bf6" },
+  { label: "BB", spec: "bb:20:2", color: "#9c88ff" },
+  { label: "Pivots", spec: "pivots:classic", color: "#8b5cf6" },
+  { label: "RSI", spec: "rsi:14", color: "#ffa56b" },
+  { label: "MACD", spec: "macd:12:26:9", color: "#5b9cff" },
+  { label: "Stoch", spec: "stoch:14:3:3", color: "#5b9cff" },
+  { label: "ATR", spec: "atr:14", color: "#9c88ff" },
+  { label: "ADX", spec: "adx:14", color: "#ffb84d" },
+];
+
+const isLine = (s: IndicatorSeries): s is IndicatorPoint[] =>
+  Array.isArray(s) && (s.length === 0 || "value" in s[0]!);
+const isPivots = (
+  s: IndicatorSeries,
+): s is { label: string; price: number }[] =>
+  Array.isArray(s) && s.length > 0 && "price" in s[0]!;
+
 export function AssetPage(props: { symbol: string; name?: string }) {
   const { symbol } = props;
   const [range, setRange] = useState<ChartRange>("3mo");
   // serverParam ("1"–"9") — label is for display only
   const [strategy, setStrategy] = useState(STRATEGIES[0]!);
+  const [activeInds, setActiveInds] = useState<Set<string>>(new Set());
+  const [showSignalLines, setShowSignalLines] = useState(true);
+
+  const indicatorSpec = useMemo(
+    () =>
+      INDICATOR_CHIPS.filter((c) => activeInds.has(c.spec))
+        .map((c) => c.spec)
+        .join(","),
+    [activeInds],
+  );
 
   const chart = useQuery({
-    queryKey: ["chart", symbol, range],
-    queryFn: () => api.getChart(symbol, range),
+    queryKey: ["chart", symbol, range, indicatorSpec],
+    queryFn: () => api.getChart(symbol, range, indicatorSpec || undefined),
     staleTime: 5 * 60_000,
   });
 
@@ -49,6 +92,107 @@ export function AssetPage(props: { symbol: string; name?: string }) {
     queryFn: () => api.getBacktest(symbol),
     staleTime: 30 * 60_000,
   });
+
+  // Server-computed indicator series → overlays / price lines / sub-panes.
+  const inds = chart.data?.indicators ?? {};
+  const overlays: ChartOverlay[] = [];
+  const priceLines: ChartPriceLine[] = [];
+  const panes: {
+    key: string;
+    lines: { label: string; color: string; points: IndicatorPoint[] }[];
+    guides?: { value: number; color: string }[];
+    range?: [number, number];
+  }[] = [];
+
+  for (const chip of INDICATOR_CHIPS) {
+    const series = inds[chip.spec];
+    if (!series) continue;
+    const kind = chip.spec.split(":")[0];
+    if ((kind === "sma" || kind === "ema") && isLine(series)) {
+      overlays.push({ label: chip.label, color: chip.color, points: series });
+    } else if (kind === "bb" && "upper" in series) {
+      overlays.push(
+        { label: "BB+", color: chip.color, points: series.upper },
+        { label: "BB", color: chip.color, points: series.mid, dashed: true },
+        { label: "BB-", color: chip.color, points: series.lower },
+      );
+    } else if (kind === "pivots" && isPivots(series)) {
+      for (const p of series) {
+        priceLines.push({ label: p.label, price: p.price, color: chip.color });
+      }
+    } else if (kind === "rsi" && isLine(series)) {
+      panes.push({
+        key: chip.spec,
+        lines: [{ label: "RSI", color: chip.color, points: series }],
+        guides: [
+          { value: 70, color: "#d22b2b" },
+          { value: 30, color: "#77c412" },
+        ],
+        range: [0, 100],
+      });
+    } else if (kind === "macd" && "macd" in series) {
+      panes.push({
+        key: chip.spec,
+        lines: [
+          { label: "MACD", color: "#5b9cff", points: series.macd },
+          { label: "Signal", color: "#ffa56b", points: series.signal },
+        ],
+        guides: [{ value: 0, color: "rgba(255,255,255,0.2)" }],
+      });
+    } else if (kind === "stoch" && "k" in series) {
+      panes.push({
+        key: chip.spec,
+        lines: [
+          { label: "%K", color: "#5b9cff", points: series.k },
+          { label: "%D", color: "#ffa56b", points: series.d },
+        ],
+        guides: [
+          { value: 80, color: "#d22b2b" },
+          { value: 20, color: "#77c412" },
+        ],
+        range: [0, 100],
+      });
+    } else if (kind === "atr" && isLine(series)) {
+      panes.push({
+        key: chip.spec,
+        lines: [{ label: "ATR", color: chip.color, points: series }],
+      });
+    } else if (kind === "adx" && "adx" in series) {
+      panes.push({
+        key: chip.spec,
+        lines: [
+          { label: "ADX", color: chip.color, points: series.adx },
+          { label: "DI+", color: "#00d4aa", points: series.plusDi },
+          { label: "DI-", color: "#ff4d6a", points: series.minusDi },
+        ],
+        guides: [{ value: 25, color: "rgba(255,255,255,0.2)" }],
+      });
+    }
+  }
+
+  // Signal entry/SL/TP lines — same rule as mobile: BUY/SELL only.
+  if (
+    showSignalLines &&
+    signal.data &&
+    signal.data.direction !== "HOLD" &&
+    signal.data.entry != null &&
+    signal.data.stopLoss != null &&
+    signal.data.takeProfit != null
+  ) {
+    priceLines.push(
+      { label: "ENTRY", price: signal.data.entry, color: "#00d4aa" },
+      { label: "SL", price: signal.data.stopLoss, color: "#ff4d6a" },
+      { label: "TP", price: signal.data.takeProfit, color: "#4ade80" },
+    );
+  }
+
+  const toggleInd = (spec: string) =>
+    setActiveInds((prev) => {
+      const next = new Set(prev);
+      if (next.has(spec)) next.delete(spec);
+      else next.add(spec);
+      return next;
+    });
 
   return (
     <div className="page">
@@ -71,6 +215,22 @@ export function AssetPage(props: { symbol: string; name?: string }) {
         </ChipRow>
       </div>
 
+      <ChipRow>
+        <Chip
+          label={`Signal ${strategy.label}`}
+          active={showSignalLines}
+          onClick={() => setShowSignalLines((v) => !v)}
+        />
+        {INDICATOR_CHIPS.map((c) => (
+          <Chip
+            key={c.spec}
+            label={c.label}
+            active={activeInds.has(c.spec)}
+            onClick={() => toggleInd(c.spec)}
+          />
+        ))}
+      </ChipRow>
+
       {chart.error ? (
         <ErrorView
           message={(chart.error as Error).message}
@@ -79,7 +239,24 @@ export function AssetPage(props: { symbol: string; name?: string }) {
       ) : chart.isLoading || !chart.data ? (
         <Skeleton height={380} />
       ) : (
-        <CandlestickChart candles={chart.data.candles} height={380} />
+        <>
+          <CandlestickChart
+            candles={chart.data.candles}
+            height={380}
+            withVwap
+            overlays={overlays}
+            priceLines={priceLines}
+          />
+          {panes.map((p) => (
+            <OscillatorPane
+              key={p.key}
+              lines={p.lines}
+              guides={p.guides}
+              range={p.range}
+              height={110}
+            />
+          ))}
+        </>
       )}
 
       <div className="grid-2">

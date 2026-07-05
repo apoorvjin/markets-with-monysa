@@ -9,6 +9,7 @@ import { registerHeatmapRoutes } from "./routes/heatmap";
 import { registerBillingRoutes } from "./routes/billing";
 import { registerQuiverRoutes } from "./routes/quiver";
 import { registerOgeRoutes } from "./routes/oge";
+import { registerEtfRoutes } from "./routes/etf";
 import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -28,6 +29,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerBillingRoutes(app);
   registerQuiverRoutes(app);
   registerOgeRoutes(app);
+  registerEtfRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

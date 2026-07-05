@@ -63,7 +63,7 @@ flutter clean
 
 echo ""
 echo -e "${BLUE}▶ Reinstalling CocoaPods...${NC}"
-cd ios && pod deintegrate --quiet && pod install --silent && cd ..
+cd ios && pod deintegrate --quiet && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 pod install --silent && cd ..
 
 echo ""
 flutter run --release -d "$DEVICE_ID"

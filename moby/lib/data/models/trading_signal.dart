@@ -55,6 +55,10 @@ class TradingSignal {
     required this.generatedAt,
     this.analystNote,
     this.ivPercentile,
+    this.vwap,
+    this.vwapDeviation,
+    this.vixAtSignal,
+    this.dynamicThreshold,
   });
 
   final String symbol;
@@ -72,6 +76,10 @@ class TradingSignal {
   final DateTime generatedAt;
   final String? analystNote;
   final double? ivPercentile;
+  final double? vwap;
+  final double? vwapDeviation;
+  final double? vixAtSignal;
+  final double? dynamicThreshold;
 
   factory TradingSignal.fromJson(Map<String, dynamic> j) => TradingSignal(
         symbol: j['symbol'] as String,
@@ -93,7 +101,36 @@ class TradingSignal {
             : DateTime.now(),
         analystNote: j['analystNote'] as String?,
         ivPercentile: (j['ivPercentile'] as num?)?.toDouble(),
+        vwap: (j['vwap'] as num?)?.toDouble(),
+        vwapDeviation: (j['vwapDeviation'] as num?)?.toDouble(),
+        vixAtSignal: (j['vixAtSignal'] as num?)?.toDouble(),
+        dynamicThreshold: (j['dynamicThreshold'] as num?)?.toDouble(),
       );
+}
+
+class SignalTracePair {
+  const SignalTracePair({
+    required this.baseId,
+    required this.enhId,
+    this.baseDir,
+    this.enhDir,
+  });
+
+  final String baseId;   // "1"–"9"
+  final String enhId;    // "10"–"18"
+  final String? baseDir; // "BUY" | "SELL" | "HOLD" | null
+  final String? enhDir;
+
+  factory SignalTracePair.fromJson(Map<String, dynamic> j) {
+    final base = j['base'] as Map<String, dynamic>?;
+    final enh  = j['enhanced'] as Map<String, dynamic>?;
+    return SignalTracePair(
+      baseId:  j['baseId'] as String,
+      enhId:   j['enhancedId'] as String,
+      baseDir: base?['direction'] as String?,
+      enhDir:  enh?['direction'] as String?,
+    );
+  }
 }
 
 class TradeRecord {
@@ -104,20 +141,35 @@ class TradeRecord {
     required this.exitPrice,
     required this.returnPct,
     required this.win,
+    this.date,
+    this.stopLoss,
+    this.takeProfit,
+    this.exitReason,
+    this.holdBars,
   });
 
   final int n;
+  final String? date;           // YYYY-MM-DD
   final String direction;
   final double entryPrice;
+  final double? stopLoss;
+  final double? takeProfit;
   final double exitPrice;
+  final String? exitReason;     // "SL" | "TP" | "TIMEOUT"
+  final int? holdBars;
   final double returnPct;
   final bool win;
 
   factory TradeRecord.fromJson(Map<String, dynamic> j) => TradeRecord(
         n: (j['n'] as num).toInt(),
+        date: j['date'] as String?,
         direction: j['direction'] as String,
         entryPrice: (j['entryPrice'] as num).toDouble(),
+        stopLoss: (j['stopLoss'] as num?)?.toDouble(),
+        takeProfit: (j['takeProfit'] as num?)?.toDouble(),
         exitPrice: (j['exitPrice'] as num).toDouble(),
+        exitReason: j['exitReason'] as String?,
+        holdBars: (j['holdBars'] as num?)?.toInt(),
         returnPct: (j['returnPct'] as num).toDouble(),
         win: j['win'] as bool,
       );
@@ -417,6 +469,10 @@ class BacktestSummaryStats {
     required this.avgReturn6m,
     required this.avgReturn3y,
     required this.sampleSize3y,
+    this.byDayOfWeek,
+    this.byVixBucket,
+    this.winRateLower95,
+    this.winRateUpper95,
   });
 
   final int events;
@@ -430,6 +486,10 @@ class BacktestSummaryStats {
   final double avgReturn6m;
   final double avgReturn3y;
   final int sampleSize3y; // events with ≥3y of forward data available
+  final Map<String, Map<String, dynamic>>? byDayOfWeek; // {"Mon": {events, winRate1m}}
+  final Map<String, Map<String, dynamic>>? byVixBucket; // {"0-15": {events, winRate1m}}
+  final double? winRateLower95;
+  final double? winRateUpper95;
 
   factory BacktestSummaryStats.fromJson(Map<String, dynamic> j) =>
       BacktestSummaryStats(
@@ -444,6 +504,14 @@ class BacktestSummaryStats {
         avgReturn6m: (j['avgReturn6m'] as num).toDouble(),
         avgReturn3y: (j['avgReturn3y'] as num).toDouble(),
         sampleSize3y: (j['sampleSize3y'] as num).toInt(),
+        byDayOfWeek: (j['byDayOfWeek'] as Map<String, dynamic>?)?.map(
+          (k, v) => MapEntry(k, Map<String, dynamic>.from(v as Map)),
+        ),
+        byVixBucket: (j['byVixBucket'] as Map<String, dynamic>?)?.map(
+          (k, v) => MapEntry(k, Map<String, dynamic>.from(v as Map)),
+        ),
+        winRateLower95: (j['winRateLower95'] as num?)?.toDouble(),
+        winRateUpper95: (j['winRateUpper95'] as num?)?.toDouble(),
       );
 }
 
@@ -818,6 +886,7 @@ class QuiverScanItem {
     required this.rank,
     required this.badge,
     required this.badgeLabel,
+    this.lobbyingGrowth,
   });
 
   final String symbol;
@@ -828,6 +897,7 @@ class QuiverScanItem {
   final int rank;
   final String badge;      // "$3.4M" | "+42%" | "8 buys"
   final String badgeLabel; // "disclosed" | "QoQ spend" | "insiders"
+  final String? lobbyingGrowth; // "+42%" QoQ when this ticker also tops the lobbying list
 
   factory QuiverScanItem.fromJson(Map<String, dynamic> j) => QuiverScanItem(
         symbol:        j['symbol'] as String,
@@ -838,6 +908,7 @@ class QuiverScanItem {
         rank:          j['rank'] as int,
         badge:         j['badge'] as String,
         badgeLabel:    j['badgeLabel'] as String,
+        lobbyingGrowth: j['lobbyingGrowth'] as String?,
       );
 }
 
@@ -883,6 +954,7 @@ class CongressTrade {
     this.amountMidpoint,
     this.party,
     this.state,
+    this.lobbyingGrowth,
   });
 
   final String memberName;
@@ -897,6 +969,7 @@ class CongressTrade {
   final double? amountMidpoint; // Numeric midpoint for sorting
   final String? party;          // "D" | "R" | "I"
   final String? state;          // "CA", "TX", etc.
+  final String? lobbyingGrowth; // "+42%" QoQ when this ticker also tops the lobbying list
 
   String get displayName => name?.isNotEmpty == true ? name! : ticker;
 
@@ -913,6 +986,7 @@ class CongressTrade {
         amountMidpoint:   (j['amountMidpoint'] as num?)?.toDouble(),
         party:            j['party'] as String?,
         state:            j['state'] as String?,
+        lobbyingGrowth:   j['lobbyingGrowth'] as String?,
       );
 }
 
