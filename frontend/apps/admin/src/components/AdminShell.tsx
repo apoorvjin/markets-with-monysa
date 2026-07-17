@@ -1,6 +1,6 @@
 import { Link, Outlet, useNavigate } from "@tanstack/react-router";
 import { clearToken, isAuthenticated } from "../lib/auth";
-import { IconActivity, IconBell, IconCreditCard, IconGrid, IconLogOut, IconSliders, IconTerminal, IconUsers } from "./Icons";
+import { IconActivity, IconBell, IconCreditCard, IconGrid, IconLogOut, IconMegaphone, IconSliders, IconTerminal, IconUsers } from "./Icons";
 
 const NAV = [
   { to: "/dashboard",     label: "Dashboard",     icon: <IconGrid /> },
@@ -8,6 +8,7 @@ const NAV = [
   { to: "/subscriptions", label: "Subscriptions",  icon: <IconCreditCard /> },
   { to: "/alerts",        label: "Alerts",         icon: <IconBell /> },
   { to: "/remote-config", label: "Remote Config",  icon: <IconSliders /> },
+  { to: "/social-buzz",   label: "Market Buzz",    icon: <IconMegaphone /> },
   { to: "/ops",           label: "Operations",     icon: <IconTerminal /> },
   { to: "/performance",   label: "Performance",    icon: <IconActivity /> },
 ] as const;

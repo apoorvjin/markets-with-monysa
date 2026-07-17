@@ -1,6 +1,6 @@
-# Moby — Flutter port of Monysa
+# Moby — Flutter port of FinBrio
 
-Production-ready Flutter rewrite of the Monysa global financial intelligence dashboard. Shares the same Express backend at `localhost:5001`.
+Production-ready Flutter rewrite of the FinBrio global financial intelligence dashboard. Shares the same Express backend at `localhost:5001`.
 
 ## Features
 

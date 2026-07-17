@@ -13,6 +13,7 @@ import '../../data/repositories/volatility_repository.dart';
 import '../../data/repositories/markets_repository.dart';
 import '../../data/repositories/heatmap_repository.dart';
 import '../../services/entitlement_service.dart';
+import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/shimmer_list.dart';
@@ -21,7 +22,6 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/performance_heatmap.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
-import '../../shared/widgets/theme_toggle.dart';
 import '../usa_debt/usa_debt_screen.dart';
 import 'adv_correlation_tab.dart';
 import 'correlation_tab.dart';
@@ -161,14 +161,16 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
       // keyboard via viewInsets.bottom instead.
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
+        centerTitle: true,
+        leading: const AppLogoBadge(),
         title: Text('Macro',
-            style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            style: AppTypography.headingLg
+                .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
-        actions: const [ThemeToggleButton()],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
-          tabAlignment: TabAlignment.fill,
+          tabAlignment: TabAlignment.start,
           labelColor: c.accent,
           unselectedLabelColor: c.textMuted,
           indicatorColor: c.accent,
@@ -245,8 +247,11 @@ class _MacroDashboardTab extends ConsumerWidget {
                 const SizedBox(height: AppSpacing.s3),
                 const _RegimeSummarySection(),
                 const SizedBox(height: AppSpacing.s3),
-                // VIX gauge and Stress Meter side by side
-                IntrinsicHeight(
+                // VIX gauge and Stress Meter side by side.
+                // Fixed height: both cards contain Spacer/LayoutBuilder, which
+                // IntrinsicHeight cannot measure (blank-screen layout failure).
+                SizedBox(
+                  height: 230,
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

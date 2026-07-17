@@ -32,6 +32,10 @@ server/
   plan-enforcement.ts   # Shared plan/entitlement helpers (DevicePlan type + devicePlanMap)
 
   routes/               # Modular route files registered by index.ts
+    auth.ts             # POST /api/auth/send-verification-email — sends FinBrio-branded verification email via
+                       #   Resend (Firebase locks editing of its own verification template). Bearer = Firebase ID
+                       #   token, verified via adminAuth().verifyIdToken(). Falls back to {sent:false,fallback:true}
+                       #   when RESEND_API_KEY absent — client then uses Firebase's stock sendEmailVerification().
     billing.ts          # POST /api/billing/webhook (RevenueCat)
     economy.ts          # search, usa-debt, country-data, bonds, sectors (with rsRatio/rsMomentum), crises, tariffs,
                        #   yield-curve-history (/api/economy/yield-curve-history), economy events (/api/economy/events)
@@ -157,7 +161,8 @@ Three coordinated caching layers:
 | `GET /api/search?q=QUERY` | Yahoo Finance symbol/name search | none |
 | `GET /api/country-data/:code` | World Bank GDP, trade, military data | 24h |
 | `GET /api/crises` | Historical crisis playbook data (static) | — |
-| `GET /api/tariffs` | 113-country US tariff table (USTR April 2025 snapshot) | 24h |
+| `GET /api/tariffs` | 113-country US tariff table. Static `tariffs.json` baseline (USTR April 2025) **merged with a live Federal Register overlay** (`routes/tariff-refresh.ts`) — recent per-country tariff actions extracted from presidential proclamations via Haiku. `dataAsOf`/`source` reflect the overlay when present; falls back to the static April-2025 snapshot when the overlay is empty (no ANTHROPIC key / poll failed). | 24h merged; overlay 7d |
+| `POST /api/tariffs/refresh` | Admin (Bearer ADMIN_SECRET): flush overlay cache + force Federal Register re-poll + Haiku extraction. Bypasses the 7-day auto window; deduped by document number so only unparsed docs cost an LLM call. | — |
 | `GET /api/economy/yield-curve-history` | 1Y daily OHLCV for 3m/5y/10y/30y yields → { series: [{date,us3m,us5y,us10y,us30y}], lastUpdated } | 6h |
 | `GET /api/economy/events` | High-impact USD economic events (FF Calendar + FOMC static fallback) → { events, lastUpdated } | 12h |
 | `GET /api/heatmap` | Performance heatmap (sectors/regions) | 15m |
@@ -165,6 +170,7 @@ Three coordinated caching layers:
 | `GET /api/heatmap/treemap` | Market-cap-weighted treemap for an index. `?index=sp500\|ndx\|dji\|russell2000\|ftse100\|dax40\|nikkei225\|hsi\|nifty50`, `&limit=N` (UI sends 500), `&timeframe=1d\|1w\|1m\|ytd`. FX-normalised to USD. Plan-gated: Pro+. | constituents 24h + quotes 5m |
 | `GET /api/exposure/analysis` | AI tariff exposure analysis (Insight+ plan) | 24h |
 | `POST /api/billing/webhook` | RevenueCat subscription event webhook | — |
+| `POST /api/auth/send-verification-email` | Sends FinBrio-branded verification email via Resend. Requires `Authorization: Bearer <Firebase ID token>`. Rate-limited 3/min. → `{ sent: boolean, fallback?: boolean }` | — |
 | `GET /api/quiver/congress` | Top-10 congress buys (FMP → Quiver, 500 if both fail — no hardcoded snapshot). **Not called by either client since 2026-07** (Congress tab removed — both sources dead); route kept in case a working source appears. | 4h |
 | `GET /api/quiver/lobbying` | Top-10 by QoQ lobbying spend growth (Senate LDA — confirmed live) | 4h |
 | `GET /api/quiver/insider` | Top-10 by insider buy count — 90-day window (SEC EDGAR — confirmed live) | 4h |
@@ -280,6 +286,14 @@ QUIVER_API_KEY                     optional — Quiver Quantitative paid-tier ke
 UPSTASH_REDIS_REST_URL             optional — Upstash Redis REST URL for OGE PDF pipeline distributed lock + cache.
                                               Without it: single-machine in-memory cache only (fine for local dev).
 UPSTASH_REDIS_REST_TOKEN           optional — Upstash Redis REST token (pair with UPSTASH_REDIS_REST_URL).
+RESEND_API_KEY                     optional — Resend API key for FinBrio-branded verification emails
+                                              (/api/auth/send-verification-email). Firebase locks editing of its own
+                                              built-in verification-email template (anti-spam policy, no override
+                                              possible), so branding requires generating the link via Admin SDK and
+                                              sending it ourselves. Absent = client falls back to Firebase's stock
+                                              sendEmailVerification() email.
+RESEND_FROM_ADDRESS                optional — sender address for the above (default: "FinBrio <noreply@finbrio.net>").
+                                              Requires finbrio.net to be domain-verified in Resend (SPF/DKIM records).
 ```
 
 All features degrade gracefully when keys are absent.
@@ -306,7 +320,7 @@ SENTRY_DSN             Sentry DSN; absent = development mode (errors not forward
 ```
 moby/lib/
   main.dart                        # ProviderScope + runApp + RevenueCat + Sentry init
-  app.dart                         # MaterialApp.router (title: 'Monysa') + AppShell (bottom nav, 5 tabs)
+  app.dart                         # MaterialApp.router (title: 'FinBrio') + AppShell (bottom nav, 5 tabs)
 
   core/
     cache/

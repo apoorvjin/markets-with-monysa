@@ -132,6 +132,64 @@ export const AiUsageResponseSchema = z.object({
 });
 export type AiUsageResponse = z.infer<typeof AiUsageResponseSchema>;
 
+// ── Social Buzz (market-buzz posting pipeline) ────────────────────────────────
+
+export const SocialChannelSchema = z.enum(["instagram", "x"]);
+export type SocialChannel = z.infer<typeof SocialChannelSchema>;
+
+export const PostStatusSchema = z.enum([
+  "pending",
+  "approved",
+  "rejected",
+  "published",
+  "ready_for_manual_post",
+  "failed",
+]);
+export type PostStatus = z.infer<typeof PostStatusSchema>;
+
+export const CandidatePostSchema = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  triggerType: z.enum(["mover", "signal_flip", "fear_greed_regime"]),
+  triggerSummary: z.string(),
+  copy: z.string(),
+  imageUrl: z.string().nullish(),
+  targetChannels: z.array(SocialChannelSchema),
+  status: PostStatusSchema,
+  reviewedBy: z.string().nullish(),
+  reviewedAt: z.string().nullish(),
+  publishedAt: z.string().nullish(),
+  igMediaId: z.string().nullish(),
+  failureReason: z.string().nullish(),
+}).passthrough();
+export type CandidatePost = z.infer<typeof CandidatePostSchema>;
+
+export const SocialBuzzQueueSchema = z.object({
+  posts: z.array(CandidatePostSchema),
+});
+export type SocialBuzzQueue = z.infer<typeof SocialBuzzQueueSchema>;
+
+export const SocialBuzzStatusSchema = z.object({
+  killSwitch: z.boolean(),
+  autoPublishEnabled: z.boolean(),
+  dryRun: z.boolean(),
+  postsToday: z.number(),
+  cap: z.number(),
+});
+export type SocialBuzzStatus = z.infer<typeof SocialBuzzStatusSchema>;
+
+export const SocialBuzzKillSwitchResponseSchema = z.object({
+  ok: z.boolean(),
+  killSwitch: z.boolean(),
+});
+export type SocialBuzzKillSwitchResponse = z.infer<typeof SocialBuzzKillSwitchResponseSchema>;
+
+export const CandidatePostResponseSchema = z.object({
+  post: CandidatePostSchema,
+  publishResult: z.object({ ok: z.boolean(), igMediaId: z.string().optional(), error: z.string().optional() }).optional(),
+});
+export type CandidatePostResponse = z.infer<typeof CandidatePostResponseSchema>;
+
 // ── API Performance Metrics ───────────────────────────────────────────────────
 
 export const ApiMetricRowSchema = z.object({

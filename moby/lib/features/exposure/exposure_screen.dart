@@ -632,7 +632,7 @@ class _CountryRow extends StatelessWidget {
   }
 
   String _fmtGdp(double gdp) {
-    if (gdp >= 1000) return '\$${(gdp / 1000).toStringAsFixed(1)}T';
+    if (gdp >= 1000) return '${(gdp / 1000).toStringAsFixed(1)}T';
     return '${gdp.toStringAsFixed(0)}B';
   }
 }

@@ -104,7 +104,6 @@ class _SplashScreenState extends State<SplashScreen>
                           width: 72,
                           height: 72,
                           decoration: BoxDecoration(
-                            color: c.accent,
                             borderRadius: BorderRadius.circular(20),
                             boxShadow: [
                               BoxShadow(
@@ -114,15 +113,19 @@ class _SplashScreenState extends State<SplashScreen>
                               ),
                             ],
                           ),
-                          child: const Icon(
-                            Icons.candlestick_chart_rounded,
-                            color: Colors.black,
-                            size: 40,
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(20),
+                            child: Image.asset(
+                              'assets/images/app_icon.png',
+                              width: 72,
+                              height: 72,
+                              fit: BoxFit.cover,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 20),
                         Text(
-                          'MONYSA',
+                          'FinBrio',
                           style: AppTypography.xl4.copyWith(
                             fontWeight: FontWeight.w800,
                             letterSpacing: 4,

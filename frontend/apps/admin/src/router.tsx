@@ -13,6 +13,7 @@ import { AlertsPage } from "./pages/AlertsPage";
 import { RemoteConfigPage } from "./pages/RemoteConfigPage";
 import { OpsPage } from "./pages/OpsPage";
 import { PerformancePage } from "./pages/PerformancePage";
+import { SocialBuzzPage } from "./pages/SocialBuzzPage";
 import { isAuthenticated } from "./lib/auth";
 
 const rootRoute = createRootRoute({ component: AdminShell });
@@ -79,6 +80,13 @@ const performanceRoute = createRoute({
   component: PerformancePage,
 });
 
+const socialBuzzRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/social-buzz",
+  beforeLoad: () => { if (!isAuthenticated()) throw redirect({ to: "/login" }); },
+  component: SocialBuzzPage,
+});
+
 const routeTree = rootRoute.addChildren([
   loginRoute,
   indexRoute,
@@ -89,6 +97,7 @@ const routeTree = rootRoute.addChildren([
   remoteConfigRoute,
   opsRoute,
   performanceRoute,
+  socialBuzzRoute,
 ]);
 
 // BASE_URL is set by Vite from the `base` option.

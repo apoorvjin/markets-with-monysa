@@ -389,3 +389,9 @@ export function registerVolatilityRoutes(app: Express): void {
 
 export function bustBriefingCache()   { briefingCache.clear(); }
 export function bustFearGreedCache()  { fearGreedCache = null; }
+
+// Read-only accessor for lib/social-buzz/poller.ts — reuses the existing
+// hourly-refreshed cache in-process instead of a second fetch to alternative.me.
+export function getFearGreedCache(): { classification: string } | null {
+  return fearGreedCache?.data ?? null;
+}

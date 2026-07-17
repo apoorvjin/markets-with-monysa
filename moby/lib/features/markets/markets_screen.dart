@@ -10,6 +10,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/models/market_item.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/markets_repository.dart';
+import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/chart_modal.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
@@ -75,14 +76,17 @@ class _MarketsScreenState extends ConsumerState<MarketsScreen>
     return Scaffold(
       backgroundColor: c.background,
       appBar: AppBar(
+        centerTitle: true,
+        leading: const AppLogoBadge(),
         title: Text('Markets',
-            style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            style: AppTypography.headingLg
+                .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
         actions: const [_GlobalSearchButton(), _AboutButton()],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
-          tabAlignment: TabAlignment.fill,
+          tabAlignment: TabAlignment.start,
           tabs: const [
             Tab(text: 'Heatmap'),
             Tab(text: 'Indices'),
@@ -1051,7 +1055,7 @@ class _GlobalSearchButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      icon: const Icon(Icons.search_rounded, size: 22),
+      icon: const Icon(Icons.search_rounded, size: 24),
       tooltip: 'Search any symbol',
       onPressed: () => _showSearchSheet(context),
     );
@@ -1292,7 +1296,7 @@ class _AboutButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return IconButton(
-      icon: const Icon(Icons.info_outline_rounded, size: 20),
+      icon: const Icon(Icons.info_outline_rounded, size: 22),
       tooltip: 'About & Privacy',
       onPressed: () => _showAbout(context),
     );
@@ -1330,7 +1334,7 @@ void _showAbout(BuildContext context) {
                   ),
                 ),
                 const SizedBox(height: AppSpacing.s5),
-                Text('Moby — Market Intelligence',
+                Text('FinBrio — Market Intelligence',
                     style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
                 const SizedBox(height: AppSpacing.s2),
                 Text('Real-time tariff exposure, global markets, and AI trading signals.',
@@ -1349,7 +1353,7 @@ void _showAbout(BuildContext context) {
                     style: AppTypography.labelXs.copyWith(color: c.textMuted)),
                 const SizedBox(height: AppSpacing.s2),
                 Text(
-                  'Moby does not collect, store, or share any personal data. '
+                  'FinBrio does not collect, store, or share any personal data. '
                   'No account or registration is required. All market data is fetched '
                   'in real time from public APIs and is not retained on our servers.',
                   style: AppTypography.sm.copyWith(color: c.textSecondary),

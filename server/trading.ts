@@ -1,6 +1,6 @@
 /**
  * server/trading.ts
- * AI Trading Signals module — integrated into Monysa Express backend.
+ * AI Trading Signals module — integrated into FinBrio Express backend.
  *
  * Endpoints (all prefixed /api/trading/):
  *   GET  /quotes              — live prices for all 39 assets (refreshed every 20 s)

@@ -107,6 +107,8 @@ abstract final class ApiEndpoints {
   static String get tariffs           => '$baseUrl/api/tariffs';
   static String get fearGreed         => '$baseUrl/api/volatility/fear-greed';
 
+  static String get sendVerificationEmail => '$baseUrl/api/auth/send-verification-email';
+
   static String etfList({String? category}) => category == null
       ? '$baseUrl/api/etf/list'
       : '$baseUrl/api/etf/list?category=$category';

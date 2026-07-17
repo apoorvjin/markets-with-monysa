@@ -16,6 +16,7 @@ import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/entitlement_service.dart';
 import '../../services/push_notification_service.dart';
+import '../../shared/widgets/app_logo_badge.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -26,8 +27,11 @@ class ProfileScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: c.background,
       appBar: AppBar(
+        centerTitle: true,
+        leading: const AppLogoBadge(),
         title: Text('Profile',
-            style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            style: AppTypography.headingLg
+                .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
         elevation: 0,
       ),
@@ -1096,7 +1100,7 @@ class _AboutSection extends StatelessWidget {
           ),
           child: Column(
             children: [
-              const _AboutRow(label: 'App', value: 'Moby'),
+              const _AboutRow(label: 'App', value: 'FinBrio'),
               Divider(height: 1, color: c.border),
               const _AboutRow(label: 'Version', value: '1.0.0'),
               Divider(height: 1, color: c.border),

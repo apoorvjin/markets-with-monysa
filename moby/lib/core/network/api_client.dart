@@ -96,8 +96,8 @@ class ApiClient {
     return response.data;
   }
 
-  Future<dynamic> post(String url, {dynamic data}) async {
-    final response = await _dio.post(url, data: data);
+  Future<dynamic> post(String url, {dynamic data, Options? options}) async {
+    final response = await _dio.post(url, data: data, options: options);
     return response.data;
   }
 }

@@ -600,7 +600,7 @@ async function fetchCotAssets(
       url.searchParams.set("$limit", "2");
 
       const resp = await fetch(url.toString(), {
-        headers: { Accept: "application/json", "User-Agent": "Monysa/1.0" },
+        headers: { Accept: "application/json", "User-Agent": "FinBrio/1.0" },
         signal: AbortSignal.timeout(12000),
       });
       if (!resp.ok) return null;

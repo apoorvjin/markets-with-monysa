@@ -1,4 +1,4 @@
-# Monysa Web Frontend
+# FinBrio Web Frontend
 
 pnpm monorepo for the web client. Shares the Express API at `server/` with the
 Flutter app — same endpoints, same response shapes.

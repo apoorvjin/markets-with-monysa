@@ -34,7 +34,7 @@
  *   POST  /api/admin/oge/refresh
  */
 
-import type { Express, Request, Response } from "express";
+import type { Express } from "express";
 import { spawn } from "child_process";
 import { adminAuth, adminFirestore, adminMessaging, adminRemoteConfig } from "../lib/firebase-admin";
 import { devicePlanMap, persistPlan, type DevicePlan } from "../plan-enforcement";
@@ -46,8 +46,7 @@ import { bustHeatmapCache, bustTreemapCache } from "./heatmap";
 import { bustMarketQuotesCache } from "./markets";
 import { normaliseRoute } from "../lib/route-normalizer";
 import { pagesFor } from "../lib/page-api-map";
-
-const ADMIN_SECRET = process.env.ADMIN_SECRET;
+import { authMiddleware } from "../lib/admin-auth";
 
 // Firestore Timestamps are objects with a toDate() method — convert to ISO string for JSON serialisation.
 function serializeFirestoreDoc(data: Record<string, unknown>): Record<string, unknown> {
@@ -60,17 +59,6 @@ function serializeFirestoreDoc(data: Record<string, unknown>): Record<string, un
     }
   }
   return out;
-}
-
-function authMiddleware(req: Request, res: Response, next: () => void) {
-  if (!ADMIN_SECRET) {
-    return res.status(503).json({ error: "ADMIN_SECRET not configured" });
-  }
-  const auth = req.headers["authorization"];
-  if (auth !== `Bearer ${ADMIN_SECRET}`) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
 }
 
 export function registerAdminRoutes(app: Express): void {

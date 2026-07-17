@@ -73,7 +73,7 @@ class _PerformanceHeatmapState extends State<PerformanceHeatmap> {
             const cols = 3;
             const gap = 4.0;
             final tileW = (constraints.maxWidth - gap * (cols - 1)) / cols;
-            const tileH = 68.0;
+            const tileH = 70.0;
             return Wrap(
               spacing: gap,
               runSpacing: gap,

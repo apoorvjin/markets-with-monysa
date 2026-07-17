@@ -11,11 +11,11 @@ import '../../data/models/treemap_stock.dart';
 import '../../data/repositories/heatmap_repository.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../services/entitlement_service.dart';
+import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
-import '../../shared/widgets/theme_toggle.dart';
 import '../exposure/exposure_screen.dart';
 import 'best_setups_card.dart';
 import 'multibaggers_screen.dart';
@@ -128,10 +128,12 @@ class _InvestingScreenState extends State<InvestingScreen>
       backgroundColor: c.background,
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
+        centerTitle: true,
+        leading: const AppLogoBadge(),
         title: Text('Investing',
-            style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            style: AppTypography.headingLg
+                .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
-        actions: const [ThemeToggleButton()],
         bottom: TabBar(
           controller: _tab,
           labelColor: c.accent,

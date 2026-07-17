@@ -1,0 +1,188 @@
+---
+import Base from "../layouts/Base.astro";
+import Reveal from "../components/Reveal.astro";
+import DownloadCta from "../components/DownloadCta.astro";
+
+const pillars = [
+  {
+    title: "Live Markets",
+    copy: "46 global indices, 23 commodities, and 44 forex pairs with real-time candlestick charts — plus a market-cap-weighted treemap across 9 major indices.",
+  },
+  {
+    title: "AI Trading Signals",
+    copy: "BUY, HOLD, or SELL — with entry, stop-loss, and take-profit — across 49+ assets and three independent strategies.",
+  },
+  {
+    title: "Investing",
+    copy: "Track Congress trades, Presidential transactions, and insider buying the moment they're disclosed — the same public filings the pros watch.",
+  },
+  {
+    title: "Tariff Exposure",
+    copy: "US tariff impact ranked across 113+ countries with full sector breakdowns — browsable, not gated.",
+  },
+  {
+    title: "Macro",
+    copy: "Market Stress Meter, VIX, Fear & Greed, yield curve, sector rotation, and a crisis playbook built from history.",
+  },
+];
+---
+
+<Base
+  title="FinBrio — Global Financial Intelligence"
+  description="Live markets, AI trading signals, Congress and insider trade tracking, tariff exposure, and macro intelligence — in one dashboard."
+>
+  <main>
+    <section class="hero">
+      <Reveal as="div" class="hero__inner">
+        <p class="hero__eyebrow">FinBrio</p>
+        <h1 class="hero__title">Global Financial<br />Intelligence</h1>
+        <p class="hero__subtitle">
+          Markets, signals, and the money moves that matter — in one place.
+        </p>
+        <div class="hero__cta">
+          <DownloadCta />
+        </div>
+      </Reveal>
+    </section>
+
+    <section class="pillars" aria-label="Features">
+      {
+        pillars.map((pillar, i) => (
+          <Reveal as="article" class="pillar">
+            <span class="pillar__index">{String(i + 1).padStart(2, "0")}</span>
+            <h2 class="pillar__title">{pillar.title}</h2>
+            <p class="pillar__copy">{pillar.copy}</p>
+          </Reveal>
+        ))
+      }
+    </section>
+
+    <footer class="site-footer">
+      <p>
+        <a
+          href="https://whimsical-viper-e07.notion.site/Monysa-Privacy-Policy-80062190796b4888a92b122d59836d68"
+          target="_blank"
+          rel="noopener noreferrer">Privacy Policy</a
+        >
+        <span aria-hidden="true"> · </span>
+        <a
+          href="https://whimsical-viper-e07.notion.site/Monysa-Support-c7331ad04c204cfbaf30cdc42b46f827?pvs=74"
+          target="_blank"
+          rel="noopener noreferrer">Support</a
+        >
+      </p>
+      <p class="site-footer__copyright">&copy; {new Date().getFullYear()} FinBrio</p>
+    </footer>
+  </main>
+</Base>
+
+<style>
+  main {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .hero {
+    min-height: 92vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  .hero__inner {
+    max-width: 720px;
+  }
+
+  .hero__eyebrow {
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 var(--s5);
+  }
+
+  .hero__title {
+    font-size: clamp(40px, 8vw, 84px);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--s6);
+    color: var(--text-primary);
+  }
+
+  .hero__subtitle {
+    font-size: clamp(16px, 2.4vw, 22px);
+    color: var(--text-secondary);
+    margin: 0 0 var(--s8);
+  }
+
+  .pillars {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2px;
+    background: var(--border);
+    border-radius: 24px;
+    overflow: hidden;
+    margin-bottom: 120px;
+  }
+
+  @media (min-width: 720px) {
+    .pillars {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .pillar:first-child {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .pillar {
+    background: var(--surface);
+    padding: var(--s8);
+  }
+
+  .pillar__index {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+  }
+
+  .pillar__title {
+    font-size: 26px;
+    font-weight: 700;
+    margin: var(--s3) 0 var(--s3);
+    color: var(--text-primary);
+  }
+
+  .pillar__copy {
+    font-size: 15px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0;
+    max-width: 52ch;
+  }
+
+  .site-footer {
+    text-align: center;
+    padding: var(--s8) 0 64px;
+    border-top: 1px solid var(--border);
+  }
+
+  .site-footer a {
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+
+  .site-footer a:hover {
+    color: var(--text-primary);
+  }
+
+  .site-footer__copyright {
+    color: var(--text-faint);
+    font-size: 13px;
+    margin-top: var(--s3);
+  }
+</style>

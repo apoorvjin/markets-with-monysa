@@ -61,7 +61,7 @@ class _MobyAppState extends ConsumerState<MobyApp> {
     final themeMode = ref.watch(themeModeProvider);
     final fontScale = ref.watch(fontSizeScaleProvider);
     return MaterialApp.router(
-      title: 'Monysa',
+      title: 'FinBrio',
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: themeMode,

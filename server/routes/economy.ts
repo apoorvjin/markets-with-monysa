@@ -3,6 +3,13 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fetchYahooPrice, fetchRangeData } from "./shared";
 import { yahooProvider } from "../providers";
+import {
+  getTariffOverlay,
+  maybeRefreshTariffs,
+  forceRefreshTariffs,
+  type TariffOverlay,
+} from "./tariff-refresh";
+import { authMiddleware } from "../lib/admin-auth";
 
 let debtCache: { data: any; timestamp: number } | null = null;
 const DEBT_CACHE_DURATION = 12 * 60 * 60 * 1000;
@@ -121,7 +128,9 @@ const BONDS_CACHE_DURATION = 30 * 60 * 1000; // 30 minutes
 let sectorsCache: { data: unknown; timestamp: number } | null = null;
 
 // ── Tariff Country Data ─────────────────────────────────────────────────────
-let tariffsCache: { data: unknown; timestamp: number } | null = null;
+// `overlayStamp` keys the merged result to the live overlay's version, so a
+// refresh (auto or manual) invalidates this cache without a cross-module call.
+let tariffsCache: { data: unknown; timestamp: number; overlayStamp: string } | null = null;
 const SECTORS_CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
 
 interface TariffCountryRaw {
@@ -144,6 +153,56 @@ function computeTariffImpactScore(country: TariffCountryRaw): number {
   const totalDebtExposure = (country.debtToUSA ?? []).reduce((s, d) => s + (d.amountBillions ?? 0), 0);
   const exposureScore = Math.min(totalDebtExposure / 1000, 1) * 20;
   return Math.round(Math.min(rateScore + breadthScore + exposureScore, 100));
+}
+
+const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function formatAsOf(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "April 2025" : `${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
+// Overlay the live Federal Register-derived rates on top of the static baseline.
+// Only countries a real proclamation named are touched; every other country keeps
+// its baseline number. When the overlay is empty this is a byte-for-byte no-op —
+// the static file is the fallback. Each overlaid country carries the source
+// Federal Register URL for auditability.
+function mergeTariffOverlay(
+  baseline: TariffCountryRaw[],
+  overlay: TariffOverlay | null,
+): TariffCountryRaw[] {
+  if (!overlay || Object.keys(overlay.countries).length === 0) return baseline;
+
+  const byCode = new Map(baseline.map((c) => [c.countryCode.toUpperCase(), c]));
+  const merged = baseline.map((c) => ({ ...c }));
+
+  for (const ov of Object.values(overlay.countries)) {
+    // The US doesn't impose tariffs on itself — never surface it as a target row,
+    // even if a stale cached overlay contains one (extraction guards the same).
+    const code = ov.countryCode.toUpperCase();
+    if (code === "US" || code === "USA" || /united states/i.test(ov.countryName)) continue;
+    const existing = byCode.get(ov.countryCode);
+    if (existing) {
+      const idx = merged.findIndex((c) => c.countryCode.toUpperCase() === ov.countryCode);
+      merged[idx] = {
+        ...merged[idx],
+        tariffRate: ov.tariffRate,
+        sectors: ov.sectors && ov.sectors.length ? ov.sectors : merged[idx].sectors,
+        lastUpdated: ov.effectiveDate || merged[idx].lastUpdated,
+        sourceURL: ov.sourceURL,
+      };
+    } else {
+      // A country not in the April-2025 baseline — surface it as a new row.
+      merged.push({
+        countryName: ov.countryName,
+        countryCode: ov.countryCode,
+        tariffRate: ov.tariffRate,
+        sectors: ov.sectors ?? [],
+        lastUpdated: ov.effectiveDate,
+        sourceURL: ov.sourceURL,
+      });
+    }
+  }
+  return merged;
 }
 
 export const SECTOR_ETFS = [
@@ -735,26 +794,54 @@ export function registerEconomyRoutes(app: Express): void {
 
   app.get("/api/tariffs", async (_req, res) => {
     res.set("Cache-Control", "public, max-age=43200, stale-while-revalidate=86400"); // 12h / 24h SWR
-    if (tariffsCache && Date.now() - tariffsCache.timestamp < TARIFFS_CACHE_DURATION) {
+
+    // Current live overlay (may be null → static baseline is the fallback).
+    const overlay = await getTariffOverlay().catch(() => null);
+    // Fire-and-forget: kick off at most one background refresh per 7 days.
+    maybeRefreshTariffs(overlay);
+
+    const overlayStamp = overlay?.lastPolledAt ?? "none";
+    if (
+      tariffsCache &&
+      tariffsCache.overlayStamp === overlayStamp &&
+      Date.now() - tariffsCache.timestamp < TARIFFS_CACHE_DURATION
+    ) {
       return res.json(tariffsCache.data);
     }
+
     try {
       const filePath = resolve("server/data/tariffs.json");
       const raw = await readFile(filePath, "utf-8");
-      const countries: TariffCountryRaw[] = JSON.parse(raw);
-      const scored = countries.map((c) => ({ ...c, impactScore: computeTariffImpactScore(c) }));
+      const baseline: TariffCountryRaw[] = JSON.parse(raw);
+      const merged = mergeTariffOverlay(baseline, overlay);
+      const scored = merged.map((c) => ({ ...c, impactScore: computeTariffImpactScore(c) }));
+
+      const hasOverlay = !!overlay && Object.keys(overlay.countries).length > 0;
       const result = {
         countries: scored,
-        dataAsOf: "April 2025",
-        lastUpdated: TARIFFS_DATA_AS_OF,
-        source: "USTR Section 301 + WTO Tariff Database",
+        dataAsOf: hasOverlay && overlay!.latestEffectiveDate
+          ? formatAsOf(overlay!.latestEffectiveDate)
+          : "April 2025",
+        lastUpdated: hasOverlay ? overlay!.lastPolledAt : TARIFFS_DATA_AS_OF,
+        source: hasOverlay
+          ? "USTR Section 301 + WTO Tariff Database + Federal Register live updates"
+          : "USTR Section 301 + WTO Tariff Database",
       };
-      tariffsCache = { data: result, timestamp: Date.now() };
+      tariffsCache = { data: result, timestamp: Date.now(), overlayStamp };
       return res.json(result);
     } catch (err) {
       console.error("[Tariffs] Failed to load tariffs data:", err);
       return res.status(503).json({ error: "Tariff data temporarily unavailable" });
     }
+  });
+
+  // Admin-only: flush the live overlay cache and force an immediate Federal
+  // Register re-poll + extraction. Bypasses the 7-day auto window. Costs an LLM
+  // run only for documents not already parsed (deduped), so it's cheap to hit.
+  app.post("/api/tariffs/refresh", authMiddleware, async (_req, res) => {
+    tariffsCache = null; // drop the merged cache so the next GET re-merges
+    await forceRefreshTariffs();
+    res.json({ ok: true, message: "Overlay cache cleared — refresh running in background" });
   });
 
   // GET /api/economy/yield-curve-history

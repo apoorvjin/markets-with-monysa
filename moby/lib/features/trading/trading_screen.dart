@@ -15,13 +15,13 @@ import '../../data/models/price_alert.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../providers/strategy_provider.dart';
 import '../../providers/alert_provider.dart';
+import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/signal_badge.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/shimmer_list.dart';
-import '../../shared/widgets/theme_toggle.dart';
 import '../../providers/watchlist_provider.dart';
 import '../investing/best_setups_card.dart';
 
@@ -190,14 +190,16 @@ class _TradingScreenState extends State<TradingScreen>
       resizeToAvoidBottomInset: false,
       backgroundColor: c.background,
       appBar: AppBar(
+        centerTitle: true,
+        leading: const AppLogoBadge(),
         title: Text('Trading',
-            style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+            style: AppTypography.headingLg
+                .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
-        actions: const [ThemeToggleButton()],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
-          tabAlignment: TabAlignment.fill,
+          tabAlignment: TabAlignment.start,
           tabs: const [
             Tab(text: 'Instruments'),
             Tab(text: 'Dashboard'),
