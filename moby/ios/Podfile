@@ -4,6 +4,13 @@
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
 
+# Firebase Analytics WITHOUT the IDFA / advertising-identifier collection.
+# This drops the GoogleAppMeasurement/IdentitySupport subspec so the app does
+# not collect the advertising identifier for cross-app tracking. Required to
+# truthfully declare "Data Not Used to Track You" in App Store Connect and to
+# satisfy App Store Guideline 5.1.2(i) without an AppTrackingTransparency prompt.
+$FirebaseAnalyticsWithoutAdIdSupport = true
+
 project 'Runner', {
   'Debug' => :debug,
   'Profile' => :release,

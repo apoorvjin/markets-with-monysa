@@ -1,11 +1,23 @@
+import 'package:flutter/foundation.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 
-enum Plan { free, pro, enterprise }
+/// The app sells exactly two tiers: Free and Pro. There is no Insight or
+/// Enterprise tier — do not re-introduce them (see server plan-enforcement.ts,
+/// which mirrors this two-tier model).
+enum Plan { free, pro }
 
 abstract final class EntitlementService {
-  // Pass --dart-define=DEV_PLAN=pro (or enterprise) to bypass gates
-  // during development and TestFlight builds. Production builds ship without it.
+  // Pass --dart-define=DEV_PLAN=pro to bypass gates during development and
+  // TestFlight builds. Production builds ship without it. Any non-empty value
+  // other than 'free' unlocks Pro (tolerates legacy 'insight'/'enterprise').
   static const _devPlan = String.fromEnvironment('DEV_PLAN');
+
+  /// Dev tooling (the Profile plan simulator) only exists in debug builds or
+  /// builds that explicitly pass DEV_PLAN. Release builds without it must
+  /// never render the simulator nor honour a stale simulated-plan pref — a
+  /// simulated 'free' would mask a real purchase, and a simulated 'pro' would
+  /// hand out Pro without payment.
+  static const bool devToolsEnabled = kDebugMode || _devPlan != '';
 
   static Plan _runtimePlan = Plan.free;
   static bool _rcConfigured = false;
@@ -17,12 +29,7 @@ abstract final class EntitlementService {
 
   static Plan get current {
     if (_simulatedPlan != null) return _simulatedPlan!;
-    switch (_devPlan) {
-      case 'pro':
-        return Plan.pro;
-      case 'enterprise':
-        return Plan.enterprise;
-    }
+    if (_devPlan.isNotEmpty && _devPlan != 'free') return Plan.pro;
     return _runtimePlan;
   }
 
@@ -31,15 +38,23 @@ abstract final class EntitlementService {
   static void markRevenueCatConfigured() => _rcConfigured = true;
 
   /// Called on app launch and whenever RevenueCat notifies of a plan change.
+  ///
+  /// ANY active entitlement unlocks Pro. We deliberately do NOT match a specific
+  /// entitlement identifier: if the RevenueCat dashboard entitlement is renamed,
+  /// a paying user must never silently drop back to Free.
   static void updateFromCustomerInfo(CustomerInfo info) {
-    Plan newPlan = Plan.free;
-    final active = info.entitlements.active;
-    if (active.containsKey('enterprise')) {
-      newPlan = Plan.enterprise;
-    } else if (active.containsKey('pro') || active.containsKey('insight')) {
-      newPlan = Plan.pro;
-    }
-    _runtimePlan = newPlan;
+    _runtimePlan = info.entitlements.active.isNotEmpty ? Plan.pro : Plan.free;
+  }
+
+  /// Restores previously-purchased entitlements for the current RevenueCat
+  /// user (Firebase UID). This is the cross-device path — a user who bought on
+  /// one device gets their plan back after signing in on another. Also required
+  /// by App Store Guideline 3.1.1. Returns the resulting plan.
+  static Future<Plan> restorePurchases() async {
+    if (!_rcConfigured) return current;
+    final info = await Purchases.restorePurchases();
+    updateFromCustomerInfo(info);
+    return current;
   }
 
   static bool can(String feature) {
@@ -49,15 +64,15 @@ abstract final class EntitlementService {
   }
 
   static const _rules = <String, Set<Plan>>{
-    'signals_advanced': {Plan.pro, Plan.enterprise},
-    'analyst_notes_unlimited': {Plan.pro, Plan.enterprise},
-    'alerts_unlimited': {Plan.pro, Plan.enterprise},
-    'push_notifications': {Plan.pro, Plan.enterprise},
-    'exposure_ai': {Plan.pro, Plan.enterprise},
-    'api_access': {Plan.pro, Plan.enterprise},
-    'best_setups': {Plan.pro, Plan.enterprise},
-    'backtest_filter': {Plan.pro, Plan.enterprise},
-    'treemap_heatmap': {Plan.pro, Plan.enterprise},
+    'signals_advanced': {Plan.pro},
+    'analyst_notes_unlimited': {Plan.pro},
+    'alerts_unlimited': {Plan.pro},
+    'push_notifications': {Plan.pro},
+    'exposure_ai': {Plan.pro},
+    'api_access': {Plan.pro},
+    'best_setups': {Plan.pro},
+    'backtest_filter': {Plan.pro},
+    'treemap_heatmap': {Plan.pro},
   };
 
   static String get requiredPlanLabel => 'Pro';

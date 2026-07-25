@@ -42,7 +42,7 @@ server/
                        #   also exports getEtfRotationQuadrants() — generalized RRG math reused by etf.ts's rotation endpoint
     etf.ts              # GET /api/etf/list, GET /api/etf/:symbol/profile, GET /api/etf/rotation — free, no plan gate.
                        #   ETF universe defined in data/etf_universe.ts (42 ETFs, 7 categories)
-    exposure.ts         # GET /api/exposure/analysis (Anthropic, plan-gated: Insight+)
+    exposure.ts         # GET /api/exposure/analysis (Anthropic, plan-gated: Pro+)
     heatmap.ts          # GET /api/heatmap, GET /api/heatmap/assets, GET /api/heatmap/treemap (Pro)
                        #   Supports 9 indices; FX-normalises non-USD caps to USD for tile sizing
     markets.ts          # stocks, futures, chart, central-bank-rates
@@ -79,18 +79,21 @@ server/
 
 **Dev server**: `npm run server:dev` uses `tsx watch` — auto-restarts on save. There is a ~1s gap during restart where in-flight requests fail; this is expected.
 
-**HMAC signing middleware**: When `APP_SIGNING_SECRET` is set, every API request must include an `X-Signature` header (`"<timestamp>.<hmac>"`). When the secret is absent (local dev), signing is bypassed and all devices are unrestricted (`enterprise` plan).
+**HMAC signing middleware**: When `APP_SIGNING_SECRET` is set, every API request must include an `X-Signature` header (`"<timestamp>.<hmac>"`). When the secret is absent (local dev), signing is bypassed and all devices are unrestricted (`pro` plan).
 
 ### Plan / Entitlement Enforcement
 
+The app sells exactly **two tiers: Free and Pro**. There is no Insight or Enterprise tier — do not re-introduce them (both the Flutter `Plan` enum and the server `DevicePlan` type are two-value).
+
 `plan-enforcement.ts` exports:
-- `DevicePlan` type: `"free" | "pro" | "insight" | "enterprise"`
+- `DevicePlan` type: `"free" | "pro"`
 - `devicePlanMap: Map<string, DevicePlan>` — populated by RevenueCat webhook events
 - `getDevicePlan(req)` — reads `X-Device-ID` header, returns plan (defaults to `"free"`)
-- `isPro(plan)` — true for pro/insight/enterprise
-- `isInsight(plan)` — true for insight/enterprise
+- `isPro(plan)` — true for `pro`
 
-In dev mode (`APP_SIGNING_SECRET` absent) every device returns `"enterprise"` — no gates fire.
+The billing webhook (`entitlementsToPlan`) is **identifier-agnostic**: ANY active RevenueCat entitlement → `pro`. Do not match a specific entitlement id — a dashboard rename would otherwise silently drop paying users to Free. Mirrors `EntitlementService.updateFromCustomerInfo`.
+
+In dev mode (`APP_SIGNING_SECRET` absent) every device returns `"pro"` — no gates fire.
 
 ### Caching Architecture
 
@@ -149,7 +152,7 @@ Three coordinated caching layers:
 | `GET /api/trading/scanner/best-setups` | Best setups filter (?version=&type=&minWinRate=) | varies |
 | `GET /api/trading/best-setups-sector` | Sector-grouped best setups (?version=) → { leading, improving, cacheWarm, lastUpdated }. **Cold cache returns `cacheWarm:false` skeleton in <5 ms** and kicks off background compute — client must poll, not block. | 30m warm; skeleton when cold |
 | `GET /api/trading/regime-summary` | Market regime summary (trend, breadth, volatility signals) | varies |
-| `GET /api/trading/earnings-calendar` | Upcoming earnings (?days=15) | varies |
+| `GET /api/trading/earnings-calendar` | Upcoming earnings (?days=15&index=sp500\|ndx\|dji). Universe = live index constituents (S&P 500 fetched from the public CSV → no hardcoded ticker list); Nasdaq's keyless calendar (`api.nasdaq.com/api/calendar/earnings?date=`) supplies report dates, market cap, EPS estimate + pre/after-market timing. Alpha Vantage EARNINGS_CALENDAR is a fallback (no market cap). Yahoo's `calendarEvents` module is blocked on cloud IPs — never rely on it in prod. Empty results are NOT cached. | 6h |
 | `GET /api/trading/correlation` | Asset correlation matrix | varies |
 | `GET /api/trading/copy-trades` | Congress member copy-trade portfolio (?memberName=) | varies |
 | `GET /api/volatility/assets` | Crisis assets + sparklines | 10m |
@@ -168,7 +171,7 @@ Three coordinated caching layers:
 | `GET /api/heatmap` | Performance heatmap (sectors/regions) | 15m |
 | `GET /api/heatmap/assets` | Heatmap per-category assets (?category=) | 30m |
 | `GET /api/heatmap/treemap` | Market-cap-weighted treemap for an index. `?index=sp500\|ndx\|dji\|russell2000\|ftse100\|dax40\|nikkei225\|hsi\|nifty50`, `&limit=N` (UI sends 500), `&timeframe=1d\|1w\|1m\|ytd`. FX-normalised to USD. Plan-gated: Pro+. | constituents 24h + quotes 5m |
-| `GET /api/exposure/analysis` | AI tariff exposure analysis (Insight+ plan) | 24h |
+| `GET /api/exposure/analysis` | AI tariff exposure analysis (Pro+ plan) | 24h |
 | `POST /api/billing/webhook` | RevenueCat subscription event webhook | — |
 | `POST /api/auth/send-verification-email` | Sends FinBrio-branded verification email via Resend. Requires `Authorization: Bearer <Firebase ID token>`. Rate-limited 3/min. → `{ sent: boolean, fallback?: boolean }` | — |
 | `GET /api/quiver/congress` | Top-10 congress buys (FMP → Quiver, 500 if both fail — no hardcoded snapshot). **Not called by either client since 2026-07** (Congress tab removed — both sources dead); route kept in case a working source appears. | 4h |
@@ -216,11 +219,17 @@ GET /api/heatmap/treemap      → { index, timeframe, limit, total, stocks: [Tre
                                                   dayHigh?, dayLow?, fiftyTwoWeekHigh?, fiftyTwoWeekLow?,
                                                   sparkline?, preMarketPrice?, preMarketChangePercent?,
                                                   postMarketPrice?, postMarketChangePercent?,
-                                                  nativeCurrency, marketCapUsd?, fxRateUsed? }
+                                                  nativeCurrency, marketCapUsd?, fxRateUsed?, buyVolumeSignal }
                                   total = resolved-from-Yahoo count (≤ constituent count).
                                   marketCap is native-currency; marketCapUsd is FX-normalised USD (null when FX fetch failed).
                                   effectiveMarketCap = marketCapUsd ?? marketCap — use this for tile sizing.
                                   marketState: "REGULAR"|"PRE"|"POST"|"POSTPOST" — from lead stock in index.
+                                  buyVolumeSignal (US-002): gold-ring "strong 30-min buying" flag. Computed ONLY on
+                                  timeframe=1d during REGULAR hours, for the top-50 tiles by market cap (BUY_VOLUME_TOP_N).
+                                  = volume-weighted A/D money-flow over the trailing 30 one-minute bars ≥ 0.30 AND window
+                                  return ≥ 0. Always false on 1w/1m/ytd and pre/post/closed — no intraday fetches happen
+                                  there. Zero-$ (free Yahoo 1m chart). Clients draw a gold ring; both clients also
+                                  navigate a tile → /asset/:symbol (mobile via tooltip "View details" button; web on click).
 GET /api/exposure/analysis    → { comps: [{ name, ticker, revenueExposurePct, earningsImpactPct }], summary }
 GET /api/usa-debt             → { recordDate, totalDebt, totalDebtFormatted, debtPerCitizen, debtToGdpRatio,
                                   dailyIncrease, debtGrowth20yr, fiscalYtdLabel, annualDeficit, revenueVsSpending,
@@ -309,7 +318,7 @@ Located in `moby/`. Production base URL is `https://monysa-api.fly.dev`; overrid
 ```
 API_BASE_URL           override server URL (default: https://monysa-api.fly.dev)
 APP_SIGNING_SECRET     HMAC signing secret; absent = dev mode (no X-Signature header sent)
-DEV_PLAN               bypass plan gates in dev/TestFlight builds (values: pro | insight | enterprise)
+DEV_PLAN               bypass plan gates in dev/TestFlight builds (value: pro)
 REVENUECAT_IOS_KEY     RevenueCat iOS API key
 REVENUECAT_ANDROID_KEY RevenueCat Android API key
 SENTRY_DSN             Sentry DSN; absent = development mode (errors not forwarded)
@@ -401,7 +410,7 @@ moby/lib/
                                    # textScaler in app.dart; default is 'regular' (0.9x scale)
 
   services/
-    entitlement_service.dart       # EntitlementService — Plan enum (free/pro/insight/enterprise), feature gates, RC integration
+    entitlement_service.dart       # EntitlementService — Plan enum (free/pro), feature gates, RC integration
 
   shared/widgets/
     chart_modal.dart               # Candlestick bottom sheet (Lightweight Charts v4 via WebView)
@@ -457,8 +466,8 @@ REDIRECTS (app_router.dart handles these automatically):
 - Signals: type filter ALL/Commodities/Indices/Forex/Crypto + strategy selector **S1–S9** (`TradingStrategy` enum is s1…s9; S9 "Silver Liquidity Sweep" filters list to SI=F only). Info icon opens strategy explainer sheet.
 - Alerts: badge count on tab icon when alerts are active.
 
-**Investing** (`/investing`): **7** scrollable sub-tabs — **Exposure** (default) / Dashboard / Multibaggers / Presidential / Smart $ / **Earnings Calendar** (`earnings_calendar_tab.dart` — `/api/trading/earnings-calendar?days=`, items have `symbol/name/sector/earningsDate`) / **ETFs**. (Congress and House Trades tabs were removed 2026-07 — see Known Pitfalls.)
-- Exposure: embeds `ExposureBody` from `exposure_screen.dart` — shows browsable/searchable/sortable list of 113+ countries with their US tariff rates and `impactScore` (from `/api/tariffs`). Sort options: Market Size (GDP proxy, default) / Rate / Name. **Free, no plan gate.** This is tab index 0 — the default landing tab. (The AI analysis endpoint `/api/exposure/analysis` still exists on the server, plan-gated Insight+, but the Flutter tab no longer calls it.)
+**Investing** (`/investing`): **7** scrollable sub-tabs — **Exposure** (default) / Dashboard / Multibaggers / Presidential / Smart $ / **Earnings Calendar** (`earnings_calendar_tab.dart` — `/api/trading/earnings-calendar?days=`, S&P 500 universe; items have `symbol/name/sector/earningsDate/marketCap/marketCapFormatted/epsForecast/lastYearEps/epsGrowthPct/numEstimates/time`. epsGrowthPct = server-computed YoY consensus growth (est vs last-year actual), null when last year missing/zero. Tab has day chips (7/15/30) + mega-cap toggle + sector filter chips + symbol/name search, sticky per-date headers, a "N reporting · Busiest <day>" summary, YoY growth badges, pre/after-market timing icons, and tappable rows → `/asset/:symbol`) / **ETFs**. (Congress and House Trades tabs were removed 2026-07 — see Known Pitfalls.)
+- Exposure: embeds `ExposureBody` from `exposure_screen.dart` — shows browsable/searchable/sortable list of 113+ countries with their US tariff rates and `impactScore` (from `/api/tariffs`). Sort options: Market Size (GDP proxy, default) / Rate / Name. **Free, no plan gate.** This is tab index 0 — the default landing tab. (The AI analysis endpoint `/api/exposure/analysis` still exists on the server, plan-gated Pro+, but the Flutter tab no longer calls it.)
 - Dashboard: Best Setups (plan-gated: Pro+).
 - Multibaggers: full-screen push to `/trading/multibaggers?country=us` (default US). Country chips: 🇺🇸 US / 🇮🇳 India / 🇬🇧 UK / 🇯🇵 Japan / 🇭🇰 HK / 🇨🇳 China / 🇪🇺 Euronext. Has country-aware stock search (search bar filters results by country via Yahoo Finance symbol suffix + exchange code).
 - Presidential: OGE Form 278-T transactions ≥ $100K — fetches `/api/oge/trump-transactions`.
@@ -537,7 +546,7 @@ if (!EntitlementService.can('signals_advanced')) {
 }
 ```
 
-**Plan enum**: `Plan.free | Plan.pro | Plan.insight | Plan.enterprise`
+**Plan enum**: `Plan.free | Plan.pro` (two tiers only — no Insight/Enterprise)
 
 **Feature gate keys** (pass to `EntitlementService.can()`):
 
@@ -547,13 +556,13 @@ if (!EntitlementService.can('signals_advanced')) {
 | `analyst_notes_unlimited` | Pro+ |
 | `alerts_unlimited` | Pro+ |
 | `push_notifications` | Pro+ |
-| `exposure_ai` | Insight+ (guards `/api/exposure/analysis` — AI analysis endpoint; the Flutter Exposure tab now calls `/api/tariffs` instead and is free) |
-| `api_access` | Insight+ |
+| `exposure_ai` | Pro+ (guards `/api/exposure/analysis` — AI analysis endpoint; the Flutter Exposure tab now calls `/api/tariffs` instead and is free) |
+| `api_access` | Pro+ |
 | `best_setups` | Pro+ |
-| `backtest_filter` | Insight+ |
+| `backtest_filter` | Pro+ |
 | `treemap_heatmap` | Pro+ |
 
-**Dev bypass**: pass `--dart-define=DEV_PLAN=insight` to skip all plan gates.
+**Dev bypass**: pass `--dart-define=DEV_PLAN=pro` to skip all plan gates.
 
 **UpgradeSheet**: `UpgradeSheet.show(context, feature: 'xxx')` — presents paywall via RevenueCat `Purchases.getOfferings()`.
 
@@ -649,7 +658,7 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | OGE response shape | `OgeTransaction[]` array directly | `{ transactions, total, lastUpdated, loading? }` — wrapped; `loading=true` while PDF pipeline runs |
 | OGE transaction fields | `filer, position, ticker, exchange` | `description, type, date, amount, amountMidpoint, filingDate, source` |
 | House trades response | raw array | `{ trades, total, lastUpdated }` — wrapped |
-| Plan gate in dev mode | gates fire when APP_SIGNING_SECRET absent | dev mode = enterprise — all features unlocked; use DEV_PLAN dart-define to simulate a plan |
+| Plan gate in dev mode | gates fire when APP_SIGNING_SECRET absent | dev mode = pro — all features unlocked; use DEV_PLAN dart-define to simulate a plan |
 | Macro Calendar tab | Hardcoded FOMC/CPI/NFP/Jackson Hole dates | Dynamic: fetches `/api/economy/events` (FF Calendar feed); falls back to STATIC_EVENTS in server when feed is down |
 | Treemap index count | 5 (S&P 500/NASDAQ 100/DJI/FTSE 100/Nifty 50) | 9 — also Russell 2000, DAX 40, Nikkei 225, Hang Seng |
 | Calling plan-gated API without X-Device-ID | endpoint returns 403 | Dio SigningInterceptor adds X-Device-ID + X-Signature automatically |
@@ -680,7 +689,7 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 
 ## Working — Screen Reference
 
-| Screen | Functionality | Backend APIs Invoked | Free / Pro / Insight |
+| Screen | Functionality | Backend APIs Invoked | Free / Pro |
 |--------|--------------|---------------------|----------------------|
 | **Markets** `/markets` | 5 sub-tabs: **Heatmap** (default; market-cap-weighted treemap of 9 indices with timeframe selector 1D/1W/1M/YTD, Pro+), Indices (46 global), Commodities (23), Forex (44 pairs grouped by region), CFTC metals (hedge fund COT positions). Inline search per price tab. Tap any row → candlestick chart modal; tap a treemap tile → tooltip card. | `/api/futures/indices` `/api/futures/commodities` `/api/futures/forex` `/api/futures/cot-metals` `/api/central-bank-rates` `/api/heatmap/treemap` | **Free**: Indices/Commodities/Forex/CFTC. **Pro** (`treemap_heatmap`): Heatmap tab. |
 | **Trading** `/trading` | 4 sub-tabs: Dashboard (49 live assets, 30s refresh; category chips; Stocks chip = full-text search), AI Signals (S1–S3 strategy selector; BUY/HOLD/SELL per asset), Alerts (price alerts, 10s poll), Power Moves (scanner: Indices/Forex/Commodities/Crypto with v1/v2/v3 Pine variants). | `/api/trading/quotes` `/api/search` `/api/trading/signals/:symbol` `/api/trading/strategies` `/api/trading/scanner/10x-v3/assets` `/api/trading/scanner/10x-v3/commodities` `/api/trading/scanner/10x-v3/forex` `/api/trading/scanner/10x-v3/crypto` `/api/trading/scanner/10x/assets` `/api/trading/scanner/10x-v2/assets` | **Free**: S1–S3 signals, basic alerts, Power Moves. **Pro** (`signals_advanced`): S4–S8/advanced strategies. **Pro** (`alerts_unlimited`): more than 3 active alerts. |
@@ -689,5 +698,5 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | **Asset Detail** `/asset/:symbol` | 5 sub-tabs for any Yahoo Finance symbol: Chart (inline TradingView or Yahoo candlestick + fullscreen modal), Signal (AI BUY/HOLD/SELL with entry/SL/TP/reasoning), Indicators (fundamentals data), Backtest (walk-forward S1/S2/S3 results), News (headlines + sentiment). | `/api/chart/:symbol` `/api/trading/signals/:symbol` `/api/trading/backtest/:symbol` `/api/trading/news/:symbol` `/api/trading/analyst-note/:symbol` `/api/trading/fundamentals/:symbol` | **Free**: Chart, Signal, Backtest, News. **Pro** (`analyst_notes_unlimited`): Analyst Note inside Signal tab. |
 | **Country Detail / Stocks** `/country/:code` `/country/:code/stocks` | Country overview (GDP, trade balance, military data from World Bank). Stocks list for that country; India has NSE/BSE exchange tabs. Tap stock row → Asset Detail (not a chart modal). | `/api/country-data/:code` `/api/stocks/:countryCode` | **All free.** |
 | **Multibaggers** `/trading/multibaggers` | Full-screen country-specific 10X stock scanner. Country chips: 🇺🇸 US (default) / 🇮🇳 India / 🇬🇧 UK / 🇯🇵 Japan / 🇭🇰 HK / 🇨🇳 China / 🇪🇺 Euronext. v1/v2 version toggle. Min-signals filter. Country-aware stock search (type a name → suggestions filtered by selected country → tap → single-symbol scan). Three build modes: normal list / search suggestions / single-scan. | `/api/trading/scanner/10x/{country}` `/api/trading/scanner/10x-v2/{country}` `/api/trading/scanner/10x/single` `/api/search` | **All free.** |
-| **10X Backtest** `/trading/10x-backtest` | Historical backtest viewer for 10X scanner signals. v1/v2 selector, type toggle (assets), signal filter chips, sortable win-rate/return table. | `/api/trading/scanner/backtest/:type?version=` | **Free** (basic). **Insight** (`backtest_filter`): advanced filter controls. |
+| **10X Backtest** `/trading/10x-backtest` | Historical backtest viewer for 10X scanner signals. v1/v2 selector, type toggle (assets), signal filter chips, sortable win-rate/return table. | `/api/trading/scanner/backtest/:type?version=` | **Free** (basic). **Pro** (`backtest_filter`): advanced filter controls. |
 | **Profile** `/profile` | Identity header, RevenueCat subscription card (upgrade/manage), theme toggle (dark/light), font size (Regular/Enlarged), chart provider (Yahoo/TradingView — restart required), about section. | None | **All free** (subscription card shows current plan; upgrading opens RevenueCat paywall). |

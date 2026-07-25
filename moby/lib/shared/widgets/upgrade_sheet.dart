@@ -2,6 +2,7 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
+import 'package:purchases_ui_flutter/purchases_ui_flutter.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
@@ -14,11 +15,41 @@ class UpgradeSheet extends StatefulWidget {
   /// The feature key from [EntitlementService._rules] that triggered this sheet.
   final String feature;
 
-  static Future<void> show(BuildContext context, {required String feature}) {
+  static Future<void> show(BuildContext context,
+      {required String feature}) async {
     FirebaseAnalytics.instance.logEvent(
       name: 'feature_gated',
       parameters: {'feature': feature},
     ).catchError((_) {});
+
+    // Prefer RevenueCat's remote paywall (dashboard-managed copy/design, no app
+    // release to iterate). The caller has already checked entitlement via
+    // EntitlementService.can(), so present unconditionally — we do NOT use
+    // presentPaywallIfNeeded, which would re-check a hardcoded entitlement id
+    // and contradict the "any active entitlement = Pro" model.
+    if (EntitlementService.isRevenueCatConfigured) {
+      try {
+        final result = await RevenueCatUI.presentPaywall();
+        if (result == PaywallResult.purchased ||
+            result == PaywallResult.restored) {
+          // The customer-info listener registered in main() also fires, but
+          // refresh synchronously so gated UI unlocks the instant we return.
+          final info = await Purchases.getCustomerInfo();
+          EntitlementService.updateFromCustomerInfo(info);
+          if (result == PaywallResult.purchased) {
+            FirebaseAnalytics.instance.logEvent(
+              name: 'plan_upgrade',
+              parameters: {'plan': 'pro', 'feature': feature},
+            ).catchError((_) {});
+          }
+        }
+        return;
+      } catch (_) {
+        // Offering/paywall unavailable — fall through to the built-in sheet.
+      }
+    }
+
+    if (!context.mounted) return;
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -38,8 +69,10 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
 
   Future<void> _onPurchaseTap() async {
     if (!EntitlementService.isRevenueCatConfigured) {
-      // SDK not configured (no API keys in this build) — just close.
-      if (mounted) Navigator.of(context).pop();
+      // SDK not configured (build shipped without REVENUECAT_IOS_KEY). Surface
+      // it instead of silently closing so it's diagnosable in the field.
+      setState(() => _error =
+          'In-app purchases are unavailable in this build. Please update from the App Store.');
       return;
     }
 
@@ -51,11 +84,17 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
     try {
       final offerings = await Purchases.getOfferings();
       final offering = offerings.current;
-      final package = offering?.monthly;
+      // Prefer the monthly package, but fall back to whatever the offering
+      // actually exposes — the trial may be attached to annual or a custom id.
+      final package = offering?.monthly ??
+          offering?.annual ??
+          ((offering?.availablePackages.isNotEmpty ?? false)
+              ? offering!.availablePackages.first
+              : null);
       if (package == null) {
         setState(() {
           _loading = false;
-          _error = 'No packages available. Please try again later.';
+          _error = 'No plans are available right now. Please try again later.';
         });
         return;
       }
@@ -80,6 +119,35 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
       setState(() {
         _loading = false;
         _error = 'Something went wrong. Please try again.';
+      });
+    }
+  }
+
+  Future<void> _onRestoreTap() async {
+    if (!EntitlementService.isRevenueCatConfigured) {
+      if (mounted) Navigator.of(context).pop();
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final plan = await EntitlementService.restorePurchases();
+      if (!mounted) return;
+      if (plan != Plan.free) {
+        Navigator.of(context).pop();
+      } else {
+        setState(() {
+          _loading = false;
+          _error = 'No previous purchases found for this account.';
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'Could not restore purchases. Please try again.';
       });
     }
   }
@@ -170,10 +238,21 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
             ),
           ),
           const SizedBox(height: AppSpacing.s3),
-          TextButton(
-            onPressed: _loading ? null : () => Navigator.of(context).pop(),
-            child: Text('Maybe later',
-                style: AppTypography.sm.copyWith(color: c.textMuted)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              TextButton(
+                onPressed: _loading ? null : () => Navigator.of(context).pop(),
+                child: Text('Maybe later',
+                    style: AppTypography.sm.copyWith(color: c.textMuted)),
+              ),
+              Text('·', style: AppTypography.sm.copyWith(color: c.textMuted)),
+              TextButton(
+                onPressed: _loading ? null : _onRestoreTap,
+                child: Text('Restore',
+                    style: AppTypography.sm.copyWith(color: c.textMuted)),
+              ),
+            ],
           ),
         ],
       ),

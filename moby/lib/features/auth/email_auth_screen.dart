@@ -16,6 +16,7 @@ class EmailAuthScreen extends StatefulWidget {
 
 class _EmailAuthScreenState extends State<EmailAuthScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
@@ -34,6 +35,7 @@ class _EmailAuthScreenState extends State<EmailAuthScreen> {
 
   @override
   void dispose() {
+    _nameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
@@ -57,6 +59,7 @@ class _EmailAuthScreenState extends State<EmailAuthScreen> {
     try {
       if (_isSignUp) {
         await AuthService.signUpWithEmail(
+          _nameCtrl.text,
           _emailCtrl.text,
           _passwordCtrl.text,
         );
@@ -127,6 +130,25 @@ class _EmailAuthScreenState extends State<EmailAuthScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: AppSpacing.s4),
+                // Name (sign-up only)
+                if (_isSignUp) ...[
+                  _AuthField(
+                    controller: _nameCtrl,
+                    label: 'Name',
+                    hint: 'Your name',
+                    keyboardType: TextInputType.name,
+                    textCapitalization: TextCapitalization.words,
+                    textInputAction: TextInputAction.next,
+                    enabled: !_loading,
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Please enter your name.';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.s4),
+                ],
                 // Email
                 _AuthField(
                   controller: _emailCtrl,
@@ -310,6 +332,7 @@ class _AuthField extends StatelessWidget {
     this.keyboardType,
     this.obscureText = false,
     this.textInputAction,
+    this.textCapitalization = TextCapitalization.none,
     this.enabled = true,
     this.suffixIcon,
     this.validator,
@@ -322,6 +345,7 @@ class _AuthField extends StatelessWidget {
   final TextInputType? keyboardType;
   final bool obscureText;
   final TextInputAction? textInputAction;
+  final TextCapitalization textCapitalization;
   final bool enabled;
   final Widget? suffixIcon;
   final String? Function(String?)? validator;
@@ -346,6 +370,7 @@ class _AuthField extends StatelessWidget {
           keyboardType: keyboardType,
           obscureText: obscureText,
           textInputAction: textInputAction,
+          textCapitalization: textCapitalization,
           enabled: enabled,
           onFieldSubmitted: onFieldSubmitted,
           validator: validator,

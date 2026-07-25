@@ -215,12 +215,20 @@ export const EarningsItem = z
     name: z.string().nullish(),
     sector: z.string().nullish(),
     earningsDate: z.string().nullish(),
+    marketCap: z.number().nullish(),
+    marketCapFormatted: z.string().nullish(),
+    epsForecast: z.string().nullish(),
+    lastYearEps: z.string().nullish(),
+    epsGrowthPct: z.number().nullish(),
+    numEstimates: z.string().nullish(),
+    time: z.string().nullish(),
   })
   .passthrough();
 export type EarningsItem = z.infer<typeof EarningsItem>;
 
 export const EarningsResponse = z.object({
   items: z.array(EarningsItem),
+  index: z.string().nullish(),
   lastUpdated: z.string().nullish(),
 });
 export type EarningsResponse = z.infer<typeof EarningsResponse>;

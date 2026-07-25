@@ -1,7 +1,7 @@
 import { yahooProvider } from "../providers";
-import type { PriceData, RangeData } from "../providers/types";
+import type { PriceData, RangeData, OHLCVCandle } from "../providers/types";
 
-export type { PriceData, RangeData };
+export type { PriceData, RangeData, OHLCVCandle };
 
 export async function fetchYahooPrice(symbol: string): Promise<PriceData | null> {
   return yahooProvider.fetchCurrentPrice(symbol);
@@ -9,6 +9,15 @@ export async function fetchYahooPrice(symbol: string): Promise<PriceData | null>
 
 export async function fetchRangeData(symbol: string, range: string): Promise<RangeData | null> {
   return yahooProvider.fetchRangeData(symbol, range);
+}
+
+/** Intraday OHLCV candles (default 1-minute bars over the current session). */
+export async function fetchIntradayCandles(
+  symbol: string,
+  interval = "1m",
+  range = "1d",
+): Promise<OHLCVCandle[]> {
+  return yahooProvider.fetchChartCandles(symbol, range, interval);
 }
 
 export async function fetchBatch(

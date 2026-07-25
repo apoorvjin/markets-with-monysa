@@ -1,0 +1,59 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="404 — FinBrio"
+  description="This page doesn't exist. The markets, however, are still open."
+>
+  <main class="lost">
+    <p class="lost__code">404</p>
+    <h1>Lost in the noise.</h1>
+    <p class="lost__copy">This page doesn't exist. The markets, however, are still open.</p>
+    <a class="lost__cta" href="/">Back to FinBrio</a>
+  </main>
+</Base>
+
+<style>
+  .lost {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px;
+    background: radial-gradient(ellipse 640px 420px at 50% 30%, rgba(0, 212, 170, 0.1), transparent 70%);
+  }
+
+  .lost__code {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    color: var(--accent);
+    margin: 0 0 var(--s4);
+  }
+
+  h1 {
+    font-size: clamp(36px, 6vw, 56px);
+    font-weight: 700;
+    margin: 0 0 var(--s4);
+    color: var(--text-primary);
+  }
+
+  .lost__copy {
+    color: var(--text-secondary);
+    margin: 0 0 var(--s7);
+  }
+
+  .lost__cta {
+    padding: 12px 28px;
+    border-radius: 100px;
+    background: var(--accent);
+    color: #000;
+    font-weight: 700;
+    font-size: 14px;
+    text-decoration: none;
+  }
+</style>

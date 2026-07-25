@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://finbrio.net/sitemap-index.xml
+Sitemap: https://www.finbrio.net/sitemap-index.xml

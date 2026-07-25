@@ -133,21 +133,27 @@ class _AuthScreenState extends State<AuthScreen> {
                     ),
                   )),
               const SizedBox(height: AppSpacing.s7),
-              // Apple sign-in — kept visible at equal weight to Google per
-              // App Store Guideline 4.8.
+              // Apple sign-in — presented as the primary, most-prominent login
+              // option per App Store Guideline 4.8. Standard Apple styling
+              // (solid white button, black Apple logo) so App Review cannot miss
+              // that an equivalent login service is offered.
               SizedBox(
                 width: double.infinity,
-                child: OutlinedButton.icon(
+                child: FilledButton.icon(
                   onPressed: _loading
                       ? null
                       : () => _handle(AuthService.signInWithApple),
-                  icon: Icon(Icons.apple, color: c.textPrimary, size: 20),
+                  icon: const Icon(Icons.apple, color: Colors.black, size: 22),
                   label: Text(
-                    'Continue with Apple',
-                    style: AppTypography.labelLg.copyWith(color: c.textPrimary),
+                    'Sign in with Apple',
+                    style: AppTypography.labelLg.copyWith(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  style: OutlinedButton.styleFrom(
-                    side: BorderSide(color: c.border),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    disabledBackgroundColor: Colors.white.withAlpha(140),
                     padding:
                         const EdgeInsets.symmetric(vertical: AppSpacing.s4),
                     shape: RoundedRectangleBorder(

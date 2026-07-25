@@ -22,6 +22,8 @@ export const TreemapStock = z
     /** FX-normalised USD cap; null when the FX fetch failed */
     marketCapUsd: z.number().nullish(),
     fxRateUsed: z.number().nullish(),
+    /** "Strong 30-min buying" gold-ring flag; only true on 1d during REGULAR hours */
+    buyVolumeSignal: z.boolean().nullish(),
   })
   .passthrough();
 export type TreemapStock = z.infer<typeof TreemapStock>;

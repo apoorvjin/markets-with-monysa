@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'chart_renderer_interceptor.dart';
 import 'device_id.dart';
@@ -62,6 +63,15 @@ class _DeviceIdInterceptor extends Interceptor {
   @override
   void onRequest(RequestOptions options, RequestInterceptorHandler handler) async {
     options.headers['X-Device-ID'] = await DeviceId.get();
+    // The server's plan gate keys entitlements on the RevenueCat app_user_id,
+    // which is the Firebase UID once signed in (see main.dart / _linkRevenueCat).
+    // Send it as X-User-ID so a paid, signed-in user's plan resolves on the
+    // server — X-Device-ID alone would miss it. Omitted when signed out, where
+    // the server falls back to X-Device-ID (RC's anonymous identity = device id).
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null && uid.isNotEmpty) {
+      options.headers['X-User-ID'] = uid;
+    }
     handler.next(options);
   }
 }

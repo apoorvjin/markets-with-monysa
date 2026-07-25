@@ -166,6 +166,33 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
                               ),
                             ),
                           ),
+                          if (data.timeframe == '1d')
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(AppSpacing.s4, 0,
+                                  AppSpacing.s4, AppSpacing.s3),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 12,
+                                    height: 12,
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(3),
+                                      border: Border.all(
+                                          color: const Color(0xFFFFC107),
+                                          width: 2),
+                                    ),
+                                  ),
+                                  const SizedBox(width: AppSpacing.s2),
+                                  Expanded(
+                                    child: Text(
+                                      'Gold ring = strong buying volume (last 30 min)',
+                                      style: AppTypography.xs
+                                          .copyWith(color: c.textSecondary),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     );

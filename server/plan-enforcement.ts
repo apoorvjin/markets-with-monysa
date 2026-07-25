@@ -1,7 +1,9 @@
 import type { Request } from "express";
 import { adminFirestore } from "./lib/firebase-admin";
 
-export type DevicePlan = "free" | "pro" | "enterprise";
+// The app sells exactly two tiers: Free and Pro. No Insight/Enterprise tier
+// exists — keep this in sync with the Flutter Plan enum (entitlement_service.dart).
+export type DevicePlan = "free" | "pro";
 
 export const enforcementEnabled = !!process.env.APP_SIGNING_SECRET;
 
@@ -40,12 +42,22 @@ export async function loadPlansFromFirestore(): Promise<void> {
 }
 
 export function getDevicePlan(req: Request): DevicePlan {
-  if (!enforcementEnabled) return "enterprise"; // dev: unrestricted
+  if (!enforcementEnabled) return "pro"; // dev: unrestricted (all gates use isPro)
+  // Prefer the account identity (Firebase UID via X-User-ID) — that's what the
+  // billing webhook keys plans under for signed-in users, and it enables
+  // cross-device plan resolution. A hit here is authoritative (a signed-in
+  // user's own plan, including an expired "free"). Fall back to the device id
+  // for signed-out users and older clients that don't send X-User-ID.
+  const userId = req.headers["x-user-id"] as string | undefined;
+  if (userId) {
+    const plan = devicePlanMap.get(userId);
+    if (plan) return plan;
+  }
   const deviceId = req.headers["x-device-id"] as string | undefined;
-  if (!deviceId) return "free";
-  return devicePlanMap.get(deviceId) ?? "free";
+  if (deviceId) return devicePlanMap.get(deviceId) ?? "free";
+  return "free";
 }
 
 export function isPro(plan: DevicePlan): boolean {
-  return plan === "pro" || plan === "enterprise";
+  return plan === "pro";
 }

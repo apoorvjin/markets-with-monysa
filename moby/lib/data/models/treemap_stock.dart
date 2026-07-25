@@ -18,6 +18,9 @@ class TreemapStock {
   final String nativeCurrency;  // "USD" | "GBP" | "JPY" | "HKD" | "INR"
   final double? marketCapUsd;   // null only when non-USD + FX fetch failed
   final double? fxRateUsed;     // null for USD indices
+  // "Strong 30-min buying" gold-ring flag (US-002). Only true on the 1D
+  // timeframe during REGULAR hours, and only for the largest tiles.
+  final bool buyVolumeSignal;
 
   /// USD market cap when available; falls back to native for tile sizing.
   double get effectiveMarketCap => marketCapUsd ?? marketCap;
@@ -41,6 +44,7 @@ class TreemapStock {
     this.nativeCurrency = 'USD',
     this.marketCapUsd,
     this.fxRateUsed,
+    this.buyVolumeSignal = false,
   });
 
   factory TreemapStock.fromJson(Map<String, dynamic> json) {
@@ -66,6 +70,7 @@ class TreemapStock {
       nativeCurrency: json['nativeCurrency'] as String? ?? 'USD',
       marketCapUsd: n(json['marketCapUsd']),
       fxRateUsed: n(json['fxRateUsed']),
+      buyVolumeSignal: json['buyVolumeSignal'] as bool? ?? false,
     );
   }
 }

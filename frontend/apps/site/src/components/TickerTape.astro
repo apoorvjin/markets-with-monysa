@@ -1,0 +1,167 @@
+---
+// Server-rendered fallback: instrument names only, no fabricated prices.
+// The inline script below progressively enhances the tape with LIVE quotes
+// from the FinBrio API (same one the app uses). If the fetch fails — CORS,
+// offline, API down — the static tape simply remains.
+const symbols = [
+  "S&P 500", "NASDAQ 100", "Dow Jones", "Gold", "Silver", "Crude Oil (WTI)",
+  "Brent", "Natural Gas", "Copper", "Bitcoin", "Ethereum", "EUR/USD",
+  "GBP/USD", "USD/JPY", "DXY", "FTSE 100", "DAX 40", "Nikkei 225",
+  "Hang Seng", "Nifty 50", "Russell 2000", "VIX", "US 10Y", "Wheat", "Coffee",
+];
+const row = [...symbols, ...symbols]; // duplicated for a seamless loop
+---
+
+<div class="tape" id="ticker-tape">
+  <span class="tape__live" id="ticker-live" hidden>
+    <span class="tape__live-dot" aria-hidden="true"></span>LIVE
+  </span>
+  <div class="tape__track" id="ticker-track" aria-hidden="true">
+    {row.map((s) => <span class="tape__item">{s}<span class="tape__sep">·</span></span>)}
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    // Same-origin in production (proxied by vercel.json → the FinBrio API).
+    var LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    var QUOTES = LOCAL ? "http://localhost:5001/api/trading/quotes" : "/api/quotes";
+
+    fetch(QUOTES)
+      .then(function (r) { if (!r.ok) throw new Error(String(r.status)); return r.json(); })
+      .then(function (data) {
+        var quotes = (data.quotes || []).filter(function (q) {
+          return q.price != null && q.changePercent != null;
+        });
+        if (quotes.length < 10) return; // half-empty tape looks worse than the static one
+
+        var track = document.getElementById("ticker-track");
+        var live = document.getElementById("ticker-live");
+        if (!track) return;
+
+        track.textContent = "";
+        var loop = quotes.concat(quotes); // duplicate for the seamless CSS loop
+        loop.forEach(function (q) {
+          var item = document.createElement("span");
+          item.className = "tape__item";
+
+          var name = document.createElement("span");
+          name.textContent = q.name;
+          item.appendChild(name);
+
+          var pct = document.createElement("span");
+          var v = q.changePercent;
+          pct.className = "tape__pct " + (v >= 0 ? "tape__pct--up" : "tape__pct--down");
+          pct.textContent = (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+          item.appendChild(pct);
+
+          var sep = document.createElement("span");
+          sep.className = "tape__sep";
+          sep.textContent = "·";
+          item.appendChild(sep);
+
+          track.appendChild(item);
+        });
+        if (live) live.hidden = false;
+      })
+      .catch(function () { /* static fallback tape stays */ });
+  })();
+</script>
+
+<style>
+  .tape {
+    position: relative;
+    overflow: hidden;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .tape__live {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px 0 24px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    background: linear-gradient(90deg, var(--surface) 72%, transparent);
+  }
+
+  .tape__live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: live-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes live-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  .tape__track {
+    display: inline-flex;
+    white-space: nowrap;
+    padding: 12px 0;
+    animation: tape-scroll 60s linear infinite;
+    will-change: transform;
+    mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+  }
+
+  .tape:hover .tape__track {
+    animation-play-state: paused;
+  }
+
+  /* :global — these classes are also created from the inline script, and
+     JS-built elements don't carry Astro's scope class. */
+  .tape :global(.tape__item) {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .tape :global(.tape__pct) {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    letter-spacing: -0.01em;
+    font-weight: 600;
+  }
+
+  .tape :global(.tape__pct--up)   { color: var(--positive); }
+  .tape :global(.tape__pct--down) { color: var(--danger); }
+
+  .tape :global(.tape__sep) {
+    margin: 0 16px;
+    color: var(--accent);
+  }
+
+  @keyframes tape-scroll {
+    from { transform: translateX(0); }
+    to   { transform: translateX(-50%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .tape__track {
+      animation: none;
+    }
+    .tape__live-dot {
+      animation: none;
+    }
+  }
+</style>

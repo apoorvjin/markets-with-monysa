@@ -35,10 +35,10 @@ const TABS = [
   "Exposure",
   "Dashboard",
   "Multibaggers",
+  "ETFs",
   "Presidential",
   "Smart $",
   "Earnings Calendar",
-  "ETFs",
 ] as const;
 type Tab = (typeof TABS)[number];
 
@@ -361,23 +361,74 @@ function MultibaggersTab() {
 
 // ── Earnings calendar ─────────────────────────────────────────────────────
 
+// 🌅 before open (BMO) / 🌙 after close (AMC)
+function earningsTimeIcon(time?: string | null): { icon: string; label: string } | null {
+  if (time === "pre-market") return { icon: "🌅", label: "Before open" };
+  if (time === "after-hours") return { icon: "🌙", label: "After close" };
+  return null;
+}
+
+const EARNINGS_SECTOR_EMOJI: Record<string, string> = {
+  "Information Technology": "💻",
+  Financials: "🏦",
+  "Health Care": "💊",
+  "Consumer Discretionary": "🛍️",
+  "Consumer Staples": "🛒",
+  Energy: "⚡",
+  Industrials: "🏭",
+  "Communication Services": "📡",
+  Materials: "⛏️",
+  "Real Estate": "🏠",
+  Utilities: "🔌",
+};
+
 function EarningsTab() {
+  const navigate = useNavigate();
   const [days, setDays] = useState(15);
+  const [query, setQuery] = useState("");
+  const [megaOnly, setMegaOnly] = useState(false);
+  const [sector, setSector] = useState<string | null>(null);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["earnings", days],
     queryFn: () => api.getEarningsCalendar(days),
     staleTime: 6 * 3600_000,
   });
 
+  // Sectors present in the window (for the filter chips).
+  const sectors = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of data?.items ?? []) if (e.sector) s.add(e.sector);
+    return Array.from(s).sort();
+  }, [data]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (data?.items ?? []).filter((e) => {
+      if (megaOnly && (e.marketCap ?? 0) < 100e9) return false;
+      if (sector && e.sector !== sector) return false;
+      if (!q) return true;
+      return e.symbol.toLowerCase().includes(q) || (e.name ?? "").toLowerCase().includes(q);
+    });
+  }, [data, query, megaOnly, sector]);
+
   const grouped = useMemo(() => {
-    const byDate = new Map<string, NonNullable<typeof data>["items"]>();
-    for (const item of data?.items ?? []) {
+    const byDate = new Map<string, typeof filtered>();
+    for (const item of filtered) {
       const d = item.earningsDate ?? "TBD";
       if (!byDate.has(d)) byDate.set(d, []);
       byDate.get(d)!.push(item);
     }
     return Array.from(byDate.entries()).sort(([a], [b]) => a.localeCompare(b));
-  }, [data]);
+  }, [filtered]);
+
+  // Busiest day in the filtered window.
+  const busiest = useMemo(() => {
+    let top: { date: string; n: number } | null = null;
+    for (const [date, items] of grouped) {
+      if (!top || items.length > top.n) top = { date, n: items.length };
+    }
+    return top;
+  }, [grouped]);
 
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
@@ -388,32 +439,109 @@ function EarningsTab() {
           {[7, 15, 30].map((d) => (
             <Chip key={d} label={`${d} days`} active={days === d} onClick={() => setDays(d)} />
           ))}
+          <Chip label="Mega-caps" active={megaOnly} onClick={() => setMegaOnly((v) => !v)} />
         </ChipRow>
+        {sectors.length > 0 ? (
+          <ChipRow>
+            <Chip label="All sectors" active={sector === null} onClick={() => setSector(null)} />
+            {sectors.map((s) => (
+              <Chip
+                key={s}
+                label={`${EARNINGS_SECTOR_EMOJI[s] ?? "📊"} ${s}`}
+                active={sector === s}
+                onClick={() => setSector((cur) => (cur === s ? null : s))}
+              />
+            ))}
+          </ChipRow>
+        ) : null}
+        <input
+          className="search-input"
+          placeholder="Filter by symbol or name…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <FreshnessBar lastUpdated={data?.lastUpdated} />
       </div>
       {isLoading || !data ? (
         <SkeletonList rows={10} />
       ) : grouped.length === 0 ? (
         <Card>
-          <div className="cell-sub">No earnings scheduled in the next {days} days.</div>
+          <div className="cell-sub">
+            {query || megaOnly || sector
+              ? "No earnings match your filter."
+              : `No earnings scheduled in the next ${days} days.`}
+          </div>
         </Card>
       ) : (
-        grouped.map(([date, items]) => (
-          <Card key={date}>
-            <strong>{date}</strong>
-            <table className="tbl" style={{ marginTop: "var(--s3)" }}>
-              <tbody>
-                {items.map((e) => (
-                  <tr key={e.symbol}>
-                    <td className="cell-main">{e.symbol}</td>
-                    <td>{e.name ?? "—"}</td>
-                    <td className="cell-sub">{e.sector ?? ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        ))
+        <>
+          <div className="cell-sub" style={{ margin: "var(--s2) 0" }}>
+            {filtered.length} companies reporting · S&P 500
+            {busiest ? ` · Busiest: ${busiest.date} (${busiest.n})` : ""}
+          </div>
+          <div className="tbl-wrap" style={{ maxHeight: "70vh" }}>
+            {grouped.map(([date, items]) => (
+              <div key={date}>
+                <div
+                  style={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 1,
+                    background: "var(--surface)",
+                    padding: "var(--s2) var(--s1)",
+                    fontWeight: 700,
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  {date} <span className="cell-sub">· {items.length}</span>
+                </div>
+                <table className="tbl">
+                  <tbody>
+                    {items.map((e) => {
+                      const t = earningsTimeIcon(e.time);
+                      const g = e.epsGrowthPct;
+                      return (
+                        <tr
+                          key={e.symbol}
+                          className="clickable"
+                          onClick={() =>
+                            void navigate({
+                              to: "/asset/$symbol",
+                              params: { symbol: e.symbol },
+                              search: { name: e.name ?? undefined },
+                            })
+                          }
+                        >
+                          <td className="cell-main">
+                            {t ? <span title={t.label} style={{ marginRight: 6 }}>{t.icon}</span> : null}
+                            {e.symbol}
+                          </td>
+                          <td>{e.name ?? "—"}</td>
+                          <td className="cell-sub">{e.marketCapFormatted ?? ""}</td>
+                          <td className="cell-sub">
+                            {e.epsForecast ? `est. ${e.epsForecast}` : ""}
+                            {e.lastYearEps ? ` · last year ${e.lastYearEps}` : ""}
+                            {typeof g === "number" ? (
+                              <span
+                                style={{
+                                  marginLeft: 6,
+                                  fontWeight: 700,
+                                  color: g >= 0 ? "var(--positive)" : "var(--danger)",
+                                }}
+                              >
+                                {g >= 0 ? "▲" : "▼"} {g > 0 ? "+" : ""}
+                                {g}% YoY
+                              </span>
+                            ) : null}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </>
   );

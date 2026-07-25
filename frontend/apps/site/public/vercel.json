@@ -1,0 +1,23 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
+  "trailingSlash": false,
+  "rewrites": [
+    {
+      "source": "/api/quotes",
+      "destination": "https://monysa-api.fly.dev/api/trading/quotes"
+    },
+    {
+      "source": "/api/waitlist",
+      "destination": "https://monysa-api.fly.dev/api/waitlist"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/_astro/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    }
+  ]
+}

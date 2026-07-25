@@ -11,6 +11,7 @@ import { registerQuiverRoutes } from "./routes/quiver";
 import { registerOgeRoutes } from "./routes/oge";
 import { registerEtfRoutes } from "./routes/etf";
 import { registerAuthRoutes } from "./routes/auth";
+import { registerWaitlistRoutes } from "./routes/waitlist";
 import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -32,6 +33,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerOgeRoutes(app);
   registerEtfRoutes(app);
   registerAuthRoutes(app);
+  registerWaitlistRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

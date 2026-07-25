@@ -93,6 +93,8 @@ abstract final class ApiEndpoints {
 
   static String get regimeSummary    => '$baseUrl/api/trading/regime-summary';
   static String get earningsCalendar => '$baseUrl/api/trading/earnings-calendar?days=15';
+  static String earningsCalendarDays(int days) =>
+      '$baseUrl/api/trading/earnings-calendar?days=$days';
   static String get correlation      => '$baseUrl/api/trading/correlation';
   static String advCorrelation({String window = '3m'}) =>
       '$baseUrl/api/trading/correlation/advanced?window=$window';

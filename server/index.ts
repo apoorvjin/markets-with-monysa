@@ -54,7 +54,7 @@ function setupCors(app: express.Application) {
       );
       res.header(
         "Access-Control-Allow-Headers",
-        "Content-Type, Authorization, X-Requested-With, Accept, Origin, User-Agent, X-Device-ID, X-Signature, If-None-Match",
+        "Content-Type, Authorization, X-Requested-With, Accept, Origin, User-Agent, X-Device-ID, X-User-ID, X-Signature, If-None-Match",
       );
       res.header("Access-Control-Allow-Credentials", "true");
       res.header("Access-Control-Expose-Headers", "Content-Type, X-Total-Count, X-Page-Count");

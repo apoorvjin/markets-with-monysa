@@ -16,6 +16,10 @@ for arg in "$@"; do
   esac
 done
 
+# ── Read current marketing version from pubspec (for display + bump baseline) ──
+PUBSPEC="moby/pubspec.yaml"
+CURRENT_VERSION=$(grep '^version:' "$PUBSPEC" | head -1 | sed 's/version:[[:space:]]*//' | cut -d'+' -f1)
+
 # ── Banner ────────────────────────────────────────────────────────────────────
 echo -e "${BOLD}${CYAN}"
 echo "  ███████╗██╗███╗   ██╗██████╗ ██████╗ ██╗ ██████╗ "
@@ -26,7 +30,7 @@ echo "  ██║     ██║██║ ╚████║██████╔
 echo "  ╚═╝     ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═╝  ╚═╝╚═╝ ╚═════╝ "
 echo -e "${NC}"
 echo -e "${BOLD}  FinBrio — TestFlight Build & Upload${NC}"
-echo -e "  App: ${CYAN}FinBrio (com.monysa.moby)${NC}  Version: ${CYAN}1.0.0+1${NC}"
+echo -e "  App: ${CYAN}FinBrio (com.monysa.moby)${NC}  Current version: ${CYAN}${CURRENT_VERSION}${NC}"
 echo -e "  Backend: ${CYAN}https://monysa-api.fly.dev${NC}"
 echo ""
 
@@ -34,6 +38,31 @@ echo ""
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${BOLD}  Build Configuration${NC}"
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+echo ""
+
+# Release type — bumps the marketing version (CFBundleShortVersionString).
+# The build number (CFBundleVersion) is always a fresh timestamp so TestFlight
+# never rejects a duplicate, independent of the marketing version.
+IFS='.' read -r VMAJOR VMINOR VPATCH <<< "$CURRENT_VERSION"
+echo -e "  ${BOLD}Release type${NC} (current: ${CYAN}${CURRENT_VERSION}${NC}):"
+echo -e "    ${BOLD}1)${NC} Bug fix   → ${CYAN}${VMAJOR}.${VMINOR}.$((VPATCH + 1))${NC}"
+echo -e "    ${BOLD}2)${NC} Feature   → ${CYAN}${VMAJOR}.$((VMINOR + 1)).0${NC}"
+echo -e "    ${BOLD}3)${NC} Keep      → ${CYAN}${CURRENT_VERSION}${NC}"
+echo -e -n "  > "
+read -r REL_TYPE
+
+case "$REL_TYPE" in
+  1) NEW_VERSION="${VMAJOR}.${VMINOR}.$((VPATCH + 1))" ;;
+  2) NEW_VERSION="${VMAJOR}.$((VMINOR + 1)).0" ;;
+  3) NEW_VERSION="${CURRENT_VERSION}" ;;
+  *) echo -e "${RED}  ✗ Invalid choice — enter 1, 2, or 3.${NC}"; exit 1 ;;
+esac
+
+BUILD_NUMBER=$(date +%Y%m%d%H%M)
+# Persist the new marketing version so the next run bumps from here; the build
+# number stays out of pubspec's committed history via the flag below.
+sed -i '' "s/^version:.*/version: ${NEW_VERSION}+${BUILD_NUMBER}/" "$PUBSPEC"
+echo -e "  ${GREEN}✓ Building ${BOLD}${NEW_VERSION} (${BUILD_NUMBER})${NC}"
 echo ""
 
 # RevenueCat iOS key (optional — skip to build without in-app purchases)
@@ -106,7 +135,9 @@ echo -e "${BLUE}▶ Running flutter build ipa...${NC}"
 echo ""
 
 # shellcheck disable=SC2086
-flutter build ipa --release ${DART_DEFINES}
+flutter build ipa --release ${DART_DEFINES} \
+  --build-name="${NEW_VERSION}" \
+  --build-number="${BUILD_NUMBER}"
 
 IPA_PATH=$(find build/ios/ipa -name "*.ipa" | head -1)
 if [ -z "$IPA_PATH" ]; then

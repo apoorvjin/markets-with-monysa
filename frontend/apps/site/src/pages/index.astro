@@ -1,75 +1,813 @@
 ---
 import Base from "../layouts/Base.astro";
+import Nav from "../components/Nav.astro";
 import Reveal from "../components/Reveal.astro";
+import DeviceFrame from "../components/DeviceFrame.astro";
+import TickerTape from "../components/TickerTape.astro";
 import DownloadCta from "../components/DownloadCta.astro";
+import Faq from "../components/Faq.astro";
+import Icon from "../components/Icon.astro";
+import SignalCard from "../components/SignalCard.astro";
+import LiveBoard from "../components/LiveBoard.astro";
 
-const pillars = [
+import shotAsset from "../assets/screens/iphone-asset.png";
+import shotMarkets from "../assets/screens/iphone-markets.png";
+import shotTrading from "../assets/screens/iphone-trading.png";
+import shotMacro from "../assets/screens/iphone-macro.png";
+import shotInvesting from "../assets/screens/iphone-investing.png";
+import shotSignals from "../assets/screens/iphone-signals.png";
+import shotScanner from "../assets/screens/iphone-scanner.png";
+import shotOge from "../assets/screens/iphone-oge.png";
+import shotEtf from "../assets/screens/iphone-etf.png";
+import shotForex from "../assets/screens/iphone-forex.png";
+import shotCrisis from "../assets/screens/iphone-crisis.png";
+import shotHeatmap from "../assets/screens/ipad-heatmap.png";
+
+const stats = [
+  { value: "46", label: "Global indices" },
+  { value: "23", label: "Commodities" },
+  { value: "44", label: "Forex pairs" },
+  { value: "113+", label: "Countries, tariff-ranked" },
+  { value: "49+", label: "Assets with AI signals" },
+  { value: "42", label: "Curated ETFs" },
+];
+
+// span: which tiles grow, for an asymmetric (non-templated) bento rhythm.
+const bento = [
+  { icon: "bell", span: "wide", title: "Price alerts & push",
+    copy: "Set a level, get a push the moment it breaks — checked every 20 seconds. Regime-change alerts fire automatically when the options market flips from contango to backwardation." },
+  { icon: "flask", title: "Backtest lab",
+    copy: "Walk-forward backtests per strategy — win rate, total return, max drawdown, Sharpe, and the full trade log. Verify before you trust." },
+  { icon: "news", title: "News + AI sentiment",
+    copy: "Headlines per asset with sentiment scoring, plus an AI read on what the news implies for short-term price action." },
+  { icon: "comment", title: "AI analyst notes",
+    copy: "On-demand analyst commentary for any symbol — what's driving it, what to watch, in plain English." },
+  { icon: "calendar", title: "Earnings calendar",
+    copy: "Upcoming earnings across the market, so a surprise print never blindsides an open position." },
+  { icon: "calendar-clock", title: "Economic calendar",
+    copy: "High-impact events — FOMC, CPI, NFP — pulled live so you know what's on deck before the market does." },
+  { icon: "network", span: "wide", title: "Correlation matrix",
+    copy: "Cross-asset correlations at a glance — know what actually diversifies you and what secretly moves together. The hidden risk most portfolios miss." },
+  { icon: "institution", title: "CFTC positioning",
+    copy: "Disaggregated COT data on metals: see whether hedge funds are net long or short before you pick a side." },
+  { icon: "percent", title: "Central bank rates",
+    copy: "Policy rates across major central banks in one table — the gravity every other market obeys." },
+  { icon: "dollar", title: "US debt clock",
+    copy: "The national debt ticking live from the US Treasury's own data, with context on what it means." },
+  { icon: "globe", title: "Country deep-dives",
+    copy: "GDP, trade balance and military spend per country from the World Bank — plus that country's listed stocks, including NSE/BSE for India." },
+  { icon: "line-chart", title: "TradingView built in",
+    copy: "Advanced TradingView charts inline, or one tap to open any symbol in the full TradingView app." },
+  { icon: "star", title: "Watchlists",
+    copy: "Star anything — commodities, indices, forex, crypto, stocks — and get your own market view first." },
+  { icon: "contrast", title: "Your app, your way",
+    copy: "Dark and light themes, adjustable type size, and your choice of chart engine. Small things, done right." },
+  { icon: "rotate", title: "ETF rotation (RRG)",
+    copy: "Relative Rotation Graph quadrants — Leading, Improving, Weakening, Lagging — for sectors and 42 curated ETFs." },
+  { icon: "clock", title: "Session-aware quotes",
+    copy: "Pre-market and after-hours prices where they exist — never stare at a stale close without knowing it." },
+];
+
+const gallery = [
+  { src: shotSignals, alt: "AI signal board: BUY, HOLD, SELL calls with confidence percentages across commodities", caption: "Signal board — every asset, one verdict" },
+  { src: shotScanner, alt: "10X Power Moves scanner on global indices with the v3 Super Pine engine", caption: "Power Moves — 10X breakout scanner" },
+  { src: shotOge, alt: "Presidential financial disclosures from OGE Form 278-T filings", caption: "Presidential trades — from official filings" },
+  { src: shotEtf, alt: "ETF explorer listing 42 curated ETFs with live prices across 7 categories", caption: "ETF explorer — 42 funds, 7 categories" },
+  { src: shotForex, alt: "44 live forex pairs grouped by region", caption: "Forex — 44 pairs, grouped by region" },
+  { src: shotCrisis, alt: "Historical crisis playbook: US tariff war, Middle East escalation, Japan carry unwind with outcomes", caption: "Crisis playbook — history's cheat sheet" },
+  { src: shotInvesting, alt: "US tariff exposure ranking across 113+ countries", caption: "Tariff exposure — 113+ countries ranked" },
+  { src: shotMacro, alt: "Macro dashboard with market regime breakdown and VIX gauge", caption: "Macro dashboard — regime at a glance" },
+];
+
+const faqItems = [
   {
-    title: "Live Markets",
-    copy: "46 global indices, 23 commodities, and 44 forex pairs with real-time candlestick charts — plus a market-cap-weighted treemap across 9 major indices.",
+    q: "What is FinBrio?",
+    a: "FinBrio is a global financial intelligence app for iOS and Android. It brings live markets, AI-generated trade signals, congressional and insider trade tracking, US tariff exposure, ETF analytics, and macro stress monitoring into one dashboard — the data professionals watch, without the terminal price tag.",
   },
   {
-    title: "AI Trading Signals",
-    copy: "BUY, HOLD, or SELL — with entry, stop-loss, and take-profit — across 49+ assets and three independent strategies.",
+    q: "What are AI trading signals?",
+    a: "For 49+ assets across commodities, indices, forex, and crypto, FinBrio computes a BUY, HOLD, or SELL stance with a concrete entry, stop-loss, take-profit, risk/reward ratio, and confidence score — plus the reasoning behind it. Nine strategy engines (S1–S9) cover different trading styles, including S9, a silver-specific liquidity-sweep strategy. Every strategy ships with a walk-forward backtest showing win rate, drawdown and Sharpe so you can verify before you trust.",
   },
   {
-    title: "Investing",
-    copy: "Track Congress trades, Presidential transactions, and insider buying the moment they're disclosed — the same public filings the pros watch.",
+    q: "What is the Power Moves 10X scanner?",
+    a: "A breakout scanner that screens indices, forex, commodities and crypto through three generations of Pine-script-aligned engines. The v3 'Super Pine' engine looks for five structural signals — thrust, base, uptrend, new-high reclaim, and regime breakout — and every engine has a historical backtest viewer so you can see how its signals actually performed.",
   },
   {
-    title: "Tariff Exposure",
-    copy: "US tariff impact ranked across 113+ countries with full sector breakdowns — browsable, not gated.",
+    q: "How does the smart-money tracking work?",
+    a: "FinBrio aggregates public disclosure filings — congressional STOCK Act trades, House PTR filings, presidential OGE Form 278-T transactions of $100K or more, SEC insider cluster buys, and Senate lobbying spend — and surfaces them ranked and searchable. There's even a copy-trades view that reconstructs a Congress member's disclosed portfolio.",
   },
   {
-    title: "Macro",
-    copy: "Market Stress Meter, VIX, Fear & Greed, yield curve, sector rotation, and a crisis playbook built from history.",
+    q: "What is the tariff exposure tool?",
+    a: "A browsable ranking of 113+ countries by their US tariff rate, with per-sector breakdowns, debt-to-USA context, and plain-English explanations of what each rate means. Built for macro investors and trade-compliance teams who need exposure at a glance.",
+  },
+  {
+    q: "What can I find on the Multibaggers screen?",
+    a: "Country-specific high-momentum stock scans across seven markets — US, India, UK, Japan, Hong Kong, China and Euronext — with a minimum-signals filter and country-aware search, so you can scan any individual stock on demand.",
+  },
+  {
+    q: "What macro tools are included?",
+    a: "A market stress meter, VIX gauge with term-structure regime detection, the Fear & Greed index, a live yield curve with inversion history, sector rotation quadrants (RRG), a cross-asset correlation matrix, a historical crisis playbook, a live US debt clock, a high-impact economic calendar, and AI-written macro briefings.",
+  },
+  {
+    q: "Is FinBrio free?",
+    a: "The core app is free: live markets across 46 indices, 23 commodities and 44 forex pairs, S1–S3 AI signals, the Power Moves scanner, smart-money tracking, tariff exposure, multibaggers, the ETF explorer, and the full macro dashboard. A single Pro subscription unlocks the market-cap treemap, advanced strategies, unlimited alerts and analyst notes, AI-powered analysis, and API access.",
+  },
+  {
+    q: "Where does the data come from?",
+    a: "Market data comes from Yahoo Finance; hedge-fund positioning from the CFTC's Disaggregated COT report; the debt clock from the US Treasury's FiscalData API; tariff data from USTR Section 301 schedules; congressional and insider filings from official public disclosure sources including SEC EDGAR; and country statistics from the World Bank.",
+  },
+  {
+    q: "Is FinBrio financial advice?",
+    a: "No. FinBrio is an information and analytics tool. Signals, backtests, and briefings are for informational purposes only and are not investment advice. Markets involve risk — always do your own research.",
+  },
+  {
+    q: "When can I download it?",
+    a: "FinBrio is in beta and coming soon to the App Store and Google Play. Check back here — this page will link to both stores at launch.",
   },
 ];
+
+const appJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "MobileApplication",
+  name: "FinBrio",
+  operatingSystem: "iOS, Android",
+  applicationCategory: "FinanceApplication",
+  description:
+    "Global financial intelligence: live markets, AI trading signals, congressional and insider trade tracking, tariff exposure, ETF analytics, and macro stress monitoring in one app.",
+  url: "https://www.finbrio.net",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+};
+
+const orgJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: "FinBrio",
+  url: "https://www.finbrio.net",
+  logo: "https://www.finbrio.net/apple-touch-icon.png",
+};
+
+const websiteJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "FinBrio",
+  url: "https://www.finbrio.net",
+};
+
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: faqItems.map((f) => ({
+    "@type": "Question",
+    name: f.q,
+    acceptedAnswer: { "@type": "Answer", text: f.a },
+  })),
+};
 ---
 
 <Base
-  title="FinBrio — Global Financial Intelligence"
-  description="Live markets, AI trading signals, Congress and insider trade tracking, tariff exposure, and macro intelligence — in one dashboard."
+  title="FinBrio — Global Financial Intelligence App | Live Markets, AI Trading Signals, Smart Money Tracking"
+  description="One app for the whole market: 46 live indices, 23 commodities, 44 forex pairs, AI trade signals with entry/stop/target across 9 strategies, Congress & insider trade tracking, US tariff exposure for 113+ countries, ETF analytics and macro stress monitoring. Coming soon to iOS and Android."
 >
-  <main>
+  <Fragment slot="head">
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(appJsonLd)} />
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(orgJsonLd)} />
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(websiteJsonLd)} />
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />
+  </Fragment>
+
+  <span id="top"></span>
+  <Nav />
+
+  <main id="main-content">
+    <!-- ── Hero ─────────────────────────────────────────────────────────── -->
     <section class="hero">
-      <Reveal as="div" class="hero__inner">
-        <p class="hero__eyebrow">FinBrio</p>
-        <h1 class="hero__title">Global Financial<br />Intelligence</h1>
-        <p class="hero__subtitle">
-          Markets, signals, and the money moves that matter — in one place.
+      <div class="hero__bg" aria-hidden="true">
+        <div class="hero__grid"></div>
+        <svg class="hero__chart" viewBox="0 0 1440 600" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <linearGradient id="heroArea" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#00d4aa" stop-opacity="0.16" />
+              <stop offset="100%" stop-color="#00d4aa" stop-opacity="0" />
+            </linearGradient>
+          </defs>
+          <path
+            class="hero__chart-area"
+            d="M0,430 L120,405 L240,438 L360,360 L480,388 L600,300 L720,338 L840,255 L960,292 L1080,205 L1200,242 L1320,150 L1440,192 L1440,600 L0,600 Z"
+            fill="url(#heroArea)"
+          />
+          <path
+            class="hero__chart-line"
+            d="M0,430 L120,405 L240,438 L360,360 L480,388 L600,300 L720,338 L840,255 L960,292 L1080,205 L1200,242 L1320,150 L1440,192"
+          />
+        </svg>
+        <span class="hero__depth"></span>
+      </div>
+      <div class="hero__inner">
+        <Reveal as="div" class="hero__copy">
+          <p class="eyebrow">Coming soon · iOS &amp; Android</p>
+          <h1 class="hero__title">
+            The market's<br />
+            <span class="hero__title-accent">unfair advantage.</span>
+          </h1>
+          <p class="hero__subtitle">
+            Live global markets, AI trade signals with exact entry, stop and target,
+            the trades Congress and insiders just disclosed, and the macro picture —
+            all in one place.
+          </p>
+          <div class="hero__cta">
+            <DownloadCta />
+          </div>
+          <p class="hero__audience">
+            Built for macro investors, professional traders, and trade-compliance teams.
+          </p>
+        </Reveal>
+        <Reveal as="div" class="hero__device">
+          <DeviceFrame
+            src={shotAsset}
+            alt="FinBrio asset view: Apple candlestick chart with an AI BUY signal showing entry, stop loss, take profit and risk/reward"
+            variant="iphone"
+            glow
+            priority
+          />
+        </Reveal>
+      </div>
+    </section>
+
+    <TickerTape />
+
+    <!-- ── Stats band ───────────────────────────────────────────────────── -->
+    <Reveal as="section" class="stats">
+      {
+        stats.map((s) => (
+          <div class="stats__cell">
+            <div class="stats__value" data-count={s.value}>{s.value}</div>
+            <div class="stats__label">{s.label}</div>
+          </div>
+        ))
+      }
+    </Reveal>
+    <script is:inline>
+      (function () {
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+        var els = document.querySelectorAll("[data-count]");
+        if (!els.length || !("IntersectionObserver" in window)) return;
+        var io = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (!entry.isIntersecting) return;
+            io.unobserve(entry.target);
+            var raw = entry.target.getAttribute("data-count") || "";
+            var num = parseInt(raw, 10);
+            if (isNaN(num)) return;
+            var suffix = raw.replace(String(num), "");
+            var start = null;
+            var DURATION = 900;
+            function step(ts) {
+              if (start === null) start = ts;
+              var p = Math.min((ts - start) / DURATION, 1);
+              var eased = 1 - Math.pow(1 - p, 3);
+              entry.target.textContent = Math.round(num * eased) + suffix;
+              if (p < 1) requestAnimationFrame(step);
+            }
+            requestAnimationFrame(step);
+          });
+        }, { threshold: 0.6 });
+        els.forEach(function (el) { io.observe(el); });
+      })();
+    </script>
+
+    <!-- ── Personas ─────────────────────────────────────────────────────── -->
+    <section class="personas" id="personas">
+      <Reveal as="div" class="personas__head">
+        <p class="eyebrow">Who it's for</p>
+        <h2>Three jobs. One app.</h2>
+      </Reveal>
+      <div class="personas__grid">
+        <Reveal as="article" class="persona">
+          <span class="persona__icon"><Icon name="radar" size={22} /></span>
+          <h3>The macro investor</h3>
+          <p>You think in regimes, not tickers.</p>
+          <ul>
+            <li>Tariff exposure ranked across 113+ countries</li>
+            <li>Yield curve, VIX term structure &amp; stress meter</li>
+            <li>Crisis playbook with historical asset outcomes</li>
+            <li>Live US debt clock and central-bank rates</li>
+          </ul>
+        </Reveal>
+        <Reveal as="article" class="persona persona--featured">
+          <span class="persona__icon"><Icon name="bolt" size={22} /></span>
+          <h3>The professional trader</h3>
+          <p>You need a level, not a vibe.</p>
+          <ul>
+            <li>AI signals with entry, stop, target &amp; confidence</li>
+            <li>10X breakout scanner with real backtests</li>
+            <li>Alerts that push the moment a level breaks</li>
+            <li>Pre-market and after-hours session prices</li>
+          </ul>
+        </Reveal>
+        <Reveal as="article" class="persona">
+          <span class="persona__icon"><Icon name="shield" size={22} /></span>
+          <h3>The compliance team</h3>
+          <p>You answer for exposure, on the record.</p>
+          <ul>
+            <li>US tariff rates with per-sector breakdowns</li>
+            <li>Sourced from USTR Section 301 schedules</li>
+            <li>Congressional &amp; insider disclosures, searchable</li>
+            <li>Plain-English context for every rate</li>
+          </ul>
+        </Reveal>
+      </div>
+    </section>
+
+    <!-- ── Live global markets board ────────────────────────────────────── -->
+    <LiveBoard />
+
+    <!-- ── AI Signals ───────────────────────────────────────────────────── -->
+    <section class="feature" id="signals">
+      <Reveal as="div" class="feature__copy">
+        <p class="eyebrow">AI Trading Signals</p>
+        <h2>Not just "bullish."<br />Entry. Stop. Target.</h2>
+        <p>
+          Nine strategy engines analyze 49+ assets across commodities, indices,
+          forex and crypto — and commit to an answer: <span class="pill pill--buy">BUY</span>
+          <span class="pill pill--hold">HOLD</span> <span class="pill pill--sell">SELL</span>
+          with a concrete entry, stop-loss, take-profit, risk/reward ratio, confidence
+          score, and the reasoning behind the call.
         </p>
-        <div class="hero__cta">
-          <DownloadCta />
-        </div>
+        <ul class="checklist">
+          <li>Strategies S1–S9 for different styles — including S9, a silver-specific liquidity-sweep engine</li>
+          <li>Walk-forward backtests per strategy: win rate, return, drawdown, Sharpe, full trade log</li>
+          <li>Charts with SMA, EMA, RSI, MACD, Stochastic, ATR, ADX, Bollinger and pivots</li>
+          <li>AI analyst notes, news with sentiment scoring, and fundamentals per symbol</li>
+          <li>Price alerts that push to your phone the moment a level breaks</li>
+        </ul>
+      </Reveal>
+      <Reveal as="div" class="feature__media feature__media--signal">
+        <DeviceFrame
+          src={shotSignals}
+          alt="AI signal board with BUY, HOLD and SELL calls and confidence percentages across gold, silver, crude oil and more"
+          variant="iphone"
+          class="feature__media-phone"
+        />
+        <SignalCard />
       </Reveal>
     </section>
 
-    <section class="pillars" aria-label="Features">
-      {
-        pillars.map((pillar, i) => (
-          <Reveal as="article" class="pillar">
-            <span class="pillar__index">{String(i + 1).padStart(2, "0")}</span>
-            <h2 class="pillar__title">{pillar.title}</h2>
-            <p class="pillar__copy">{pillar.copy}</p>
-          </Reveal>
-        ))
-      }
+    <!-- ── Power Moves scanner ──────────────────────────────────────────── -->
+    <section class="feature feature--reverse" id="scanner">
+      <Reveal as="div" class="feature__copy">
+        <p class="eyebrow">Power Moves — 10X Scanner</p>
+        <h2>Catch the breakout<br />before it's a headline.</h2>
+        <p>
+          A regime-breakout scanner that screens whole asset classes — indices, forex,
+          commodities, crypto — through three generations of Pine-aligned engines.
+          The v3 "Super Pine" engine hunts five structural signals and ranks
+          everything by how many are firing right now.
+        </p>
+        <ul class="checklist">
+          <li>Five signals: thrust, base, uptrend, new-high reclaim, regime breakout</li>
+          <li>Historical backtest viewer — see each engine's real win rates first</li>
+          <li>Best Setups: pre-filtered highest-conviction opportunities by sector</li>
+          <li>Multibagger scans across US, India, UK, Japan, HK, China and Euronext</li>
+          <li>Country-aware stock search — scan any single stock on demand</li>
+        </ul>
+      </Reveal>
+      <Reveal as="div" class="feature__media">
+        <DeviceFrame
+          src={shotScanner}
+          alt="Power Moves 10X scanner running the v3 Super Pine engine across global indices"
+          variant="iphone"
+        />
+      </Reveal>
     </section>
 
+    <!-- ── Live Markets ─────────────────────────────────────────────────── -->
+    <section class="feature" id="markets">
+      <Reveal as="div" class="feature__copy">
+        <p class="eyebrow">Live Global Markets</p>
+        <h2>Every market that matters.<br />One screen.</h2>
+        <p>
+          46 global indices, 23 commodities, and 44 forex pairs — streaming live with
+          candlestick charts on tap. Plus CFTC hedge-fund positioning on metals and
+          central-bank policy rates, so you see what the big money holds and what
+          the policy gravity looks like.
+        </p>
+        <ul class="checklist">
+          <li>US, Europe and Asia indices from the S&amp;P 500 to the Nifty 50</li>
+          <li>Gold, oil, gas, copper, grains — the full commodities complex</li>
+          <li>Majors, crosses and EM forex, grouped by region</li>
+          <li>Pre-market and after-hours session prices where available</li>
+          <li>Watchlists and full-text search across every listed stock</li>
+        </ul>
+      </Reveal>
+      <Reveal as="div" class="feature__media feature__media--duo">
+        <DeviceFrame
+          src={shotMarkets}
+          alt="FinBrio markets dashboard showing S&P 500, NASDAQ and Dow Jones live with sector wheel"
+          variant="iphone"
+        />
+        <DeviceFrame
+          src={shotTrading}
+          alt="Live commodities quotes: gold, silver, crude oil, natural gas and more with real-time changes"
+          variant="iphone"
+          class="feature__media-offset"
+        />
+      </Reveal>
+    </section>
+
+    <!-- ── Treemap (iPad, full width) ───────────────────────────────────── -->
+    <section class="showcase" id="heatmap">
+      <Reveal as="div" class="showcase__head">
+        <p class="eyebrow">Market-Cap Treemap</p>
+        <h2>The whole index. One glance.</h2>
+        <p>
+          A market-cap-weighted heatmap of nine major indices — S&amp;P 500, NASDAQ 100,
+          Dow, Russell 2000, FTSE 100, DAX 40, Nikkei 225, Hang Seng and Nifty 50 —
+          FX-normalized to US dollars so tiles are comparable across markets.
+          Timeframes from one day to year-to-date, with top gainers and losers per session.
+        </p>
+      </Reveal>
+      <Reveal as="div" class="showcase__media">
+        <DeviceFrame
+          src={shotHeatmap}
+          alt="Full S&P 500 market-cap treemap heatmap in FinBrio on iPad, colored by daily performance"
+          variant="ipad"
+          glow
+        />
+      </Reveal>
+    </section>
+
+    <!-- ── Smart Money ──────────────────────────────────────────────────── -->
+    <section class="feature feature--reverse" id="smart-money">
+      <Reveal as="div" class="feature__copy">
+        <p class="eyebrow">Smart Money &amp; Exposure</p>
+        <h2>See what they trade.<br />Not what they say.</h2>
+        <p>
+          Public disclosures, surfaced the moment they land: congressional STOCK Act
+          trades, House PTR filings, presidential OGE transactions, SEC insider buys,
+          and lobbying spend. Plus a tariff-exposure browser ranking 113+ countries
+          by US tariff rate with per-sector breakdowns.
+        </p>
+        <ul class="checklist">
+          <li>Congress &amp; House trades with member, chamber, amount and filing lag</li>
+          <li>Presidential transactions ≥ $100K from OGE Form 278-T filings</li>
+          <li>Copy-trades view — reconstruct any Congress member's disclosed portfolio</li>
+          <li>Insider cluster buys and quarter-over-quarter lobbying growth</li>
+          <li>Tariff exposure: 113+ countries with sector detail and plain-English context</li>
+        </ul>
+      </Reveal>
+      <Reveal as="div" class="feature__media feature__media--duo">
+        <DeviceFrame
+          src={shotOge}
+          alt="Presidential financial disclosures from OGE Form 278-T filings in FinBrio"
+          variant="iphone"
+        />
+        <DeviceFrame
+          src={shotInvesting}
+          alt="US tariff exposure table ranking countries by tariff rate, from Russia at 200% downward"
+          variant="iphone"
+          class="feature__media-offset"
+        />
+      </Reveal>
+    </section>
+
+    <!-- ── Macro ────────────────────────────────────────────────────────── -->
+    <section class="feature" id="macro">
+      <Reveal as="div" class="feature__copy">
+        <p class="eyebrow">Macro Intelligence</p>
+        <h2>Know the regime<br />before you trade it.</h2>
+        <p>
+          A market-stress meter, VIX and Fear &amp; Greed gauges, the yield
+          curve, sector rotation, and cross-asset correlations — distilled into
+          one dashboard that tells you whether it's a bullish tape, a chop-fest,
+          or something worse.
+        </p>
+        <ul class="checklist">
+          <li>Market regime read across 48 assets: bullish, bearish, quiet, chaotic</li>
+          <li>VIX term-structure detection — know when contango flips to backwardation</li>
+          <li>Historical crisis playbook — how each asset class behaved in past crises</li>
+          <li>Live US debt clock and high-impact economic calendar (FOMC, CPI, NFP)</li>
+          <li>AI macro briefings that explain the stress picture in plain English</li>
+        </ul>
+      </Reveal>
+      <Reveal as="div" class="feature__media feature__media--duo">
+        <DeviceFrame
+          src={shotMacro}
+          alt="FinBrio macro dashboard with market regime breakdown and VIX gauge reading 17.4"
+          variant="iphone"
+        />
+        <DeviceFrame
+          src={shotCrisis}
+          alt="Historical crisis playbook showing the US tariff war, Middle East escalation and Japan carry unwind with market outcomes"
+          variant="iphone"
+          class="feature__media-offset"
+        />
+      </Reveal>
+    </section>
+
+    <!-- ── Bento: everything else ───────────────────────────────────────── -->
+    <section class="bento-section" id="everything">
+      <Reveal as="div" class="bento-section__head">
+        <p class="eyebrow">And then some</p>
+        <h2>Every tool. No terminal required.</h2>
+      </Reveal>
+      <div class="bento">
+        {
+          bento.map((b) => (
+            <Reveal as="article" class={`bento__card ${b.span === "wide" ? "bento__card--wide" : ""}`}>
+              <span class="bento__icon"><Icon name={b.icon} size={20} /></span>
+              <h3>{b.title}</h3>
+              <p>{b.copy}</p>
+            </Reveal>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- ── Screens gallery ──────────────────────────────────────────────── -->
+    <section class="gallery-section" id="screens">
+      <Reveal as="div" class="gallery-section__head">
+        <p class="eyebrow">Inside the app</p>
+        <h2>Take the tour.</h2>
+        <p class="gallery-section__hint">Scroll sideways — every screen is the real app with live data.</p>
+      </Reveal>
+      <div class="gallery">
+        {
+          gallery.map((g) => (
+            <figure class="gallery__item">
+              <DeviceFrame src={g.src} alt={g.alt} variant="iphone" class="gallery__device" />
+              <figcaption>{g.caption}</figcaption>
+            </figure>
+          ))
+        }
+      </div>
+    </section>
+
+    <!-- ── Data sources ─────────────────────────────────────────────────── -->
+    <Reveal as="section" class="sources" id="sources">
+      <p class="eyebrow">No black box</p>
+      <h2 class="sources__title">Straight from the source.</h2>
+      <p class="sources__sub">
+        Every number in FinBrio traces back to a primary source — not a scraped rumor.
+      </p>
+      <div class="sources__row">
+        <span class="sources__chip">Yahoo Finance</span>
+        <span class="sources__chip">SEC EDGAR</span>
+        <span class="sources__chip">CFTC</span>
+        <span class="sources__chip">US Treasury</span>
+        <span class="sources__chip">USTR</span>
+        <span class="sources__chip">World Bank</span>
+        <span class="sources__chip">OGE Filings</span>
+        <span class="sources__chip">Senate LDA</span>
+      </div>
+    </Reveal>
+
+    <!-- ── Comparison ───────────────────────────────────────────────────── -->
+    <section class="compare" id="compare">
+      <Reveal as="div" class="compare__head">
+        <p class="eyebrow">The alternative is seven tabs</p>
+        <h2>Stop stitching it together yourself.</h2>
+      </Reveal>
+      <Reveal as="div" class="compare__wrap">
+        <table class="compare__table">
+          <thead>
+            <tr>
+              <th scope="col"><span class="visually-hidden">Capability</span></th>
+              <th scope="col">A pile of free sites</th>
+              <th scope="col">A pro terminal</th>
+              <th scope="col" class="compare__brand">FinBrio</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Live indices, commodities &amp; forex</th>
+              <td>Scattered across tabs</td>
+              <td class="compare__yes">✓</td>
+              <td class="compare__yes">✓</td>
+            </tr>
+            <tr>
+              <th scope="row">AI signals with entry, stop &amp; target</th>
+              <td class="compare__no">✗</td>
+              <td class="compare__no">✗</td>
+              <td class="compare__yes">✓</td>
+            </tr>
+            <tr>
+              <th scope="row">Congress, insider &amp; presidential trades</th>
+              <td>If you know where to dig</td>
+              <td>—</td>
+              <td class="compare__yes">✓</td>
+            </tr>
+            <tr>
+              <th scope="row">Tariff exposure, 113+ countries</th>
+              <td class="compare__no">✗</td>
+              <td class="compare__no">✗</td>
+              <td class="compare__yes">✓</td>
+            </tr>
+            <tr>
+              <th scope="row">Macro regime, VIX &amp; crisis playbook</th>
+              <td>Partial</td>
+              <td class="compare__yes">✓</td>
+              <td class="compare__yes">✓</td>
+            </tr>
+            <tr>
+              <th scope="row">Lives on your phone</th>
+              <td class="compare__yes">✓</td>
+              <td>Barely</td>
+              <td class="compare__yes">✓</td>
+            </tr>
+            <tr>
+              <th scope="row">Price</th>
+              <td>Free, but chaotic</td>
+              <td>$20K+/yr</td>
+              <td class="compare__yes">Free to start</td>
+            </tr>
+          </tbody>
+        </table>
+      </Reveal>
+    </section>
+
+    <!-- ── Pricing ──────────────────────────────────────────────────────── -->
+    <section class="pricing" id="pricing">
+      <Reveal as="div" class="pricing__head">
+        <p class="eyebrow">Pricing</p>
+        <h2>Start free. Upgrade when it pays for itself.</h2>
+      </Reveal>
+      <div class="pricing__grid">
+        <Reveal as="div" class="price-card">
+          <h3>Free</h3>
+          <p class="price-card__tag">Everything you need to watch the market</p>
+          <ul>
+            <li>46 indices, 23 commodities, 44 forex pairs — live</li>
+            <li>AI signals on strategies S1–S3</li>
+            <li>Power Moves 10X scanner + multibaggers</li>
+            <li>Congress, insider &amp; presidential trade tracking</li>
+            <li>Tariff exposure browser (113+ countries)</li>
+            <li>ETF explorer with RRG rotation</li>
+            <li>Macro dashboard, crisis playbook, debt clock &amp; calendars</li>
+            <li>Charts, backtests, news &amp; basic alerts</li>
+          </ul>
+        </Reveal>
+        <Reveal as="div" class="price-card price-card--featured">
+          <div class="price-card__badge">Most popular</div>
+          <h3>Pro</h3>
+          <p class="price-card__tag">For traders who act on the data</p>
+          <ul>
+            <li>Everything in Free</li>
+            <li>Market-cap treemap across 9 indices</li>
+            <li>Advanced signal strategies</li>
+            <li>Unlimited alerts + push notifications</li>
+            <li>Unlimited AI analyst notes</li>
+            <li>AI macro briefings</li>
+            <li>Best Setups dashboard</li>
+            <li>AI tariff exposure analysis per country</li>
+            <li>Advanced backtest filtering</li>
+            <li>API access</li>
+          </ul>
+        </Reveal>
+      </div>
+      <Reveal as="p" class="pricing__note">
+        Subscriptions are handled in-app at launch. Prices shown in the app store for your region.
+      </Reveal>
+    </section>
+
+    <!-- ── Manifesto (human voice) ──────────────────────────────────────── -->
+    <section class="manifesto">
+      <Reveal as="div" class="manifesto__inner">
+        <p class="eyebrow">Why we built it</p>
+        <p class="manifesto__lead">
+          The edge was never the data. It was having all of it in one place, fast enough to act on.
+        </p>
+        <p class="manifesto__body">
+          Congress files a trade. A tariff shifts. The VIX curve inverts. The macro regime turns.
+          Each of those lives on a different site, behind a different login, on a different delay —
+          and by the time you've stitched them together, the move is already priced in. FinBrio
+          started as one question: what if the whole picture fit on a single screen, in your pocket,
+          updating live? Everything above is our answer.
+        </p>
+      </Reveal>
+    </section>
+
+    <!-- ── FAQ ──────────────────────────────────────────────────────────── -->
+    <section class="faq-section" id="faq">
+      <Reveal as="div" class="faq-section__head">
+        <p class="eyebrow">FAQ</p>
+        <h2>Questions, answered.</h2>
+      </Reveal>
+      <Reveal as="div">
+        <Faq items={faqItems} />
+      </Reveal>
+    </section>
+
+    <!-- ── Final CTA + waitlist ─────────────────────────────────────────── -->
+    <Reveal as="section" class="final-cta" id="download">
+      <h2>Be first through the door.</h2>
+      <p>FinBrio is in private beta. Get an email the moment it hits the App Store and Google Play.</p>
+
+      <form class="waitlist" id="waitlist" novalidate>
+        <input
+          class="waitlist__input"
+          type="email"
+          name="email"
+          id="waitlist-email"
+          placeholder="you@email.com"
+          autocomplete="email"
+          aria-label="Email address"
+          required
+        />
+        <button class="waitlist__btn" type="submit">Notify me</button>
+      </form>
+      <p class="waitlist__msg" id="waitlist-msg" role="status" aria-live="polite" hidden></p>
+
+      <div class="final-cta__divider"><span>or grab it at launch</span></div>
+      <DownloadCta />
+    </Reveal>
+
+    <script is:inline>
+      (function () {
+        var form = document.getElementById("waitlist");
+        var input = document.getElementById("waitlist-email");
+        var msg = document.getElementById("waitlist-msg");
+        if (!form || !input || !msg) return;
+
+        // Same-origin in production (proxied by vercel.json → the FinBrio API).
+        var LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+        var WAITLIST = LOCAL ? "http://localhost:5001/api/waitlist" : "/api/waitlist";
+
+        function show(text, ok) {
+          msg.textContent = text;
+          msg.hidden = false;
+          msg.setAttribute("data-state", ok ? "ok" : "err");
+        }
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          var email = (input.value || "").trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            show("Please enter a valid email.", false);
+            return;
+          }
+          var btn = form.querySelector("button");
+          btn.disabled = true;
+          btn.textContent = "Adding…";
+
+          fetch(WAITLIST, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, source: "site" }),
+          })
+            .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+            .then(function () {
+              form.reset();
+              show("You're on the list. We'll be in touch at launch.", true);
+              btn.textContent = "Done ✓";
+            })
+            .catch(function () {
+              // Endpoint not deployed yet or offline — fall back to email so
+              // the intent is never lost.
+              show("Almost — email us at hello@finbrio.net and we'll add you.", false);
+              btn.disabled = false;
+              btn.textContent = "Notify me";
+            });
+        });
+      })();
+    </script>
+
+    <!-- ── Footer ───────────────────────────────────────────────────────── -->
     <footer class="site-footer">
-      <p>
-        <a
-          href="https://whimsical-viper-e07.notion.site/Monysa-Privacy-Policy-80062190796b4888a92b122d59836d68"
-          target="_blank"
-          rel="noopener noreferrer">Privacy Policy</a
-        >
-        <span aria-hidden="true"> · </span>
-        <a
-          href="https://whimsical-viper-e07.notion.site/Monysa-Support-c7331ad04c204cfbaf30cdc42b46f827?pvs=74"
-          target="_blank"
-          rel="noopener noreferrer">Support</a
-        >
+      <div class="site-footer__grid">
+        <div class="site-footer__brand">
+          <p class="site-footer__wordmark">Fin<span>Brio</span></p>
+          <p class="site-footer__tagline">
+            Global financial intelligence.<br />Coming soon to iOS &amp; Android.
+          </p>
+        </div>
+        <nav class="site-footer__col" aria-label="Product">
+          <h3>Product</h3>
+          <a href="#signals">AI Signals</a>
+          <a href="#scanner">10X Scanner</a>
+          <a href="#markets">Live Markets</a>
+          <a href="#heatmap">Treemap</a>
+          <a href="#smart-money">Smart Money</a>
+          <a href="#macro">Macro</a>
+          <a href="#pricing">Pricing</a>
+        </nav>
+        <nav class="site-footer__col" aria-label="Support">
+          <h3>Support</h3>
+          <a href="#faq">FAQ</a>
+          <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+          <a href="/support" target="_blank" rel="noopener">Contact &amp; Support</a>
+        </nav>
+        <div class="site-footer__col">
+          <h3>Data sources</h3>
+          <p class="site-footer__sources">
+            Yahoo Finance · SEC EDGAR · CFTC · US Treasury FiscalData · USTR Section 301 ·
+            World Bank · OGE Form 278-T · Senate LDA
+          </p>
+        </div>
+      </div>
+      <p class="site-footer__disclaimer">
+        FinBrio is an information and analytics tool. Nothing in the app or on this site is
+        financial advice. Signals, backtests and briefings are for informational purposes
+        only. Markets involve risk — always do your own research.
       </p>
       <p class="site-footer__copyright">&copy; {new Date().getFullYear()} FinBrio</p>
     </footer>
@@ -78,111 +816,1043 @@ const pillars = [
 
 <style>
   main {
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 24px;
+    overflow-x: clip;
   }
 
-  .hero {
-    min-height: 92vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
+  section {
+    scroll-margin-top: 76px;
   }
 
-  .hero__inner {
-    max-width: 720px;
-  }
-
-  .hero__eyebrow {
-    font-size: 14px;
+  .eyebrow {
+    font-size: 13px;
     font-weight: 700;
-    letter-spacing: 0.12em;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--accent);
+    margin: 0 0 var(--s4);
+  }
+
+  h2 {
+    font-size: clamp(28px, 4.6vw, 44px);
+    font-weight: 800;
+    line-height: 1.12;
+    letter-spacing: -0.015em;
+    color: var(--text-primary);
     margin: 0 0 var(--s5);
   }
 
+  /* ── Hero ── */
+  .hero {
+    position: relative;
+    padding: 72px 24px 88px;
+  }
+
+  .hero__bg {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+  }
+
+  /* Faint trading-grid — the backdrop of every price chart */
+  .hero__grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 80% 70% at 60% 30%, #000 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 70% at 60% 30%, #000 30%, transparent 80%);
+  }
+
+  /* Ghosted price line drawing across the hero */
+  .hero__chart {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.7;
+  }
+
+  .hero__chart-line {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 6px rgba(0, 212, 170, 0.4));
+    stroke-dasharray: 4200;
+    stroke-dashoffset: 4200;
+    animation: chart-draw 3.4s ease-out 0.2s forwards;
+  }
+
+  .hero__chart-area {
+    opacity: 0;
+    animation: chart-fill 1.6s ease-out 2.4s forwards;
+  }
+
+  .hero__depth {
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse 60% 50% at 75% 15%, rgba(0, 212, 170, 0.1), transparent 70%);
+  }
+
+  @keyframes chart-draw {
+    to { stroke-dashoffset: 0; }
+  }
+
+  @keyframes chart-fill {
+    to { opacity: 1; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero__chart-line {
+      animation: none;
+      stroke-dashoffset: 0;
+    }
+    .hero__chart-area {
+      animation: none;
+      opacity: 1;
+    }
+  }
+
+  .hero__inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 56px;
+    align-items: center;
+  }
+
   .hero__title {
-    font-size: clamp(40px, 8vw, 84px);
+    font-size: clamp(42px, 7.2vw, 76px);
     font-weight: 800;
-    line-height: 1.05;
-    letter-spacing: -0.02em;
+    line-height: 1.04;
+    letter-spacing: -0.025em;
     margin: 0 0 var(--s6);
     color: var(--text-primary);
   }
 
-  .hero__subtitle {
-    font-size: clamp(16px, 2.4vw, 22px);
-    color: var(--text-secondary);
-    margin: 0 0 var(--s8);
+  .hero__title-accent {
+    background: linear-gradient(100deg, var(--accent), #7ef7dd);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 
-  .pillars {
+  .hero__subtitle {
+    font-size: clamp(16px, 2.2vw, 19px);
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0 0 var(--s7);
+    max-width: 54ch;
+  }
+
+  .hero__cta {
+    scroll-margin-top: 100px;
+  }
+
+  .hero__audience {
+    margin: var(--s5) 0 0;
+    font-size: 13px;
+    color: var(--text-faint);
+  }
+
+  .hero__device {
+    display: flex;
+    justify-content: center;
+    perspective: 1400px;
+  }
+
+  .hero__device :global(.device) {
+    transform: rotateY(-10deg) rotateX(3deg);
+    transition: transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .hero__device:hover :global(.device) {
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hero__device :global(.device) {
+      transform: none;
+      transition: none;
+    }
+  }
+
+  @media (min-width: 900px) {
+    .hero__inner {
+      grid-template-columns: 1.15fr 0.85fr;
+    }
+    .hero {
+      padding: 96px 24px 110px;
+    }
+  }
+
+  /* ── Stats ── */
+  .stats {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 56px 24px;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s6);
+    text-align: center;
+  }
+
+  .stats__value {
+    font-family: var(--font-mono);
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+  }
+
+  .stats__label {
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  @media (min-width: 760px) {
+    .stats {
+      grid-template-columns: repeat(6, 1fr);
+      padding: 72px 24px;
+    }
+  }
+
+  /* ── Personas ── */
+  .personas {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 72px 24px;
+  }
+
+  .personas__head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto var(--s8);
+  }
+
+  .personas__grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 2px;
-    background: var(--border);
-    border-radius: 24px;
-    overflow: hidden;
-    margin-bottom: 120px;
+    gap: var(--s5);
   }
 
-  @media (min-width: 720px) {
-    .pillars {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .pillar:first-child {
-      grid-column: 1 / -1;
+  @media (min-width: 860px) {
+    .personas__grid {
+      grid-template-columns: repeat(3, 1fr);
     }
   }
 
-  .pillar {
+  .persona {
     background: var(--surface);
-    padding: var(--s8);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: var(--s7);
   }
 
-  .pillar__index {
-    font-size: 13px;
-    font-weight: 700;
+  .persona:hover {
+    border-color: rgba(0, 212, 170, 0.45);
+  }
+
+  .persona--featured {
+    border-color: rgba(0, 212, 170, 0.4);
+    background: linear-gradient(180deg, rgba(0, 212, 170, 0.05), var(--surface) 55%);
+  }
+
+  .persona__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(0, 212, 170, 0.22);
     color: var(--accent);
-    letter-spacing: 0.08em;
   }
 
-  .pillar__title {
-    font-size: 26px;
+  .persona h3 {
+    margin: var(--s4) 0 2px;
+    font-size: 18px;
     font-weight: 700;
-    margin: var(--s3) 0 var(--s3);
     color: var(--text-primary);
   }
 
-  .pillar__copy {
-    font-size: 15px;
-    line-height: 1.6;
-    color: var(--text-secondary);
-    margin: 0;
-    max-width: 52ch;
+  .persona > p {
+    margin: 0 0 var(--s5);
+    font-size: 13.5px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
-  .site-footer {
+  .persona ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+
+  .persona li {
+    position: relative;
+    padding-left: 20px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .persona li::before {
+    content: "→";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* ── Sources strip ── */
+  .sources {
     text-align: center;
-    padding: var(--s8) 0 64px;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 72px 24px;
+  }
+
+  .sources__title {
+    margin-bottom: var(--s3);
+  }
+
+  .sources__sub {
+    color: var(--text-secondary);
+    font-size: 15px;
+    margin: 0 0 var(--s7);
+  }
+
+  .sources__row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--s3);
+  }
+
+  .sources__chip {
+    padding: 9px 18px;
+    border-radius: 100px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+  }
+
+  /* ── Comparison ── */
+  .compare {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 72px 24px;
+  }
+
+  .compare__head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto var(--s8);
+  }
+
+  .compare__wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--surface);
+  }
+
+  .compare__table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 640px;
+    font-size: 14px;
+  }
+
+  .compare__table th,
+  .compare__table td {
+    padding: var(--s5) var(--s6);
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .compare__table tbody tr:last-child th,
+  .compare__table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .compare__table thead th {
+    font-size: 12.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+  }
+
+  .compare__table thead .compare__brand {
+    color: var(--accent);
+  }
+
+  .compare__table tbody th {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .compare__table td {
+    color: var(--text-muted);
+  }
+
+  .compare__table td.compare__yes {
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .compare__table td.compare__no {
+    color: var(--danger);
+    font-weight: 700;
+  }
+
+  .compare__table td:last-child,
+  .compare__table thead th:last-child {
+    background: rgba(0, 212, 170, 0.05);
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  /* ── Alternating features ── */
+  .feature {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 72px 24px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 48px;
+    align-items: center;
+  }
+
+  .feature__copy p {
+    color: var(--text-secondary);
+    font-size: 15.5px;
+    line-height: 1.65;
+    margin: 0 0 var(--s5);
+    max-width: 56ch;
+  }
+
+  .feature__media {
+    display: flex;
+    justify-content: center;
+  }
+
+  .feature__media--duo {
+    gap: var(--s5);
+    align-items: flex-start;
+  }
+
+  .feature__media--duo :global(.device) {
+    /* Two frames side-by-side must never exceed the viewport on small phones */
+    max-width: min(250px, 42vw);
+  }
+
+  .feature__media-offset {
+    margin-top: 48px;
+  }
+
+  /* Signal section: native card layered with the signals-board phone */
+  .feature__media--signal {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s6);
+  }
+
+  .feature__media--signal :global(.feature__media-phone) {
+    max-width: 220px;
+  }
+
+  @media (min-width: 900px) {
+    .feature__media--signal {
+      display: block;
+      min-height: 500px;
+    }
+    .feature__media--signal :global(.feature__media-phone) {
+      position: absolute;
+      top: 0;
+      right: 4%;
+      max-width: 224px;
+      z-index: 1;
+    }
+    .feature__media--signal :global(.sigcard) {
+      position: absolute;
+      left: 0;
+      bottom: 0;
+      z-index: 2;
+    }
+  }
+
+  @media (min-width: 900px) {
+    .feature {
+      grid-template-columns: 1fr 1fr;
+      padding: 96px 24px;
+    }
+    .feature--reverse .feature__copy {
+      order: 2;
+    }
+    .feature--reverse .feature__media {
+      order: 1;
+    }
+  }
+
+  .checklist {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+
+  .checklist li {
+    position: relative;
+    padding-left: 28px;
+    color: var(--text-secondary);
+    font-size: 14.5px;
+    line-height: 1.55;
+  }
+
+  .checklist li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent-dim-18);
+    border: 1px solid rgba(0, 212, 170, 0.5);
+  }
+
+  .checklist li::after {
+    content: "";
+    position: absolute;
+    left: 4.5px;
+    top: 7.5px;
+    width: 7px;
+    height: 4px;
+    border-left: 1.5px solid var(--accent);
+    border-bottom: 1.5px solid var(--accent);
+    transform: rotate(-45deg);
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    vertical-align: 1px;
+  }
+
+  .pill--buy   { background: var(--accent-dim-18); color: var(--accent); }
+  .pill--hold  { background: var(--warning-dim);   color: var(--warning); }
+  .pill--sell  { background: var(--danger-dim);    color: var(--danger); }
+
+  /* ── iPad showcase ── */
+  .showcase {
+    padding: 88px 24px;
+    background: linear-gradient(180deg, transparent, rgba(0, 212, 170, 0.035) 40%, transparent);
+    text-align: center;
+  }
+
+  .showcase__head {
+    max-width: 720px;
+    margin: 0 auto var(--s8);
+  }
+
+  .showcase__head p {
+    color: var(--text-secondary);
+    font-size: 15.5px;
+    line-height: 1.65;
+    margin: 0;
+  }
+
+  .showcase__media {
+    display: flex;
+    justify-content: center;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  /* ── Bento grid ── */
+  .bento-section {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 88px 24px;
+  }
+
+  .bento-section__head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto var(--s8);
+  }
+
+  .bento {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s4);
+  }
+
+  @media (min-width: 640px) {
+    .bento {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .bento__card--wide {
+      grid-column: span 2;
+    }
+  }
+
+  @media (min-width: 960px) {
+    .bento {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+
+  .bento__card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: var(--s6);
+  }
+
+  /* Wide tiles read as an editorial highlight — bigger copy, roomier. */
+  .bento__card--wide {
+    background: linear-gradient(140deg, rgba(0, 212, 170, 0.05), var(--surface) 60%);
+  }
+
+  /* Border-only hover — transform hovers would fight the Reveal entrance
+     animation on the same element */
+  .bento__card:hover {
+    border-color: rgba(0, 212, 170, 0.45);
+  }
+
+  .bento__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(0, 212, 170, 0.2);
+    color: var(--accent);
+  }
+
+  .bento__card h3 {
+    margin: var(--s3) 0 var(--s2);
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+  }
+
+  .bento__card p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--text-secondary);
+  }
+
+  /* ── Gallery ── */
+  .gallery-section {
+    padding: 88px 0;
+    background: linear-gradient(180deg, transparent, rgba(0, 212, 170, 0.03) 45%, transparent);
+  }
+
+  .gallery-section__head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto var(--s7);
+    padding: 0 24px;
+  }
+
+  .gallery-section__hint {
+    color: var(--text-faint);
+    font-size: 13px;
+    margin: 0;
+  }
+
+  .gallery {
+    display: flex;
+    gap: var(--s6);
+    overflow-x: auto;
+    padding: var(--s5) max(24px, calc((100vw - 1100px) / 2)) var(--s6);
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  .gallery__item {
+    flex: 0 0 auto;
+    margin: 0;
+    scroll-snap-align: center;
+    text-align: center;
+  }
+
+  .gallery :global(.gallery__device) {
+    max-width: 230px;
+  }
+
+  .gallery__item figcaption {
+    margin-top: var(--s4);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  /* ── Pricing ── */
+  .pricing {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 88px 24px;
+  }
+
+  .pricing__head {
+    text-align: center;
+    max-width: 640px;
+    margin: 0 auto var(--s8);
+  }
+
+  .pricing__grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s5);
+    align-items: stretch;
+  }
+
+  /* Two tiers only — Free and Pro. The app has no third tier; don't add one. */
+  @media (min-width: 860px) {
+    .pricing__grid {
+      grid-template-columns: repeat(2, 1fr);
+      max-width: 780px;
+      margin: 0 auto;
+    }
+  }
+
+  .price-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: var(--s7);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .price-card--featured {
+    border-color: rgba(0, 212, 170, 0.55);
+    box-shadow: 0 0 44px rgba(0, 212, 170, 0.12);
+  }
+
+  .price-card__badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--accent);
+    color: #000;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 4px 14px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+
+  .price-card h3 {
+    margin: 0 0 2px;
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text-primary);
+  }
+
+  .price-card__tag {
+    margin: 0 0 var(--s5);
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .price-card ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+  }
+
+  .price-card li {
+    position: relative;
+    padding-left: 22px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+  }
+
+  .price-card li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .pricing__note {
+    text-align: center;
+    margin: var(--s7) 0 0;
+    font-size: 12.5px;
+    color: var(--text-faint);
+  }
+
+  /* ── FAQ section ── */
+  .faq-section {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 88px 24px;
+  }
+
+  .faq-section__head {
+    text-align: center;
+    margin-bottom: var(--s8);
+  }
+
+  /* ── Final CTA ── */
+  .final-cta {
+    text-align: center;
+    padding: 110px 24px;
+    background:
+      radial-gradient(ellipse 640px 360px at 50% 100%, rgba(0, 212, 170, 0.14), transparent 70%);
+  }
+
+  .final-cta h2 {
+    margin-bottom: var(--s3);
+  }
+
+  .final-cta p {
+    color: var(--text-secondary);
+    margin: 0 0 var(--s6);
+  }
+
+  /* ── Manifesto ── */
+  .manifesto {
+    padding: 96px 24px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, transparent, rgba(0, 212, 170, 0.02) 50%, transparent);
+  }
+
+  .manifesto__inner {
+    max-width: 760px;
+    margin: 0 auto;
+    text-align: center;
+  }
+
+  .manifesto__lead {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3.6vw, 34px);
+    font-weight: 500;
+    line-height: 1.3;
+    letter-spacing: -0.015em;
+    color: var(--text-primary);
+    margin: 0 0 var(--s6);
+    text-wrap: balance;
+  }
+
+  .manifesto__body {
+    font-size: 16px;
+    line-height: 1.75;
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  /* ── Waitlist ── */
+  .waitlist {
+    display: flex;
+    gap: var(--s3);
+    max-width: 440px;
+    margin: 0 auto var(--s3);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .waitlist__input {
+    flex: 1 1 240px;
+    min-width: 0;
+    padding: 13px 18px;
+    border-radius: 100px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 15px;
+    font-family: inherit;
+  }
+
+  .waitlist__input::placeholder { color: var(--text-faint); }
+
+  .waitlist__input:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
+  .waitlist__btn {
+    padding: 13px 26px;
+    border-radius: 100px;
+    border: none;
+    background: var(--accent);
+    color: #000;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+  }
+
+  .waitlist__btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 22px rgba(0, 212, 170, 0.35);
+  }
+
+  .waitlist__btn:disabled { opacity: 0.6; cursor: default; }
+
+  .waitlist__msg {
+    font-size: 13.5px;
+    margin: 0 0 var(--s6);
+    min-height: 1.2em;
+  }
+
+  .waitlist__msg[data-state="ok"] { color: var(--accent); }
+  .waitlist__msg[data-state="err"] { color: var(--warning); }
+
+  .final-cta__divider {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    max-width: 320px;
+    margin: var(--s6) auto var(--s6);
+    color: var(--text-faint);
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .final-cta__divider::before,
+  .final-cta__divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── Footer ── */
+  .site-footer {
+    padding: 64px 24px 56px;
     border-top: 1px solid var(--border);
   }
 
-  .site-footer a {
-    color: var(--text-secondary);
-    text-decoration: none;
+  .site-footer__grid {
+    max-width: 1100px;
+    margin: 0 auto var(--s8);
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--s7);
   }
 
-  .site-footer a:hover {
+  @media (min-width: 760px) {
+    .site-footer__grid {
+      grid-template-columns: 1.4fr 1fr 1fr 1.4fr;
+    }
+  }
+
+  .site-footer__wordmark {
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 var(--s3);
+  }
+
+  .site-footer__wordmark span {
+    color: var(--accent);
+  }
+
+  .site-footer__tagline {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  .site-footer__col h3 {
+    margin: 0 0 var(--s4);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+  }
+
+  .site-footer__col a {
+    display: block;
+    margin-bottom: var(--s3);
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 13.5px;
+    transition: color 0.15s ease;
+  }
+
+  .site-footer__col a:hover {
     color: var(--text-primary);
   }
 
+  .site-footer__sources {
+    margin: 0;
+    font-size: 12.5px;
+    line-height: 1.8;
+    color: var(--text-faint);
+  }
+
+  .site-footer__disclaimer {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding-top: var(--s6);
+    border-top: 1px solid var(--border);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--text-faint);
+  }
+
   .site-footer__copyright {
+    max-width: 1100px;
+    margin: var(--s4) auto 0;
     color: var(--text-faint);
     font-size: 13px;
-    margin-top: var(--s3);
   }
 </style>

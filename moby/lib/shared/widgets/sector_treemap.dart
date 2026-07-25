@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../data/models/treemap_stock.dart';
 import '../../core/theme/app_palette.dart';
 import 'sparkline_chart.dart';
@@ -38,9 +39,9 @@ class _SectorTreemapState extends State<SectorTreemap> {
     final insets = MediaQuery.of(context).padding;
     const cardWidth = 260.0;
     // Tooltip height grows with optional fields (sparkline, day-range, 52w
-    // bar, pre/post pill). 280 keeps the placement math reasonable for the
-    // common case where most of those are present.
-    const estCardHeight = 280.0;
+    // bar, pre/post pill, strong-buying chip) plus the "View details" button.
+    // 340 keeps the placement math reasonable for the common case.
+    const estCardHeight = 340.0;
     const gap = 12.0;
     const margin = 10.0;
 
@@ -77,7 +78,17 @@ class _SectorTreemapState extends State<SectorTreemap> {
             width: cardWidth,
             child: Material(
               color: Colors.transparent,
-              child: _TooltipCard(stock: stock, marketState: widget.marketState, onClose: _hideTooltip),
+              child: _TooltipCard(
+                stock: stock,
+                marketState: widget.marketState,
+                onClose: _hideTooltip,
+                onViewDetails: () {
+                  _hideTooltip();
+                  context.push(
+                    '/asset/${stock.symbol}?name=${Uri.encodeComponent(stock.name)}',
+                  );
+                },
+              ),
             ),
           ),
         ],
@@ -355,10 +366,14 @@ class _StockTile extends StatelessWidget {
     final hasRoom = rect.width >= 14 && rect.height >= 10;
     // Stack %change under the symbol only when there's vertical room for both.
     final showChange = rect.height >= 30 && rect.width >= 36;
+    // Gold ring marks strong 30-min buying volume (US-002).
+    final ring = stock.buyVolumeSignal;
     return Container(
       decoration: BoxDecoration(
         color: color,
-        border: Border.all(color: Colors.black.withValues(alpha: 0.45), width: 0.5),
+        border: ring
+            ? Border.all(color: const Color(0xFFFFC107), width: 2)
+            : Border.all(color: Colors.black.withValues(alpha: 0.45), width: 0.5),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
       alignment: Alignment.center,
@@ -401,7 +416,13 @@ class _TooltipCard extends StatelessWidget {
   final TreemapStock stock;
   final String? marketState;
   final VoidCallback onClose;
-  const _TooltipCard({required this.stock, this.marketState, required this.onClose});
+  final VoidCallback onViewDetails;
+  const _TooltipCard({
+    required this.stock,
+    this.marketState,
+    required this.onClose,
+    required this.onViewDetails,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -517,6 +538,51 @@ class _TooltipCard extends StatelessWidget {
             _marketCapRow(c),
             const SizedBox(height: 6),
             _row(c, 'Sector', stock.sector),
+            if (stock.buyVolumeSignal) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0x1FFFC107),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.bolt_rounded, size: 14, color: Color(0xFFFFC107)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Strong buying (30m)',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFFFC107),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: TextButton.icon(
+                onPressed: onViewDetails,
+                style: TextButton.styleFrom(
+                  backgroundColor: c.accent.withValues(alpha: 0.12),
+                  foregroundColor: c.accent,
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                icon: const Icon(Icons.candlestick_chart_rounded, size: 18),
+                label: const Text(
+                  'View details',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
           ],
         ),
       ),

@@ -80,7 +80,7 @@ export function AppShell() {
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="sidebar-logo-dot" />
-          MONY<span>SA</span>
+          Fin<span>Brio</span>
         </div>
         <nav>
           {NAV.map((n) => (

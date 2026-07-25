@@ -1,0 +1,214 @@
+---
+// Live global-indices board. Server-renders the index names (so it's never
+// empty / never fake), then fills real price + % change from the same API the
+// app uses. "LIVE" badge only appears once real data lands.
+const indices = [
+  { sym: "^GSPC", flag: "🇺🇸", name: "S&P 500" },
+  { sym: "^IXIC", flag: "🇺🇸", name: "NASDAQ" },
+  { sym: "^DJI", flag: "🇺🇸", name: "Dow Jones" },
+  { sym: "^RUT", flag: "🇺🇸", name: "Russell 2000" },
+  { sym: "^FTSE", flag: "🇬🇧", name: "FTSE 100" },
+  { sym: "^GDAXI", flag: "🇩🇪", name: "DAX" },
+  { sym: "^N225", flag: "🇯🇵", name: "Nikkei 225" },
+  { sym: "^HSI", flag: "🇭🇰", name: "Hang Seng" },
+];
+---
+
+<section class="board" id="markets-live" aria-label="Live global markets">
+  <div class="board__head">
+    <p class="eyebrow">Live, right now</p>
+    <h2>The whole world's markets, moving.</h2>
+    <span class="board__live" id="board-live" hidden>
+      <span class="board__live-dot"></span>LIVE
+    </span>
+    <span class="board__stale" id="board-stale" hidden>Live data unavailable</span>
+  </div>
+  <div class="board__grid">
+    {
+      indices.map((i) => (
+        <div class="board__cell" data-symbol={i.sym}>
+          <div class="board__row">
+            <span class="board__flag">{i.flag}</span>
+            <span class="board__name">{i.name}</span>
+          </div>
+          <div class="board__price num" data-field="price">—</div>
+          <div class="board__chg num" data-field="chg">—</div>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<script is:inline>
+  (function () {
+    // Same-origin in production (proxied by vercel.json → the FinBrio API).
+    // First-party requests survive ad-blockers and need no CORS at all.
+    var LOCAL = location.hostname === "localhost" || location.hostname === "127.0.0.1";
+    var QUOTES = LOCAL ? "http://localhost:5001/api/trading/quotes" : "/api/quotes";
+
+    fetch(QUOTES)
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(function (data) {
+        var bySym = {};
+        (data.quotes || []).forEach(function (q) { bySym[q.symbol] = q; });
+        var filled = 0;
+        document.querySelectorAll("#markets-live .board__cell").forEach(function (cell) {
+          var q = bySym[cell.getAttribute("data-symbol")];
+          if (!q || q.price == null || q.changePercent == null) return;
+          filled++;
+          var priceEl = cell.querySelector('[data-field="price"]');
+          var chgEl = cell.querySelector('[data-field="chg"]');
+          priceEl.textContent = q.price.toLocaleString(undefined, {
+            minimumFractionDigits: 2, maximumFractionDigits: 2,
+          });
+          var v = q.changePercent;
+          chgEl.textContent = (v >= 0 ? "+" : "") + v.toFixed(2) + "%";
+          chgEl.classList.add(v >= 0 ? "board__chg--up" : "board__chg--dn");
+        });
+        if (filled >= 4) {
+          var badge = document.getElementById("board-live");
+          if (badge) badge.hidden = false;
+        } else {
+          fail();
+        }
+      })
+      .catch(fail);
+
+    // Never fail silently — a board of dashes with no explanation looks broken.
+    function fail() {
+      var s = document.getElementById("board-stale");
+      if (s) s.hidden = false;
+    }
+  })();
+</script>
+
+<style>
+  .board {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 72px 24px;
+  }
+
+  .board__head {
+    display: flex;
+    align-items: center;
+    gap: var(--s4);
+    flex-wrap: wrap;
+    margin-bottom: var(--s7);
+  }
+
+  .board__head .eyebrow {
+    width: 100%;
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .board__head h2 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: clamp(24px, 4vw, 38px);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    color: var(--text-primary);
+  }
+
+  .board__live {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 100px;
+    border: 1px solid rgba(0, 212, 170, 0.3);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+  }
+
+  .board__live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: board-pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes board-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .board__stale {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 100px;
+    border: 1px solid var(--border-strong);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+
+  .board__grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+
+  @media (min-width: 640px) { .board__grid { grid-template-columns: repeat(4, 1fr); } }
+
+  .board__cell {
+    background: var(--surface);
+    padding: 16px 18px;
+    transition: background 0.15s ease;
+    cursor: crosshair; /* trading-terminal motif */
+  }
+
+  .board__cell:hover { background: var(--surface-elevated, #141414); }
+
+  .board__row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+  }
+
+  .board__flag { font-size: 14px; }
+
+  .board__name {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+
+  .board__price {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.02em;
+  }
+
+  .board__chg {
+    margin-top: 3px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-faint);
+  }
+
+  .board :global(.board__chg--up) { color: var(--positive); }
+  .board :global(.board__chg--dn) { color: var(--danger); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .board__live-dot { animation: none; }
+  }
+</style>

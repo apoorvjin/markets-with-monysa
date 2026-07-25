@@ -3,10 +3,12 @@ import { devicePlanMap, persistPlan, type DevicePlan } from "../plan-enforcement
 
 const REVENUECAT_WEBHOOK_SECRET = process.env.REVENUECAT_WEBHOOK_SECRET;
 
+// Identifier-agnostic: ANY active entitlement = Pro. We must NOT match a
+// specific entitlement id here — if the RevenueCat dashboard entitlement is
+// renamed, a paying user would otherwise be mapped to Free and get 403s on
+// plan-gated endpoints. Mirrors EntitlementService.updateFromCustomerInfo.
 function entitlementsToPlan(entitlementIds: string[]): DevicePlan {
-  if (entitlementIds.includes("enterprise")) return "enterprise";
-  if (entitlementIds.includes("pro") || entitlementIds.includes("insight")) return "pro";
-  return "free";
+  return entitlementIds.length > 0 ? "pro" : "free";
 }
 
 export function registerBillingRoutes(app: Express): void {

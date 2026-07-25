@@ -1,0 +1,91 @@
+---
+export interface FaqItem {
+  q: string;
+  a: string;
+}
+
+interface Props {
+  items: FaqItem[];
+}
+
+const { items } = Astro.props;
+---
+
+<div class="faq">
+  {
+    items.map((item) => (
+      <details class="faq__item">
+        <summary>
+          {item.q}
+          <svg class="faq__chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+        </summary>
+        <p>{item.a}</p>
+      </details>
+    ))
+  }
+</div>
+
+<style>
+  .faq {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  .faq__item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 0 var(--s6);
+    transition: border-color 0.15s ease;
+  }
+
+  .faq__item:hover {
+    border-color: var(--border-strong);
+  }
+
+  .faq__item[open] {
+    border-color: rgba(0, 212, 170, 0.35);
+  }
+
+  summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    cursor: pointer;
+    list-style: none;
+    padding: var(--s5) 0;
+    font-size: 15.5px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq__chevron {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+  }
+
+  .faq__item[open] .faq__chevron {
+    transform: rotate(180deg);
+    color: var(--accent);
+  }
+
+  .faq__item p {
+    margin: 0;
+    padding: 0 0 var(--s5);
+    color: var(--text-secondary);
+    font-size: 14.5px;
+    line-height: 1.65;
+    max-width: 64ch;
+  }
+</style>

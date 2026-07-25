@@ -20,6 +20,7 @@ import pLimit from "p-limit";
 import { yahooProvider } from "./providers";
 import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
 import { fetchSp500Constituents, fetchYahooQuoteSummary, fetchYahooQuoteSummaryBatch } from "./routes/heatmap";
+import { INDEX_SYMBOLS } from "./data/index_constituents";
 import { fetchInsiderClusters, KNOWN_NAMES } from "./routes/quiver";
 import { fetchBatch } from "./routes/shared";
 import { isLeader } from "./lib/leader";
@@ -7482,113 +7483,232 @@ export function createTradingRouter(): Router {
     }
   });
 
-  // GET /api/trading/earnings-calendar?days=15
-  const EARNINGS_SYMBOLS = [
-    { symbol: "AAPL", name: "Apple", sector: "Technology" },
-    { symbol: "MSFT", name: "Microsoft", sector: "Technology" },
-    { symbol: "NVDA", name: "NVIDIA", sector: "Technology" },
-    { symbol: "GOOGL", name: "Alphabet", sector: "Technology" },
-    { symbol: "AMZN", name: "Amazon", sector: "Consumer Disc." },
-    { symbol: "META", name: "Meta", sector: "Technology" },
-    { symbol: "TSLA", name: "Tesla", sector: "Consumer Disc." },
-    { symbol: "JPM", name: "JPMorgan Chase", sector: "Financials" },
-    { symbol: "V", name: "Visa", sector: "Financials" },
-    { symbol: "XOM", name: "ExxonMobil", sector: "Energy" },
-    { symbol: "JNJ", name: "Johnson & Johnson", sector: "Healthcare" },
-    { symbol: "WMT", name: "Walmart", sector: "Consumer Staples" },
-    { symbol: "PG", name: "Procter & Gamble", sector: "Consumer Staples" },
-    { symbol: "MA", name: "Mastercard", sector: "Financials" },
-    { symbol: "UNH", name: "UnitedHealth", sector: "Healthcare" },
-    { symbol: "HD", name: "Home Depot", sector: "Consumer Disc." },
-    { symbol: "CVX", name: "Chevron", sector: "Energy" },
-    { symbol: "LLY", name: "Eli Lilly", sector: "Healthcare" },
-    { symbol: "ABBV", name: "AbbVie", sector: "Healthcare" },
-    { symbol: "MRK", name: "Merck", sector: "Healthcare" },
-    { symbol: "BAC", name: "Bank of America", sector: "Financials" },
-    { symbol: "PFE", name: "Pfizer", sector: "Healthcare" },
-    { symbol: "KO", name: "Coca-Cola", sector: "Consumer Staples" },
-    { symbol: "AVGO", name: "Broadcom", sector: "Technology" },
-    { symbol: "COST", name: "Costco", sector: "Consumer Staples" },
-    { symbol: "DIS", name: "Disney", sector: "Comm. Services" },
-    { symbol: "NFLX", name: "Netflix", sector: "Comm. Services" },
-    { symbol: "AMD", name: "AMD", sector: "Technology" },
-    { symbol: "INTC", name: "Intel", sector: "Technology" },
-    { symbol: "CSCO", name: "Cisco", sector: "Technology" },
-    { symbol: "ORCL", name: "Oracle", sector: "Technology" },
-    { symbol: "IBM", name: "IBM", sector: "Technology" },
-    { symbol: "CRM", name: "Salesforce", sector: "Technology" },
-    { symbol: "ADBE", name: "Adobe", sector: "Technology" },
-    { symbol: "PYPL", name: "PayPal", sector: "Financials" },
-    { symbol: "UBER", name: "Uber", sector: "Technology" },
-    { symbol: "ABNB", name: "Airbnb", sector: "Consumer Disc." },
-    { symbol: "SPOT", name: "Spotify", sector: "Comm. Services" },
-    { symbol: "GS", name: "Goldman Sachs", sector: "Financials" },
-    { symbol: "MS", name: "Morgan Stanley", sector: "Financials" },
-    { symbol: "C", name: "Citigroup", sector: "Financials" },
-    { symbol: "WFC", name: "Wells Fargo", sector: "Financials" },
-    { symbol: "RTX", name: "RTX Corp", sector: "Industrials" },
-    { symbol: "BA", name: "Boeing", sector: "Industrials" },
-    { symbol: "CAT", name: "Caterpillar", sector: "Industrials" },
-    { symbol: "GE", name: "GE Aerospace", sector: "Industrials" },
-    { symbol: "F", name: "Ford", sector: "Consumer Disc." },
-    { symbol: "GM", name: "General Motors", sector: "Consumer Disc." },
-    { symbol: "SBUX", name: "Starbucks", sector: "Consumer Disc." },
-    { symbol: "MCD", name: "McDonald's", sector: "Consumer Disc." },
-    { symbol: "NKE", name: "Nike", sector: "Consumer Disc." },
-    { symbol: "TGT", name: "Target", sector: "Consumer Disc." },
-    { symbol: "T", name: "AT&T", sector: "Comm. Services" },
-    { symbol: "VZ", name: "Verizon", sector: "Comm. Services" },
-    { symbol: "CMCSA", name: "Comcast", sector: "Comm. Services" },
-  ];
+  // GET /api/trading/earnings-calendar?days=15&index=sp500
+  // Universe = constituents of a major index (default S&P 500, fetched live from the public
+  // CSV — no hardcoded ticker list). Nasdaq's keyless calendar supplies the report dates,
+  // market cap, and EPS estimates; we keep only rows whose symbol is in the index universe.
   const _earningsCache = new Map<string, { data: unknown; ts: number }>();
   const EARNINGS_TTL = 6 * 60 * 60 * 1000;
+  const EARNINGS_INDICES = new Set(["sp500", "ndx", "dji"]);
+
+  type EarningsRow = {
+    symbol: string;
+    name: string;
+    sector: string;
+    earningsDate: string;
+    marketCap: number | null;
+    marketCapFormatted: string | null;
+    epsForecast: string | null;
+    lastYearEps: string | null;
+    epsGrowthPct: number | null;
+    numEstimates: string | null;
+    time: string;
+  };
+  type EarningsUniverse = { match: Set<string>; meta: Map<string, { name?: string; sector?: string }> };
+  const _universeCache = new Map<string, { data: EarningsUniverse; ts: number }>();
+  const UNIVERSE_TTL = 24 * 60 * 60 * 1000;
+
+  // Build the symbol universe for an index. S&P 500 comes with names + GICS sectors from the
+  // live CSV; other indices contribute symbols only (name falls back to the Nasdaq row).
+  async function getEarningsUniverse(index: string): Promise<EarningsUniverse> {
+    const cached = _universeCache.get(index);
+    if (cached && Date.now() - cached.ts < UNIVERSE_TTL) return cached.data;
+
+    const match = new Set<string>();
+    const meta = new Map<string, { name?: string; sector?: string }>();
+    const add = (sym: string, info?: { name?: string; sector?: string }) => {
+      const s = sym.trim().toUpperCase();
+      if (!s) return;
+      match.add(s);
+      match.add(s.replace("-", ".")); // Nasdaq uses dots for class shares (BRK-B ↔ BRK.B)
+      if (info) meta.set(s, info);
+    };
+
+    if (index === "sp500") {
+      const constituents = await fetchSp500Constituents();
+      for (const c of constituents) add(c.symbol, { name: c.name, sector: c.sector });
+    } else {
+      for (const sym of INDEX_SYMBOLS[index] ?? []) add(sym);
+    }
+
+    const data: EarningsUniverse = { match, meta };
+    _universeCache.set(index, { data, ts: Date.now() });
+    return data;
+  }
+
+  const parseMarketCap = (s?: string): number | null => {
+    if (!s) return null;
+    const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const fmtMarketCap = (n: number | null): string | null => {
+    if (n == null) return null;
+    if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
+    return `$${n.toFixed(0)}`;
+  };
+  const normEarningsTime = (t?: string): string => {
+    const v = (t ?? "").toLowerCase();
+    if (v.includes("pre-market")) return "pre-market";
+    if (v.includes("after-hours") || v.includes("post-market")) return "after-hours";
+    return "";
+  };
+  // Nasdaq formats negative EPS with parentheses, e.g. "($0.15)".
+  const parseEps = (s?: string | null): number | null => {
+    if (!s) return null;
+    const neg = s.includes("(");
+    const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(n)) return null;
+    return neg ? -n : n;
+  };
+  // YoY consensus growth: (estimate − last-year actual) / |last-year|. Null when last year
+  // is missing or zero (percentage would be undefined/misleading).
+  const epsGrowthPct = (est?: string | null, ly?: string | null): number | null => {
+    const e = parseEps(est);
+    const l = parseEps(ly);
+    if (e == null || l == null || l === 0) return null;
+    return Math.round(((e - l) / Math.abs(l)) * 100);
+  };
+
+  // Nasdaq earnings calendar — keyless, per-date, no shared quota. Primary source.
+  // (Yahoo's calendarEvents quoteSummary is blocked on cloud IPs → always empty on Fly;
+  //  the free Alpha Vantage key's 25/day quota is exhausted by the news endpoint. AV is kept
+  //  below only as a fallback.) Sweeps each weekday in the window, filters to the index universe.
+  async function fetchNasdaqEarnings(now: number, cutoff: number, uni: EarningsUniverse): Promise<EarningsRow[] | null> {
+    const dates: string[] = [];
+    for (let t = now; t <= cutoff; t += 24 * 60 * 60 * 1000) {
+      const d = new Date(t);
+      const dow = d.getUTCDay();
+      if (dow === 0 || dow === 6) continue; // skip weekends
+      dates.push(d.toISOString().slice(0, 10));
+    }
+    const rows: EarningsRow[] = [];
+    let anySuccess = false;
+    const CONCURRENCY = 4;
+    for (let i = 0; i < dates.length; i += CONCURRENCY) {
+      const batch = dates.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (date) => {
+          const url = `https://api.nasdaq.com/api/calendar/earnings?date=${date}`;
+          const r = await fetch(url, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+              "Accept": "application/json",
+            },
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!r.ok) return;
+          anySuccess = true;
+          const data = await r.json() as { data?: { rows?: Array<{ symbol?: string; name?: string; marketCap?: string; epsForecast?: string; lastYearEPS?: string; noOfEsts?: string; time?: string }> | null } };
+          for (const row of data?.data?.rows ?? []) {
+            const symbol = row.symbol?.trim().toUpperCase();
+            if (!symbol || !uni.match.has(symbol)) continue;
+            const info = uni.meta.get(symbol);
+            const marketCap = parseMarketCap(row.marketCap);
+            rows.push({
+              symbol,
+              name: info?.name ?? row.name ?? symbol,
+              sector: info?.sector ?? "",
+              earningsDate: date,
+              marketCap,
+              marketCapFormatted: fmtMarketCap(marketCap),
+              epsForecast: row.epsForecast?.trim() || null,
+              lastYearEps: row.lastYearEPS?.trim() || null,
+              epsGrowthPct: epsGrowthPct(row.epsForecast, row.lastYearEPS),
+              numEstimates: row.noOfEsts?.trim() || null,
+              time: normEarningsTime(row.time),
+            });
+          }
+        })
+      );
+    }
+    // If every request failed, signal a hard failure so the caller falls through to AV.
+    if (!anySuccess) return null;
+    return rows;
+  }
+
+  // Alpha Vantage EARNINGS_CALENDAR — one CSV request returns all upcoming earnings.
+  // Fallback only: the free key's 25/day quota is usually spent by the news endpoint.
+  // No market cap available from this source.
+  async function fetchAlphaVantageEarnings(now: number, cutoff: number, uni: EarningsUniverse): Promise<EarningsRow[] | null> {
+    if (!AV_KEY) return null;
+    try {
+      const url = `https://www.alphavantage.co/query?function=EARNINGS_CALENDAR&horizon=3month&apikey=${AV_KEY}`;
+      const r = await fetch(url, {
+        headers: { "User-Agent": "markets-api/1.0", "Accept": "text/csv" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!r.ok) return null;
+      const csv = await r.text();
+      // Rate-limit / error responses come back as JSON, not CSV.
+      if (!csv.startsWith("symbol,")) return null;
+      const rows: EarningsRow[] = [];
+      const lines = csv.trim().split("\n").slice(1);
+      for (const line of lines) {
+        // symbol,name,reportDate,fiscalDateEnding,estimate,currency,timeOfTheDay
+        const cols = line.split(",");
+        const symbol = cols[0]?.trim().toUpperCase();
+        const reportDate = cols[2]?.trim();
+        if (!symbol || !reportDate || !uni.match.has(symbol)) continue;
+        const ts = new Date(`${reportDate}T00:00:00Z`).getTime();
+        if (Number.isNaN(ts) || ts < now || ts > cutoff) continue;
+        const info = uni.meta.get(symbol);
+        rows.push({
+          symbol,
+          name: info?.name ?? cols[1]?.trim() ?? symbol,
+          sector: info?.sector ?? "",
+          earningsDate: reportDate,
+          marketCap: null,
+          marketCapFormatted: null,
+          epsForecast: cols[4]?.trim() || null,
+          lastYearEps: null,
+          epsGrowthPct: null,
+          numEstimates: null,
+          time: normEarningsTime(cols[6]),
+        });
+      }
+      return rows;
+    } catch {
+      return null;
+    }
+  }
 
   router.get("/earnings-calendar", async (req: Request, res: Response) => {
     const days = Math.min(parseInt((req.query.days as string) ?? "15", 10), 30);
-    const cacheKey = `earnings-${days}`;
+    const indexParam = ((req.query.index as string) ?? "sp500").toLowerCase();
+    const index = EARNINGS_INDICES.has(indexParam) ? indexParam : "sp500";
+    const cacheKey = `earnings-${index}-${days}`;
     const cached = _earningsCache.get(cacheKey);
     if (cached && Date.now() - cached.ts < EARNINGS_TTL) return res.json(cached.data);
-
-    const auth = await getYFCrumb();
-    if (!auth) return res.json({ items: [], lastUpdated: new Date().toISOString() });
 
     const now = Date.now();
     const cutoff = now + days * 24 * 60 * 60 * 1000;
 
-    const results: Array<{ symbol: string; name: string; earningsDate: string; sector: string }> = [];
-    const CONCURRENCY = 8;
-
-    for (let i = 0; i < EARNINGS_SYMBOLS.length; i += CONCURRENCY) {
-      const batch = EARNINGS_SYMBOLS.slice(i, i + CONCURRENCY);
-      await Promise.allSettled(
-        batch.map(async (s) => {
-          try {
-            const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(s.symbol)}?modules=calendarEvents&formatted=false&crumb=${encodeURIComponent(auth.crumb)}`;
-            const r = await fetch(url, {
-              headers: { "User-Agent": YF_CRUMB_UA, "Cookie": auth.cookie, "Accept": "application/json" },
-              signal: AbortSignal.timeout(8_000),
-            });
-            if (!r.ok) return;
-            const data = await r.json() as { quoteSummary?: { result?: Array<{ calendarEvents?: { earnings?: { earningsDate?: Array<{ raw: number }> } } }> } };
-            const dates = data?.quoteSummary?.result?.[0]?.calendarEvents?.earnings?.earningsDate;
-            if (!dates || dates.length === 0) return;
-            const ts = (dates[0].raw ?? 0) * 1000;
-            if (ts >= now && ts <= cutoff) {
-              results.push({
-                symbol: s.symbol,
-                name: s.name,
-                earningsDate: new Date(ts).toISOString().slice(0, 10),
-                sector: s.sector,
-              });
-            }
-          } catch { /* skip */ }
-        })
-      );
+    let results: EarningsRow[] = [];
+    let source = "none";      // which source supplied the data — surfaced for prod diagnosis
+    let universeSize = 0;
+    try {
+      const uni = await getEarningsUniverse(index);
+      universeSize = uni.meta.size || uni.match.size;
+      // Nasdaq (keyless) → Alpha Vantage. null = hard failure, try next.
+      const nasdaq = await fetchNasdaqEarnings(now, cutoff, uni);
+      if (nasdaq !== null) { results = nasdaq; source = "nasdaq"; }
+      else {
+        const av = await fetchAlphaVantageEarnings(now, cutoff, uni);
+        if (av !== null) { results = av; source = "alphavantage"; }
+      }
+    } catch {
+      results = [];
     }
 
-    results.sort((a, b) => a.earningsDate.localeCompare(b.earningsDate));
-    const data = { items: results, lastUpdated: new Date().toISOString() };
-    _earningsCache.set(cacheKey, { data, ts: Date.now() });
+    // Sort by date, then by market cap (largest first) within each day.
+    results.sort((a, b) =>
+      a.earningsDate.localeCompare(b.earningsDate) || (b.marketCap ?? 0) - (a.marketCap ?? 0));
+    const data = { items: results, index, source, universeSize, lastUpdated: new Date().toISOString() };
+    // Don't cache an empty result for the full 6h — it's almost always a transient source
+    // failure. Cache only real data; empties fall through and retry on the next request.
+    if (results.length > 0) _earningsCache.set(cacheKey, { data, ts: Date.now() });
     return res.json(data);
   });
 

@@ -1,5 +1,6 @@
 import type { Express } from "express";
-import { fetchYahooPrice, fetchRangeData } from "./shared";
+import { fetchYahooPrice, fetchRangeData, fetchIntradayCandles } from "./shared";
+import type { OHLCVCandle } from "./shared";
 import { getDevicePlan, isPro } from "../plan-enforcement";
 import { INDEX_SYMBOLS } from "../data/index_constituents";
 
@@ -419,6 +420,9 @@ type TreemapStock = {
   nativeCurrency: string;        // "USD" | "GBP" | "JPY" | "HKD" | "INR"
   marketCapUsd: number | null;   // null only when non-USD index + FX fetch failed
   fxRateUsed: number | null;     // null for USD indices
+  // "Strong 30-min buying" gold-ring flag (US-002). Only ever true on the 1d
+  // timeframe during REGULAR market hours, and only for the top-N largest tiles.
+  buyVolumeSignal: boolean;
 };
 
 const SUPPORTED_TIMEFRAMES = new Set(["1d", "1w", "1m", "ytd"]);
@@ -461,6 +465,60 @@ async function getUsdRate(currency: string): Promise<number | null> {
   } catch {
     return null;
   }
+}
+
+// ── "Strong 30-min buying" gold-ring signal (US-002) ─────────────────────────
+// Marks tiles seeing strong net buying volume over the last ~30 minutes. Zero-$:
+// pure math on the free Yahoo 1m intraday chart. Intraday-only concept, so it is
+// computed exclusively on the 1d timeframe during REGULAR hours, bounded to the
+// N largest tiles (where a ring is legible). Nothing runs on 1w/1m/ytd views.
+const BUY_VOLUME_TOP_N = 50;
+const BUY_WINDOW_BARS = 30;          // trailing 1-minute bars (~30 min)
+const BUY_PRESSURE_THRESHOLD = 0.30; // volume-weighted A/D money flow ∈ [-1, +1]
+const BUY_VOLUME_CONCURRENCY = 10;
+
+// Accumulation/Distribution money-flow buying pressure over the trailing window.
+// Returns true when net buying is strong AND price didn't fall over the window.
+function computeBuyVolumeSignal(candles: OHLCVCandle[]): boolean {
+  const usable = candles.filter(
+    c => c.high != null && c.low != null && c.close != null && c.volume != null,
+  );
+  if (usable.length < 5) return false;
+  const window = usable.slice(-BUY_WINDOW_BARS);
+  let mfVolSum = 0;
+  let volSum = 0;
+  for (const c of window) {
+    const range = c.high - c.low;
+    const mfm = range === 0 ? 0 : ((c.close - c.low) - (c.high - c.close)) / range;
+    const vol = c.volume ?? 0;
+    mfVolSum += mfm * vol;
+    volSum += vol;
+  }
+  if (volSum <= 0) return false;
+  const buyPressure = mfVolSum / volSum;
+  const first = window[0].close;
+  const last = window[window.length - 1].close;
+  const windowReturn = first > 0 ? (last - first) / first : 0;
+  return buyPressure >= BUY_PRESSURE_THRESHOLD && windowReturn >= 0;
+}
+
+// Bounded-concurrency fan-out: returns the set of symbols flagged as strong-buying.
+async function computeBuyVolumeFlags(symbols: string[]): Promise<Set<string>> {
+  const flagged = new Set<string>();
+  let idx = 0;
+  async function worker() {
+    while (idx < symbols.length) {
+      const sym = symbols[idx++];
+      try {
+        const candles = await fetchIntradayCandles(sym, "1m", "1d");
+        if (computeBuyVolumeSignal(candles)) flagged.add(sym);
+      } catch { /* swallow — a missing intraday feed just means no ring */ }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(BUY_VOLUME_CONCURRENCY, symbols.length) }, worker),
+  );
+  return flagged;
 }
 
 async function ensureTreemapCacheFresh(
@@ -537,6 +595,7 @@ async function ensureTreemapCacheFresh(
           nativeCurrency: currency,
           marketCapUsd,
           fxRateUsed: currency !== "USD" ? fxRate : null,
+          buyVolumeSignal: false,
         });
       }
       stocks.sort((a, b) => b.marketCap - a.marketCap);
@@ -552,6 +611,15 @@ async function ensureTreemapCacheFresh(
           if (n > max) { max = n; marketState = state; }
         }
       }
+
+      // Gold-ring "strong 30-min buying" flag — 1d + REGULAR only, top-N tiles.
+      // Bounded (≤ N intraday fetches) and part of this 5m-cached build.
+      if (timeframe === "1d" && marketState === "REGULAR") {
+        const top = stocks.slice(0, BUY_VOLUME_TOP_N);
+        const flagged = await computeBuyVolumeFlags(top.map(s => s.symbol));
+        for (const s of top) if (flagged.has(s.symbol)) s.buyVolumeSignal = true;
+      }
+
       treemapDataCache.set(cacheKey, {
         stocks,
         marketState,

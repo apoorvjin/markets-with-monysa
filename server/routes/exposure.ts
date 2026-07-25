@@ -37,7 +37,7 @@ export function registerExposureRoutes(app: Express): void {
     }
 
     const key = `${country}_${sector}_${tariffRate}`;
-    res.set("Cache-Control", "private, max-age=43200"); // 12h — Insight-gated, private
+    res.set("Cache-Control", "private, max-age=43200"); // 12h — Pro-gated, private
     const cached = _cache.get(key);
     if (cached && Date.now() - cached.ts < EXPOSURE_TTL) {
       return res.json(cached.data);

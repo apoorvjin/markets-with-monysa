@@ -1,7 +1,7 @@
 name: moby
 description: FinBrio — Global Financial Intelligence Dashboard
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+202607180151
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -42,6 +42,9 @@ dependencies:
   crypto: ^3.0.3
   sentry_flutter: ^8.12.0
   purchases_flutter: ^8.0.0
+  # RevenueCat prebuilt UI: remote Paywall + Customer Center (manage/cancel).
+  # Kept on the same major as purchases_flutter — they are released in lockstep.
+  purchases_ui_flutter: ^8.0.0
   firebase_core: ^3.13.0
   firebase_auth: ^5.5.0
   cloud_firestore: ^5.6.0

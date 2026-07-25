@@ -58,14 +58,20 @@ void main() async {
     currentChartRenderer = savedRenderer!;
   }
 
-  // Load dev plan simulator override (set via Profile screen).
+  // Load dev plan simulator override (set via Profile screen). Only honoured
+  // in dev builds — in release a stale pref would silently pin the plan
+  // (masking real purchases), so it is deleted instead.
   final savedSimPlan = prefs.getString('dev_simulated_plan');
   if (savedSimPlan != null) {
-    final plan = Plan.values.firstWhere(
-      (p) => p.name == savedSimPlan,
-      orElse: () => Plan.free,
-    );
-    EntitlementService.setSimulatedPlan(plan);
+    if (EntitlementService.devToolsEnabled) {
+      final plan = Plan.values.firstWhere(
+        (p) => p.name == savedSimPlan,
+        orElse: () => Plan.free,
+      );
+      EntitlementService.setSimulatedPlan(plan);
+    } else {
+      await prefs.remove('dev_simulated_plan');
+    }
   }
 
   // Configure RevenueCat when platform API keys are provided.
@@ -80,7 +86,14 @@ void main() async {
     EntitlementService.markRevenueCatConfigured();
 
     try {
-      final customerInfo = await Purchases.getCustomerInfo();
+      // Keep RevenueCat's identity aligned with the signed-in Firebase user so
+      // the billing webhook keys entitlements under the same id the app sends as
+      // X-User-ID. _linkRevenueCat() only runs on an explicit sign-in; on a
+      // restored session it never fires, so re-assert the identity here. Signed
+      // out, RC stays on the device-id identity set above.
+      final customerInfo = firebaseUser != null
+          ? (await Purchases.logIn(firebaseUser.uid)).customerInfo
+          : await Purchases.getCustomerInfo();
       EntitlementService.updateFromCustomerInfo(customerInfo);
     } catch (_) {}
 

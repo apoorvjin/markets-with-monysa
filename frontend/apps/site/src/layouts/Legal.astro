@@ -1,0 +1,203 @@
+---
+import Base from "./Base.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  heading: string;
+  updated: string;
+}
+
+const { title, description, heading, updated } = Astro.props;
+---
+
+<Base title={title} description={description}>
+  <div class="legal">
+    <header class="legal__top">
+      <a class="legal__brand" href="/">
+        <img src="/apple-touch-icon.png" alt="" width="24" height="24" />
+        <span>Fin<span class="legal__accent">Brio</span></span>
+      </a>
+      <a class="legal__home" href="/">← Back to home</a>
+    </header>
+
+    <main class="legal__body" id="main-content">
+      <p class="legal__eyebrow">Legal</p>
+      <h1>{heading}</h1>
+      <p class="legal__updated">Last updated {updated}</p>
+      <div class="legal__prose">
+        <slot />
+      </div>
+    </main>
+
+    <footer class="legal__footer">
+      <a href="/">FinBrio</a>
+      <span aria-hidden="true">·</span>
+      <a href="/privacy">Privacy Policy</a>
+      <span aria-hidden="true">·</span>
+      <a href="/support">Support</a>
+      <p>&copy; {new Date().getFullYear()} FinBrio</p>
+    </footer>
+  </div>
+</Base>
+
+<style>
+  .legal {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  .legal__top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .legal__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+
+  .legal__brand img {
+    border-radius: 7px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .legal__accent {
+    color: var(--accent);
+  }
+
+  .legal__home {
+    font-size: 13.5px;
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+
+  .legal__home:hover {
+    color: var(--text-primary);
+  }
+
+  .legal__body {
+    padding: 56px 0 72px;
+  }
+
+  .legal__eyebrow {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 var(--s4);
+  }
+
+  .legal__body h1 {
+    font-family: var(--font-display);
+    font-size: clamp(30px, 5vw, 44px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 var(--s3);
+    color: var(--text-primary);
+  }
+
+  .legal__updated {
+    color: var(--text-faint);
+    font-size: 13.5px;
+    margin: 0 0 var(--s8);
+  }
+
+  /* Prose styling for slotted content */
+  .legal__prose :global(h2) {
+    font-family: var(--font-display);
+    font-size: 21px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: var(--s8) 0 var(--s4);
+  }
+
+  .legal__prose :global(h3) {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: var(--s6) 0 var(--s3);
+  }
+
+  .legal__prose :global(p) {
+    color: var(--text-secondary);
+    font-size: 15px;
+    line-height: 1.7;
+    margin: 0 0 var(--s4);
+  }
+
+  .legal__prose :global(ul) {
+    margin: 0 0 var(--s4);
+    padding-left: 0;
+    list-style: none;
+  }
+
+  .legal__prose :global(li) {
+    position: relative;
+    padding-left: 24px;
+    color: var(--text-secondary);
+    font-size: 15px;
+    line-height: 1.65;
+    margin-bottom: var(--s3);
+  }
+
+  .legal__prose :global(li)::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 9px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .legal__prose :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  .legal__prose :global(a:hover) {
+    text-decoration: underline;
+  }
+
+  .legal__prose :global(strong) {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .legal__footer {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    padding: var(--s6) 0 64px;
+    border-top: 1px solid var(--border);
+    color: var(--text-faint);
+    font-size: 13px;
+  }
+
+  .legal__footer a {
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+
+  .legal__footer a:hover {
+    color: var(--text-primary);
+  }
+
+  .legal__footer p {
+    margin: 0 0 0 auto;
+  }
+</style>

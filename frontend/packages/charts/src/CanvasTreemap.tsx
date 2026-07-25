@@ -9,6 +9,8 @@ export interface TreemapDatum {
   change: number;
   sublabel?: string;
   group?: string;
+  /** draws a gold ring — "strong 30-min buying volume" (US-002) */
+  buySignal?: boolean;
 }
 
 interface Rect {
@@ -230,6 +232,14 @@ export function CanvasTreemap(props: {
       ctx.strokeStyle = isHover ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.55)";
       ctx.lineWidth = isHover ? 2 : 1;
       ctx.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, p.h - 1);
+
+      // Gold ring — strong 30-min buying volume (US-002). Inset so it reads as a
+      // ring rather than fighting the base border.
+      if (p.datum.buySignal) {
+        ctx.strokeStyle = "#FFC107";
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(p.x + 1.5, p.y + 1.5, p.w - 3, p.h - 3);
+      }
 
       // Ticker labels — scale the font down to fit the tile (FittedBox port);
       // only slivers too thin for a single readable glyph stay blank.

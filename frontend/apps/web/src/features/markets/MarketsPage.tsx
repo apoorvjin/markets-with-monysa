@@ -168,6 +168,7 @@ function TreemapTab() {
     change: s.changePercent ?? 0,
     sublabel: `${s.name} · ${s.sector ?? "—"} · ${fmtCompact(effectiveMarketCap(s))}`,
     group: s.sector ?? "Other",
+    buySignal: s.buyVolumeSignal ?? false,
   }));
 
   return (
@@ -220,20 +221,36 @@ function TreemapTab() {
       ) : isLoading || !data ? (
         <SkeletonList rows={6} height={80} />
       ) : (
-        <CanvasTreemap
-          height={620}
-          data={treemapData}
-          onGroupSelect={focusedSector ? undefined : (g) => setFocusedSector(g)}
-          onSelect={(d) => {
-            if (d) {
-              void navigate({
-                to: "/asset/$symbol",
-                params: { symbol: d.id },
-                search: { name: d.sublabel?.split(" · ")[0] ?? d.id },
-              });
-            }
-          }}
-        />
+        <>
+          <CanvasTreemap
+            height={620}
+            data={treemapData}
+            onGroupSelect={focusedSector ? undefined : (g) => setFocusedSector(g)}
+            onSelect={(d) => {
+              if (d) {
+                void navigate({
+                  to: "/asset/$symbol",
+                  params: { symbol: d.id },
+                  search: { name: d.sublabel?.split(" · ")[0] ?? d.id },
+                });
+              }
+            }}
+          />
+          {timeframe === "1d" && (
+            <div className="cell-sub" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 4px 0" }}>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 12,
+                  height: 12,
+                  borderRadius: 3,
+                  border: "2px solid #FFC107",
+                }}
+              />
+              Gold ring = strong buying volume (last 30 min)
+            </div>
+          )}
+        </>
       )}
     </>
   );

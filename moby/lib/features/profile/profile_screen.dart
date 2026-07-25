@@ -12,11 +12,13 @@ import '../../providers/auth_provider.dart';
 import '../../providers/chart_provider_provider.dart';
 import '../../providers/font_size_provider.dart';
 import '../../providers/strategy_provider.dart';
+import 'package:purchases_ui_flutter/purchases_ui_flutter.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/entitlement_service.dart';
 import '../../services/push_notification_service.dart';
 import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/upgrade_sheet.dart';
 
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
@@ -78,14 +80,17 @@ class _LoggedInHeader extends StatelessWidget {
   final User user;
 
   String get _initials {
-    final email = user.email ?? '';
-    return email.isNotEmpty ? email[0].toUpperCase() : '?';
+    final name = user.displayName?.trim() ?? '';
+    final source = name.isNotEmpty ? name : (user.email ?? '');
+    return source.isNotEmpty ? source[0].toUpperCase() : '?';
   }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final name = user.displayName?.trim() ?? '';
     final email = user.email ?? '';
+    final hasName = name.isNotEmpty;
 
     return Column(
       children: [
@@ -101,12 +106,25 @@ class _LoggedInHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(height: AppSpacing.s3),
+        if (hasName) ...[
+          Text(
+            name,
+            textAlign: TextAlign.center,
+            style: AppTypography.headingMd.copyWith(
+              color: c.textPrimary,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s1),
+        ],
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text(
               email,
-              style: AppTypography.md.copyWith(color: c.textPrimary),
+              style: AppTypography.md.copyWith(
+                color: hasName ? c.textSecondary : c.textPrimary,
+              ),
             ),
             if (user.emailVerified) ...[
               const SizedBox(width: AppSpacing.s2),
@@ -162,11 +180,13 @@ class _SettingsSection extends StatelessWidget {
           ),
           child: Column(
             children: [
-              const Padding(
-                padding: EdgeInsets.all(AppSpacing.s4),
-                child: _DevPlanSection(),
-              ),
-              Divider(height: 1, color: c.border),
+              if (EntitlementService.devToolsEnabled) ...[
+                const Padding(
+                  padding: EdgeInsets.all(AppSpacing.s4),
+                  child: _DevPlanSection(),
+                ),
+                Divider(height: 1, color: c.border),
+              ],
               const Padding(
                 padding: EdgeInsets.all(AppSpacing.s4),
                 child: _ThemeSection(),
@@ -196,52 +216,147 @@ class _SettingsSection extends StatelessWidget {
 
 // ── Subscription Card ─────────────────────────────────────────────────────────
 
-class _SubscriptionCard extends StatelessWidget {
+class _SubscriptionCard extends StatefulWidget {
   const _SubscriptionCard();
+
+  @override
+  State<_SubscriptionCard> createState() => _SubscriptionCardState();
+}
+
+class _SubscriptionCardState extends State<_SubscriptionCard> {
+  bool _restoring = false;
+
+  Future<void> _restore() async {
+    if (_restoring) return;
+    setState(() => _restoring = true);
+    try {
+      final plan = await EntitlementService.restorePurchases();
+      if (!mounted) return;
+      final restored = plan != Plan.free;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(restored
+              ? 'Purchases restored — ${_planLabel(plan)} plan active.'
+              : 'No previous purchases found for this account.'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not restore purchases. Please try again.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _restoring = false);
+    }
+  }
+
+  /// Opens RevenueCat's Customer Center — the dashboard-managed hub for
+  /// manage/cancel subscription, request refund, restore, and support. Handles
+  /// its own navigation and post-action customer-info refresh (our listener in
+  /// main() picks up any resulting entitlement change).
+  Future<void> _manageSubscription() async {
+    try {
+      await RevenueCatUI.presentCustomerCenter();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Subscription management is unavailable right now.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  static String _planLabel(Plan p) => switch (p) {
+        Plan.pro => 'Pro',
+        Plan.free => 'Free',
+      };
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Row(
+    final plan = EntitlementService.current;
+    final isFree = plan == Plan.free;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.s3, vertical: AppSpacing.s1),
-          decoration: BoxDecoration(
-            color: c.accentDim,
-            borderRadius: BorderRadius.circular(AppRadius.full),
-          ),
-          child: Text(
-            'FREE',
-            style: AppTypography.labelSm.copyWith(
-                color: c.accent, fontWeight: FontWeight.w700),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.s3),
-        Expanded(
-          child: Text(
-            'Free Plan',
-            style: AppTypography.md.copyWith(color: c.textPrimary),
-          ),
-        ),
-        GestureDetector(
-          onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Pro plan coming soon.'),
-              duration: Duration(seconds: 2),
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Upgrade to Pro',
-                style: AppTypography.labelMd.copyWith(color: c.accent),
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s3, vertical: AppSpacing.s1),
+              decoration: BoxDecoration(
+                color: c.accentDim,
+                borderRadius: BorderRadius.circular(AppRadius.full),
               ),
-              const SizedBox(width: 4),
-              Icon(Icons.arrow_forward_ios_rounded, size: 12, color: c.accent),
+              child: Text(
+                _planLabel(plan).toUpperCase(),
+                style: AppTypography.labelSm.copyWith(
+                    color: c.accent, fontWeight: FontWeight.w700),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.s3),
+            Expanded(
+              child: Text(
+                '${_planLabel(plan)} Plan',
+                style: AppTypography.md.copyWith(color: c.textPrimary),
+              ),
+            ),
+            if (isFree)
+              GestureDetector(
+                onTap: () =>
+                    UpgradeSheet.show(context, feature: 'treemap_heatmap'),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Upgrade to Pro',
+                      style: AppTypography.labelMd.copyWith(color: c.accent),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(Icons.arrow_forward_ios_rounded,
+                        size: 12, color: c.accent),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.s3),
+        Row(
+          children: [
+            TextButton(
+              onPressed: _restoring ? null : _restore,
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 0),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                _restoring ? 'Restoring…' : 'Restore Purchases',
+                style: AppTypography.sm.copyWith(color: c.textSecondary),
+              ),
+            ),
+            if (EntitlementService.isRevenueCatConfigured) ...[
+              const SizedBox(width: AppSpacing.s4),
+              TextButton(
+                onPressed: _restoring ? null : _manageSubscription,
+                style: TextButton.styleFrom(
+                  padding: EdgeInsets.zero,
+                  minimumSize: const Size(0, 0),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  'Manage Subscription',
+                  style: AppTypography.sm.copyWith(color: c.textSecondary),
+                ),
+              ),
             ],
-          ),
+          ],
         ),
       ],
     );
@@ -661,12 +776,11 @@ Plan? _planFromPrefs(String? name) {
 Future<void> _switchSimulatedPlan(
   BuildContext context,
   WidgetRef ref,
-  Plan plan,
+  Plan? plan, // null = Off: clear the override and use the real plan
 ) async {
   final c = context.colors;
   final prefs = ref.read(sharedPreferencesProvider);
-  final current =
-      _planFromPrefs(prefs.getString('dev_simulated_plan')) ?? Plan.free;
+  final current = _planFromPrefs(prefs.getString('dev_simulated_plan'));
   if (plan == current) return;
 
   final confirmed = await showDialog<bool>(
@@ -676,10 +790,14 @@ Future<void> _switchSimulatedPlan(
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppRadius.md)),
       title: Text(
-          'Switch to ${plan.name[0].toUpperCase()}${plan.name.substring(1)} Plan',
+          plan == null
+              ? 'Turn Off Simulator'
+              : 'Switch to ${plan.name[0].toUpperCase()}${plan.name.substring(1)} Plan',
           style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
       content: Text(
-        'Simulating the ${plan.name} tier requires a restart. Continue?',
+        plan == null
+            ? 'Using your real subscription plan requires a restart. Continue?'
+            : 'Simulating the ${plan.name} tier requires a restart. Continue?',
         style: AppTypography.md.copyWith(color: c.textSecondary),
       ),
       actions: [
@@ -697,7 +815,11 @@ Future<void> _switchSimulatedPlan(
     ),
   );
   if (confirmed != true) return;
-  await prefs.setString('dev_simulated_plan', plan.name);
+  if (plan == null) {
+    await prefs.remove('dev_simulated_plan');
+  } else {
+    await prefs.setString('dev_simulated_plan', plan.name);
+  }
   EntitlementService.setSimulatedPlan(plan);
   if (context.mounted) RestartWidget.restartApp(context);
 }
@@ -709,8 +831,7 @@ class _DevPlanSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     final prefs = ref.watch(sharedPreferencesProvider);
-    final current =
-        _planFromPrefs(prefs.getString('dev_simulated_plan')) ?? Plan.free;
+    final current = _planFromPrefs(prefs.getString('dev_simulated_plan'));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -750,6 +871,7 @@ class _DevPlanSection extends ConsumerWidget {
           padding: const EdgeInsets.all(AppSpacing.s2),
           child: Row(
             children: [
+              _PlanChip(plan: null, label: 'Off', current: current),
               _PlanChip(plan: Plan.free, label: 'Free', current: current),
               _PlanChip(plan: Plan.pro, label: 'Pro', current: current),
             ],
@@ -757,7 +879,7 @@ class _DevPlanSection extends ConsumerWidget {
         ),
         const SizedBox(height: AppSpacing.s3),
         Text(
-          'Temporarily simulates a subscription tier. Requires restart.',
+          'Temporarily simulates a subscription tier. Off uses your real plan. Requires restart.',
           style: AppTypography.sm.copyWith(color: c.textMuted),
         ),
       ],
@@ -772,9 +894,9 @@ class _PlanChip extends ConsumerWidget {
     required this.current,
   });
 
-  final Plan plan;
+  final Plan? plan; // null = Off (real plan)
   final String label;
-  final Plan current;
+  final Plan? current;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -796,9 +918,11 @@ class _PlanChip extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                plan == Plan.free
-                    ? Icons.lock_open_rounded
-                    : Icons.star_rounded,
+                plan == null
+                    ? Icons.close_rounded
+                    : plan == Plan.free
+                        ? Icons.lock_open_rounded
+                        : Icons.star_rounded,
                 size: 16,
                 color: selected ? c.background : c.textMuted,
               ),
@@ -1106,14 +1230,12 @@ class _AboutSection extends StatelessWidget {
               Divider(height: 1, color: c.border),
               const _AboutLinkRow(
                 label: 'Privacy Policy',
-                url:
-                    'https://whimsical-viper-e07.notion.site/Monysa-Privacy-Policy-80062190796b4888a92b122d59836d68',
+                url: 'https://www.finbrio.net/privacy',
               ),
               Divider(height: 1, color: c.border),
               const _AboutLinkRow(
                 label: 'Support',
-                url:
-                    'https://whimsical-viper-e07.notion.site/Monysa-Support-c7331ad04c204cfbaf30cdc42b46f827?pvs=74',
+                url: 'https://www.finbrio.net/support',
               ),
             ],
           ),

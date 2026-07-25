@@ -1,0 +1,356 @@
+<header class="nav">
+  <div class="nav__inner">
+    <a class="nav__brand" href="#top">
+      <img class="nav__icon" src="/apple-touch-icon.png" alt="FinBrio app icon" width="26" height="26" />
+      <span class="nav__wordmark">Fin<span class="nav__brand-accent">Brio</span></span>
+    </a>
+
+    <div class="mkt" id="mkt">
+      <button
+        class="mkt__pill"
+        id="mkt-pill"
+        type="button"
+        aria-expanded="false"
+        aria-controls="mkt-panel"
+        hidden
+      >
+        <span class="mkt__dot" id="mkt-dot"></span>
+        <span id="mkt-label">Markets</span>
+        <svg class="mkt__chev" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </button>
+      <div class="mkt__panel" id="mkt-panel" role="region" aria-label="Global exchange sessions">
+        <div class="mkt__rows" id="mkt-rows"></div>
+        <p class="mkt__foot">Regular trading hours · local exchange time. Holidays not shown.</p>
+      </div>
+    </div>
+
+    <nav class="nav__links" aria-label="Sections">
+      <a href="#signals">Signals</a>
+      <a href="#scanner">Scanner</a>
+      <a href="#markets">Markets</a>
+      <a href="#smart-money">Smart&nbsp;Money</a>
+      <a href="#macro">Macro</a>
+      <a href="#screens">Screens</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+    </nav>
+    <a class="nav__cta" href="#download">Get the app</a>
+  </div>
+</header>
+
+<script is:inline>
+  (function () {
+    // Regular cash sessions in each exchange's own timezone, as minutes from
+    // midnight. Arrays handle lunch breaks (Tokyo, Hong Kong, Shanghai).
+    var MARKETS = [
+      { city: "New York",  tz: "America/New_York",  sessions: [[570, 960]] },              // 09:30–16:00
+      { city: "London",    tz: "Europe/London",     sessions: [[480, 990]] },              // 08:00–16:30
+      { city: "Frankfurt", tz: "Europe/Berlin",     sessions: [[540, 1050]] },             // 09:00–17:30
+      { city: "Mumbai",    tz: "Asia/Kolkata",      sessions: [[555, 930]] },              // 09:15–15:30
+      { city: "Hong Kong", tz: "Asia/Hong_Kong",    sessions: [[570, 720], [780, 960]] },  // 09:30–12:00, 13:00–16:00
+      { city: "Shanghai",  tz: "Asia/Shanghai",     sessions: [[570, 690], [780, 900]] },  // 09:30–11:30, 13:00–15:00
+      { city: "Tokyo",     tz: "Asia/Tokyo",        sessions: [[540, 690], [750, 900]] },  // 09:00–11:30, 12:30–15:00
+      { city: "Sydney",    tz: "Australia/Sydney",  sessions: [[600, 960]] },              // 10:00–16:00
+    ];
+
+    var pill = document.getElementById("mkt-pill");
+    var dot = document.getElementById("mkt-dot");
+    var label = document.getElementById("mkt-label");
+    var rows = document.getElementById("mkt-rows");
+    var wrap = document.getElementById("mkt");
+    if (!pill || !dot || !label || !rows || !wrap) return;
+
+    function zoned(tz) {
+      var parts = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, hour12: false, weekday: "short", hour: "2-digit", minute: "2-digit",
+      }).formatToParts(new Date());
+      var o = {};
+      parts.forEach(function (p) { o[p.type] = p.value; });
+      var h = parseInt(o.hour, 10) % 24;
+      var m = parseInt(o.minute, 10);
+      return {
+        weekday: o.weekday,
+        mins: h * 60 + m,
+        label: String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0"),
+      };
+    }
+
+    function isOpen(mk) {
+      var z = zoned(mk.tz);
+      if (z.weekday === "Sat" || z.weekday === "Sun") return { open: false, time: z.label };
+      for (var i = 0; i < mk.sessions.length; i++) {
+        if (z.mins >= mk.sessions[i][0] && z.mins < mk.sessions[i][1]) {
+          return { open: true, time: z.label };
+        }
+      }
+      return { open: false, time: z.label };
+    }
+
+    function update() {
+      var openCount = 0;
+      var html = "";
+      MARKETS.forEach(function (mk) {
+        var s = isOpen(mk);
+        if (s.open) openCount++;
+        html +=
+          '<div class="mkt__row" data-open="' + s.open + '">' +
+            '<span class="mkt__rdot"></span>' +
+            '<span class="mkt__city">' + mk.city + "</span>" +
+            '<span class="mkt__time num">' + s.time + "</span>" +
+            '<span class="mkt__state">' + (s.open ? "Open" : "Closed") + "</span>" +
+          "</div>";
+      });
+      rows.innerHTML = html;
+
+      label.textContent =
+        openCount > 0
+          ? openCount + " of " + MARKETS.length + " markets open"
+          : "All markets closed";
+      dot.setAttribute("data-open", openCount > 0 ? "true" : "false");
+      pill.hidden = false;
+    }
+
+    update();
+    setInterval(update, 30000);
+
+    // Click toggles on touch; hover/focus handled in CSS for pointer devices.
+    pill.addEventListener("click", function () {
+      var open = wrap.getAttribute("data-open") === "true";
+      wrap.setAttribute("data-open", open ? "false" : "true");
+      pill.setAttribute("aria-expanded", open ? "false" : "true");
+    });
+    document.addEventListener("click", function (e) {
+      if (!wrap.contains(e.target)) {
+        wrap.setAttribute("data-open", "false");
+        pill.setAttribute("aria-expanded", "false");
+      }
+    });
+  })();
+</script>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.72);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .nav__inner {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: var(--s6);
+  }
+
+  .nav__brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 17px;
+    letter-spacing: 0.02em;
+    color: var(--text-primary);
+    text-decoration: none;
+  }
+
+  .nav__icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    display: block;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+
+  .nav__brand-accent {
+    color: var(--accent);
+  }
+
+  /* ── Global markets status ── */
+  .mkt {
+    display: none;
+    position: relative;
+  }
+
+  @media (min-width: 700px) {
+    .mkt { display: block; }
+  }
+
+  .mkt__pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 11px;
+    border-radius: 100px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .mkt__pill:hover { border-color: var(--border-strong); color: var(--text-primary); }
+
+  .mkt__chev { opacity: 0.6; transition: transform 0.18s ease; }
+
+  .mkt__dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .mkt__dot[data-open="true"] {
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+    animation: mkt-pulse 1.8s ease-in-out infinite;
+  }
+
+  @keyframes mkt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  .mkt__panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    left: 0;
+    min-width: 268px;
+    padding: 10px;
+    border-radius: 14px;
+    border: 1px solid var(--border-strong);
+    background: rgba(10, 10, 10, 0.97);
+    backdrop-filter: blur(14px);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+  }
+
+  .mkt:hover .mkt__panel,
+  .mkt:focus-within .mkt__panel,
+  .mkt[data-open="true"] .mkt__panel {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  .mkt:hover .mkt__chev,
+  .mkt[data-open="true"] .mkt__chev { transform: rotate(180deg); }
+
+  .mkt :global(.mkt__row) {
+    display: grid;
+    grid-template-columns: 8px 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 8px;
+    border-radius: 8px;
+  }
+
+  .mkt :global(.mkt__row:hover) { background: rgba(255, 255, 255, 0.04); }
+
+  .mkt :global(.mkt__rdot) {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.22);
+  }
+
+  .mkt :global(.mkt__row[data-open="true"] .mkt__rdot) {
+    background: var(--accent);
+    box-shadow: 0 0 7px var(--accent);
+  }
+
+  .mkt :global(.mkt__city) {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+  }
+
+  .mkt :global(.mkt__row[data-open="true"] .mkt__city) { color: var(--text-primary); }
+
+  .mkt :global(.mkt__time) {
+    font-size: 12px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .mkt :global(.mkt__state) {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    min-width: 46px;
+    text-align: right;
+  }
+
+  .mkt :global(.mkt__row[data-open="true"] .mkt__state) { color: var(--accent); }
+
+  .mkt__foot {
+    margin: 8px 8px 4px;
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: var(--text-faint);
+  }
+
+  .nav__links {
+    display: none;
+    gap: var(--s6);
+    margin-left: auto;
+  }
+
+  .nav__links a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 13.5px;
+    font-weight: 500;
+    transition: color 0.15s ease;
+  }
+
+  .nav__links a:hover {
+    color: var(--text-primary);
+  }
+
+  .nav__cta {
+    margin-left: auto;
+    padding: 8px 18px;
+    border-radius: 100px;
+    background: var(--accent);
+    color: #000;
+    font-size: 13.5px;
+    font-weight: 700;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .nav__cta:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 22px rgba(0, 212, 170, 0.35);
+  }
+
+  @media (min-width: 980px) {
+    .nav__links {
+      display: flex;
+    }
+    .nav__cta {
+      margin-left: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mkt__dot[data-open="true"] { animation: none; }
+    .mkt__panel { transition: none; }
+  }
+</style>

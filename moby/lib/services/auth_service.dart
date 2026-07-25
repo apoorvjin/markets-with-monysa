@@ -26,12 +26,19 @@ abstract final class AuthService {
 
   static User? get currentUser => _auth.currentUser;
 
-  static Future<void> signUpWithEmail(String email, String password) async {
+  static Future<void> signUpWithEmail(
+    String name,
+    String email,
+    String password,
+  ) async {
     try {
       final cred = await _auth.createUserWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
+      if (name.trim().isNotEmpty) {
+        await cred.user!.updateDisplayName(name.trim());
+      }
       await _sendVerificationEmail(cred.user!);
       FirestoreService.createUserDoc(cred.user!.uid, email.trim()).catchError((_) {});
       FirebaseAnalytics.instance.logSignUp(signUpMethod: 'email').catchError((_) {});
@@ -80,7 +87,14 @@ abstract final class AuthService {
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
-      await _signInWithCredential(credential, method: 'google');
+      final userCred = await _signInWithCredential(credential, method: 'google');
+      // Firebase usually populates displayName from the Google profile, but it's
+      // not guaranteed — backfill from the Google account when it's still null.
+      final user = userCred.user;
+      final googleName = googleUser.displayName?.trim() ?? '';
+      if (user != null && user.displayName == null && googleName.isNotEmpty) {
+        await user.updateDisplayName(googleName);
+      }
     } on FirebaseAuthException catch (e) {
       throw AuthException(_oauthFriendlyMessage(e.code));
     } catch (_) {
