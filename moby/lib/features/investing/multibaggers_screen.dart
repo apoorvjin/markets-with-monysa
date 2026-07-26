@@ -7,6 +7,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/trading_repository.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/empty_view.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/glass_card.dart';
@@ -567,56 +568,45 @@ class _ControlRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          Text('Country:',
-              style: AppTypography.xs.copyWith(color: c.textMuted)),
-          const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _Chip(
-                  label: '🇺🇸 US',
-                  active: country == 'us',
-                  onTap: () => onCountry('us'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: '🇮🇳 India',
-                  active: country == 'india',
-                  onTap: () => onCountry('india'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: '🇬🇧 UK',
-                  active: country == 'uk',
-                  onTap: () => onCountry('uk'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: '🇯🇵 Japan',
-                  active: country == 'japan',
-                  onTap: () => onCountry('japan'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: '🇭🇰 HK',
-                  active: country == 'hongkong',
-                  onTap: () => onCountry('hongkong'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: '🇨🇳 China',
-                  active: country == 'china',
-                  onTap: () => onCountry('china'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: '🇪🇺 Euronext',
-                  active: country == 'euronext',
-                  onTap: () => onCountry('euronext'),
-                ),
-              ],
-            ),
+          AppChipRow(
+            label: 'Country:',
+            children: [
+              AppChip(
+                label: '🇺🇸 US',
+                active: country == 'us',
+                onTap: () => onCountry('us'),
+              ),
+              AppChip(
+                label: '🇮🇳 India',
+                active: country == 'india',
+                onTap: () => onCountry('india'),
+              ),
+              AppChip(
+                label: '🇬🇧 UK',
+                active: country == 'uk',
+                onTap: () => onCountry('uk'),
+              ),
+              AppChip(
+                label: '🇯🇵 Japan',
+                active: country == 'japan',
+                onTap: () => onCountry('japan'),
+              ),
+              AppChip(
+                label: '🇭🇰 HK',
+                active: country == 'hongkong',
+                onTap: () => onCountry('hongkong'),
+              ),
+              AppChip(
+                label: '🇨🇳 China',
+                active: country == 'china',
+                onTap: () => onCountry('china'),
+              ),
+              AppChip(
+                label: '🇪🇺 Euronext',
+                active: country == 'euronext',
+                onTap: () => onCountry('euronext'),
+              ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
           Row(
@@ -624,13 +614,13 @@ class _ControlRow extends StatelessWidget {
               Text('Ver:',
                   style: AppTypography.xs.copyWith(color: c.textMuted)),
               const SizedBox(width: AppSpacing.s2),
-              _Chip(
+              AppChip(
                 label: 'v1 Original',
                 active: version == 'v1',
                 onTap: () => onVersion('v1'),
               ),
               const SizedBox(width: AppSpacing.s2),
-              _Chip(
+              AppChip(
                 label: 'v2 Pine-Aligned',
                 active: version == 'v2',
                 onTap: () => onVersion('v2'),
@@ -676,82 +666,44 @@ class _FilterRow extends StatelessWidget {
         children: [
           Divider(height: 1, color: c.border),
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _Chip(label: 'All', active: minSignals == 0, onTap: () => onFilter(0)),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(label: '1+ Signal', active: minSignals == 1, onTap: () => onFilter(1)),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(label: '2+ Signals', active: minSignals == 2, onTap: () => onFilter(2)),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(label: '3 Signals', active: minSignals == 3, onTap: () => onFilter(3)),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(label: '4 Signals', active: minSignals == 4, onTap: () => onFilter(4)),
-              ],
-            ),
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            children: [
+              AppChip(label: 'All', active: minSignals == 0, onTap: () => onFilter(0)),
+              AppChip(label: '1+ Signal', active: minSignals == 1, onTap: () => onFilter(1)),
+              AppChip(label: '2+ Signals', active: minSignals == 2, onTap: () => onFilter(2)),
+              AppChip(label: '3 Signals', active: minSignals == 3, onTap: () => onFilter(3)),
+              AppChip(label: '4 Signals', active: minSignals == 4, onTap: () => onFilter(4)),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                Text('Signals:',
-                    style: AppTypography.xs.copyWith(color: c.textMuted)),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: 'VOL',
-                  active: signalFilter.contains('VOL'),
-                  onTap: () => onSignalToggle('VOL'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: 'HEARTBEAT',
-                  active: signalFilter.contains('HEARTBEAT'),
-                  onTap: () => onSignalToggle('HEARTBEAT'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _Chip(
-                  label: 'REC. QTR',
-                  active: signalFilter.contains('REC_QTR'),
-                  onTap: () => onSignalToggle('REC_QTR'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                version == 'v1'
-                    ? Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: AppSpacing.s4,
-                            vertical: AppSpacing.s2),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(AppRadius.full),
-                          border: Border.all(color: c.border.withAlpha(80)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.close_rounded,
-                                size: 9, color: c.textFaint),
-                            const SizedBox(width: 3),
-                            Text(
-                              'TREND ↑',
-                              style: AppTypography.xs.copyWith(
-                                color: c.textFaint,
-                                fontWeight: FontWeight.w500,
-                                decoration: TextDecoration.lineThrough,
-                                decorationColor: c.textFaint,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : _Chip(
-                        label: 'TREND ↑',
-                        active: signalFilter.contains('TREND'),
-                        onTap: () => onSignalToggle('TREND'),
-                      ),
-              ],
-            ),
+          AppChipRow(
+            label: 'Signals:',
+            children: [
+              AppChip(
+                label: 'VOL',
+                active: signalFilter.contains('VOL'),
+                onTap: () => onSignalToggle('VOL'),
+              ),
+              AppChip(
+                label: 'HEARTBEAT',
+                active: signalFilter.contains('HEARTBEAT'),
+                onTap: () => onSignalToggle('HEARTBEAT'),
+              ),
+              AppChip(
+                label: 'REC. QTR',
+                active: signalFilter.contains('REC_QTR'),
+                onTap: () => onSignalToggle('REC_QTR'),
+              ),
+              version == 'v1'
+                  ? const AppChip(label: 'TREND ↑', active: false, disabled: true)
+                  : AppChip(
+                      label: 'TREND ↑',
+                      active: signalFilter.contains('TREND'),
+                      onTap: () => onSignalToggle('TREND'),
+                    ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
           Row(
@@ -759,13 +711,13 @@ class _FilterRow extends StatelessWidget {
               Text('Sort:',
                   style: AppTypography.xs.copyWith(color: c.textMuted)),
               const SizedBox(width: AppSpacing.s2),
-              _Chip(
+              AppChip(
                 label: 'Signal Count',
                 active: sort == 'signals',
                 onTap: () => onSort('signals'),
               ),
               const SizedBox(width: AppSpacing.s2),
-              _Chip(
+              AppChip(
                 label: 'Volume Ratio',
                 active: sort == 'volume',
                 onTap: () => onSort('volume'),
@@ -773,40 +725,6 @@ class _FilterRow extends StatelessWidget {
             ],
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ── Chip ──────────────────────────────────────────────────────────────────────
-
-class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.active, required this.onTap});
-
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-        decoration: BoxDecoration(
-          color: active ? c.accent.withAlpha(25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: active ? c.accent : c.border),
-        ),
-        child: Text(
-          label,
-          style: AppTypography.xs.copyWith(
-            color: active ? c.accent : c.textSecondary,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
       ),
     );
   }

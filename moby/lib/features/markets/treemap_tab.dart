@@ -7,6 +7,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/models/treemap_stock.dart';
 import '../../data/repositories/heatmap_repository.dart';
 import '../../services/entitlement_service.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/sector_treemap.dart';
@@ -423,23 +424,23 @@ class _Header extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (final opt in _kIndices) ...[
-                        _IndexChip(
-                          label: opt.label,
-                          enabled: true,
-                          selected: opt.id == selectedIndex,
-                          onTap: () => onSelectIndex(opt.id),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                    ],
-                  ),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final opt in _kIndices)
+                      AppChip(
+                        label: opt.label,
+                        active: opt.id == selectedIndex,
+                        onTap: () => onSelectIndex(opt.id),
+                        textStyle: AppTypography.sm,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 7),
+                      ),
+                  ],
                 ),
               ),
               IconButton(
@@ -664,47 +665,6 @@ class _PulsingDotState extends State<_PulsingDot>
           ),
         );
       },
-    );
-  }
-}
-
-class _IndexChip extends StatelessWidget {
-  final String label;
-  final bool enabled;
-  final bool selected;
-  final VoidCallback? onTap;
-  const _IndexChip({
-    required this.label,
-    this.enabled = false,
-    this.selected = false,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    final bg = selected
-        ? c.accent.withValues(alpha: 0.18)
-        : (enabled ? c.surface : c.surfaceElevated);
-    final fg = enabled ? (selected ? c.accent : c.textPrimary) : c.textMuted;
-    final border = selected ? c.accent : c.border;
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: border),
-        ),
-        child: Text(
-          label,
-          style: AppTypography.sm.copyWith(
-            color: fg,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-          ),
-        ),
-      ),
     );
   }
 }

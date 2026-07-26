@@ -18,6 +18,7 @@ import {
   EtfRotationResponse,
   FearGreedResponse,
   FuturesResponse,
+  HeatmapAssetsResponse,
   HeatmapResponse,
   InstitutionalFlowResponse,
   MoversResponse,
@@ -144,6 +145,8 @@ export function createApiClient(opts: ApiClientOptions) {
     ) =>
       get(`/api/heatmap/treemap${qs({ index, timeframe, limit })}`, TreemapResponse),
     getHeatmap: () => get("/api/heatmap", HeatmapResponse),
+    getHeatmapAssets: (category: string) =>
+      get(`/api/heatmap/assets${qs({ category })}`, HeatmapAssetsResponse),
 
     getCotMetals: () => get("/api/futures/cot-metals", CotResponse),
     getMovers: (index: TreemapIndexParam = "sp500") =>

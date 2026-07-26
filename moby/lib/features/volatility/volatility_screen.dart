@@ -14,6 +14,7 @@ import '../../data/repositories/markets_repository.dart';
 import '../../data/repositories/heatmap_repository.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/rrg_quadrant_grid.dart';
@@ -836,33 +837,6 @@ class _MarketHeatmapSectionState extends ConsumerState<_MarketHeatmapSection> {
   _HeatmapCategory _category = _HeatmapCategory.sectors;
   String _assetSub = 'Indices'; // sub-filter for Assets view
 
-  Widget _categoryChip(String label, bool isActive, AppPalette c,
-      VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        margin: const EdgeInsets.only(right: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-        decoration: BoxDecoration(
-          color: isActive ? c.accent.withAlpha(25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: isActive ? c.accent : c.border,
-            width: 1,
-          ),
-        ),
-        child: Text(
-          label,
-          style: AppTypography.labelSm.copyWith(
-            color: isActive ? c.accent : c.textSecondary,
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -921,26 +895,36 @@ class _MarketHeatmapSectionState extends ConsumerState<_MarketHeatmapSection> {
           style: AppTypography.headingSm.copyWith(color: c.textPrimary),
         ),
         const SizedBox(height: AppSpacing.s3),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: mainCategories.map((cat) {
-              final (category, label) = cat;
-              return _categoryChip(label, _category == category, c,
-                  () => setState(() => _category = category));
-            }).toList(),
-          ),
+        Wrap(
+          spacing: AppSpacing.s2,
+          runSpacing: AppSpacing.s2,
+          children: mainCategories.map((cat) {
+            final (category, label) = cat;
+            return AppChip(
+              label: label,
+              active: _category == category,
+              onTap: () => setState(() => _category = category),
+              textStyle: AppTypography.labelSm,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+              animated: true,
+            );
+          }).toList(),
         ),
         if (_category == _HeatmapCategory.assets) ...[
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: assetSubs.map((sub) {
-                return _categoryChip(sub, _assetSub == sub, c,
-                    () => setState(() => _assetSub = sub));
-              }).toList(),
-            ),
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            children: assetSubs.map((sub) {
+              return AppChip(
+                label: sub,
+                active: _assetSub == sub,
+                onTap: () => setState(() => _assetSub = sub),
+                textStyle: AppTypography.labelSm,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                animated: true,
+              );
+            }).toList(),
           ),
         ],
         const SizedBox(height: AppSpacing.s3),

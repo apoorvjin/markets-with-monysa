@@ -86,6 +86,14 @@ export const HeatmapResponse = z.object({
 });
 export type HeatmapResponse = z.infer<typeof HeatmapResponse>;
 
+/** GET /api/heatmap/assets — per-category asset tiles. category param must be
+    exactly "Indices" | "Commodities" | "Crypto" (case-sensitive) or "all". */
+export const HeatmapAssetsResponse = z.object({
+  assets: z.array(HeatmapTile).default([]),
+  lastUpdated: z.string().nullish(),
+});
+export type HeatmapAssetsResponse = z.infer<typeof HeatmapAssetsResponse>;
+
 /** GET /api/heatmap/movers — pre/post-market aware top movers for an index. */
 export const MoversResponse = z.object({
   index: z.string().nullish(),

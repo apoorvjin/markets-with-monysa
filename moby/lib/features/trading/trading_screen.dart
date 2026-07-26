@@ -16,6 +16,7 @@ import '../../data/repositories/trading_repository.dart';
 import '../../providers/strategy_provider.dart';
 import '../../providers/alert_provider.dart';
 import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/signal_badge.dart';
 import '../../shared/widgets/error_view.dart';
@@ -2431,250 +2432,198 @@ class _PMFilterRow extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                Text('Type:',
-                    style: AppTypography.xs.copyWith(color: c.textMuted)),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'Indices',
-                  active: type == 'Indices',
-                  onTap: () => onType('Indices'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'Forex',
-                  active: type == 'Forex',
-                  onTap: () => onType('Forex'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'Commodities',
-                  active: type == 'Commodities',
-                  onTap: () => onType('Commodities'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'Crypto',
-                  active: type == 'Crypto',
-                  onTap: () => onType('Crypto'),
-                ),
-              ],
-            ),
+          AppChipRow(
+            label: 'Type:',
+            children: [
+              AppChip(
+                label: 'Indices',
+                active: type == 'Indices',
+                onTap: () => onType('Indices'),
+              ),
+              AppChip(
+                label: 'Forex',
+                active: type == 'Forex',
+                onTap: () => onType('Forex'),
+              ),
+              AppChip(
+                label: 'Commodities',
+                active: type == 'Commodities',
+                onTap: () => onType('Commodities'),
+              ),
+              AppChip(
+                label: 'Crypto',
+                active: type == 'Crypto',
+                onTap: () => onType('Crypto'),
+              ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                Text('Ver:',
-                    style: AppTypography.xs.copyWith(color: c.textMuted)),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'v1 Original',
-                  active: version == 'v1',
-                  disabled:
-                      type == 'Indices' || type == 'Forex' || type == 'Crypto',
-                  onTap: () => onVersion('v1'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'v2 Pine-Aligned',
-                  active: version == 'v2',
-                  disabled:
-                      type == 'Indices' || type == 'Forex' || type == 'Crypto',
-                  onTap: () => onVersion('v2'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'v3 Super Pine',
-                  active: version == 'v3',
-                  disabled: type != 'Indices',
-                  onTap: () => onVersion('v3'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'v3 Pine Commodities',
-                  active: version == 'v3c',
-                  disabled: type != 'Commodities',
-                  onTap: () => onVersion('v3c'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'v3 Pine Forex',
-                  active: version == 'v3f',
-                  disabled: type != 'Forex',
-                  onTap: () => onVersion('v3f'),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: 'v3 Pine Crypto',
-                  active: version == 'v3crypto',
-                  disabled: type != 'Crypto',
-                  onTap: () => onVersion('v3crypto'),
-                ),
-              ],
-            ),
+          AppChipRow(
+            label: 'Ver:',
+            children: [
+              AppChip(
+                label: 'v1 Original',
+                active: version == 'v1',
+                disabled:
+                    type == 'Indices' || type == 'Forex' || type == 'Crypto',
+                onTap: () => onVersion('v1'),
+              ),
+              AppChip(
+                label: 'v2 Pine-Aligned',
+                active: version == 'v2',
+                disabled:
+                    type == 'Indices' || type == 'Forex' || type == 'Crypto',
+                onTap: () => onVersion('v2'),
+              ),
+              AppChip(
+                label: 'v3 Super Pine',
+                active: version == 'v3',
+                disabled: type != 'Indices',
+                onTap: () => onVersion('v3'),
+              ),
+              AppChip(
+                label: 'v3 Pine Commodities',
+                active: version == 'v3c',
+                disabled: type != 'Commodities',
+                onTap: () => onVersion('v3c'),
+              ),
+              AppChip(
+                label: 'v3 Pine Forex',
+                active: version == 'v3f',
+                disabled: type != 'Forex',
+                onTap: () => onVersion('v3f'),
+              ),
+              AppChip(
+                label: 'v3 Pine Crypto',
+                active: version == 'v3crypto',
+                disabled: type != 'Crypto',
+                onTap: () => onVersion('v3crypto'),
+              ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _PMChip(
-                  label: '1+ Signal',
-                  active: minSignals == 1,
-                  onTap: () => onFilter(minSignals == 1 ? 0 : 1),
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            children: [
+              AppChip(
+                label: '1+ Signal',
+                active: minSignals == 1,
+                onTap: () => onFilter(minSignals == 1 ? 0 : 1),
+              ),
+              AppChip(
+                label: '2+ Signals',
+                active: minSignals == 2,
+                onTap: () => onFilter(minSignals == 2 ? 0 : 2),
+              ),
+              AppChip(
+                label: '3 Signals',
+                active: minSignals == 3,
+                onTap: () => onFilter(minSignals == 3 ? 0 : 3),
+              ),
+              AppChip(
+                label: '4 Signals',
+                active: minSignals == 4,
+                onTap: () => onFilter(minSignals == 4 ? 0 : 4),
+              ),
+              if (version == 'v3')
+                AppChip(
+                  label: '5 Signals',
+                  active: minSignals == 5,
+                  onTap: () => onFilter(minSignals == 5 ? 0 : 5),
                 ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: '2+ Signals',
-                  active: minSignals == 2,
-                  onTap: () => onFilter(minSignals == 2 ? 0 : 2),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: '3 Signals',
-                  active: minSignals == 3,
-                  onTap: () => onFilter(minSignals == 3 ? 0 : 3),
-                ),
-                const SizedBox(width: AppSpacing.s2),
-                _PMChip(
-                  label: '4 Signals',
-                  active: minSignals == 4,
-                  onTap: () => onFilter(minSignals == 4 ? 0 : 4),
-                ),
-                if (version == 'v3') ...[
-                  const SizedBox(width: AppSpacing.s2),
-                  _PMChip(
-                    label: '5 Signals',
-                    active: minSignals == 5,
-                    onTap: () => onFilter(minSignals == 5 ? 0 : 5),
-                  ),
-                ],
-              ],
-            ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: version == 'v3'
-                  ? [
-                      Text('Signals:',
-                          style: AppTypography.xs.copyWith(color: c.textMuted)),
-                      const SizedBox(width: AppSpacing.s2),
-                      _PMChip(
-                        label: 'THRUST',
-                        active: signalFilter.contains('THRUST'),
-                        onTap: () => onSignalToggle('THRUST'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _PMChip(
-                        label: 'BASE',
-                        active: signalFilter.contains('BASE'),
-                        onTap: () => onSignalToggle('BASE'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _PMChip(
-                        label: 'UPTREND',
-                        active: signalFilter.contains('UPTREND'),
-                        onTap: () => onSignalToggle('UPTREND'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _PMChip(
-                        label: 'NEW HIGH',
-                        active: signalFilter.contains('NEW_HIGH'),
-                        onTap: () => onSignalToggle('NEW_HIGH'),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      _PMChip(
-                        label: 'BREAKOUT',
-                        active: signalFilter.contains('BREAKOUT'),
-                        onTap: () => onSignalToggle('BREAKOUT'),
-                      ),
-                    ]
-                  : version == 'v3c' || version == 'v3crypto'
-                      ? [
-                          Text('Signals:',
-                              style: AppTypography.xs
-                                  .copyWith(color: c.textMuted)),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'VOL',
-                            active: signalFilter.contains('VOL'),
-                            onTap: () => onSignalToggle('VOL'),
-                          ),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'HEARTBEAT',
-                            active: signalFilter.contains('HEARTBEAT'),
-                            onTap: () => onSignalToggle('HEARTBEAT'),
-                          ),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'CATALYST',
-                            active: signalFilter.contains('CATALYST'),
-                            onTap: () => onSignalToggle('CATALYST'),
-                          ),
-                        ]
-                      : version == 'v3f'
-                          ? [
-                              Text('Signals:',
-                                  style: AppTypography.xs
-                                      .copyWith(color: c.textMuted)),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'VOL',
-                                active: signalFilter.contains('VOL'),
-                                onTap: () => onSignalToggle('VOL'),
-                              ),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'RANGE',
-                                active: signalFilter.contains('RANGE'),
-                                onTap: () => onSignalToggle('RANGE'),
-                              ),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'BREAKOUT',
-                                active: signalFilter.contains('BREAKOUT'),
-                                onTap: () => onSignalToggle('BREAKOUT'),
-                              ),
-                            ]
-                          : [
-                              Text('Signals:',
-                                  style: AppTypography.xs
-                                      .copyWith(color: c.textMuted)),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'VOL',
-                                active: signalFilter.contains('VOL'),
-                                onTap: () => onSignalToggle('VOL'),
-                              ),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'HEARTBEAT',
-                                active: signalFilter.contains('HEARTBEAT'),
-                                onTap: () => onSignalToggle('HEARTBEAT'),
-                              ),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'REC. QTR',
-                                active: signalFilter.contains('REC_QTR'),
-                                onTap: () => onSignalToggle('REC_QTR'),
-                              ),
-                              const SizedBox(width: AppSpacing.s2),
-                              _PMChip(
-                                label: 'TREND ↑',
-                                active: signalFilter.contains('TREND'),
-                                disabled: version == 'v1',
-                                onTap: () => onSignalToggle('TREND'),
-                              ),
-                            ],
-            ),
+          AppChipRow(
+            label: 'Signals:',
+            children: version == 'v3'
+                ? [
+                    AppChip(
+                      label: 'THRUST',
+                      active: signalFilter.contains('THRUST'),
+                      onTap: () => onSignalToggle('THRUST'),
+                    ),
+                    AppChip(
+                      label: 'BASE',
+                      active: signalFilter.contains('BASE'),
+                      onTap: () => onSignalToggle('BASE'),
+                    ),
+                    AppChip(
+                      label: 'UPTREND',
+                      active: signalFilter.contains('UPTREND'),
+                      onTap: () => onSignalToggle('UPTREND'),
+                    ),
+                    AppChip(
+                      label: 'NEW HIGH',
+                      active: signalFilter.contains('NEW_HIGH'),
+                      onTap: () => onSignalToggle('NEW_HIGH'),
+                    ),
+                    AppChip(
+                      label: 'BREAKOUT',
+                      active: signalFilter.contains('BREAKOUT'),
+                      onTap: () => onSignalToggle('BREAKOUT'),
+                    ),
+                  ]
+                : version == 'v3c' || version == 'v3crypto'
+                    ? [
+                        AppChip(
+                          label: 'VOL',
+                          active: signalFilter.contains('VOL'),
+                          onTap: () => onSignalToggle('VOL'),
+                        ),
+                        AppChip(
+                          label: 'HEARTBEAT',
+                          active: signalFilter.contains('HEARTBEAT'),
+                          onTap: () => onSignalToggle('HEARTBEAT'),
+                        ),
+                        AppChip(
+                          label: 'CATALYST',
+                          active: signalFilter.contains('CATALYST'),
+                          onTap: () => onSignalToggle('CATALYST'),
+                        ),
+                      ]
+                    : version == 'v3f'
+                        ? [
+                            AppChip(
+                              label: 'VOL',
+                              active: signalFilter.contains('VOL'),
+                              onTap: () => onSignalToggle('VOL'),
+                            ),
+                            AppChip(
+                              label: 'RANGE',
+                              active: signalFilter.contains('RANGE'),
+                              onTap: () => onSignalToggle('RANGE'),
+                            ),
+                            AppChip(
+                              label: 'BREAKOUT',
+                              active: signalFilter.contains('BREAKOUT'),
+                              onTap: () => onSignalToggle('BREAKOUT'),
+                            ),
+                          ]
+                        : [
+                            AppChip(
+                              label: 'VOL',
+                              active: signalFilter.contains('VOL'),
+                              onTap: () => onSignalToggle('VOL'),
+                            ),
+                            AppChip(
+                              label: 'HEARTBEAT',
+                              active: signalFilter.contains('HEARTBEAT'),
+                              onTap: () => onSignalToggle('HEARTBEAT'),
+                            ),
+                            AppChip(
+                              label: 'REC. QTR',
+                              active: signalFilter.contains('REC_QTR'),
+                              onTap: () => onSignalToggle('REC_QTR'),
+                            ),
+                            AppChip(
+                              label: 'TREND ↑',
+                              active: signalFilter.contains('TREND'),
+                              disabled: version == 'v1',
+                              onTap: () => onSignalToggle('TREND'),
+                            ),
+                          ],
           ),
           const SizedBox(height: AppSpacing.s2),
           Row(
@@ -2682,13 +2631,13 @@ class _PMFilterRow extends StatelessWidget {
               Text('Sort:',
                   style: AppTypography.xs.copyWith(color: c.textMuted)),
               const SizedBox(width: AppSpacing.s2),
-              _PMChip(
+              AppChip(
                 label: 'Signal Count',
                 active: sort == 'signals',
                 onTap: () => onSort('signals'),
               ),
               const SizedBox(width: AppSpacing.s2),
-              _PMChip(
+              AppChip(
                 label: 'Volume Ratio',
                 active: sort == 'volume',
                 onTap: () => onSort('volume'),
@@ -2701,76 +2650,6 @@ class _PMFilterRow extends StatelessWidget {
   }
 }
 
-// ── PM Filter Chip ────────────────────────────────────────────────────────────
-
-class _PMChip extends StatelessWidget {
-  const _PMChip({
-    required this.label,
-    required this.active,
-    required this.onTap,
-    this.disabled = false,
-  });
-
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-  final bool disabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-
-    if (disabled) {
-      return Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-        decoration: BoxDecoration(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: c.border.withAlpha(80)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.close_rounded, size: 9, color: c.textFaint),
-            const SizedBox(width: 3),
-            Text(
-              label,
-              style: AppTypography.xs.copyWith(
-                color: c.textFaint,
-                fontWeight: FontWeight.w500,
-                decoration: TextDecoration.lineThrough,
-                decorationColor: c.textFaint,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-        decoration: BoxDecoration(
-          color: active ? c.accent.withAlpha(25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: active ? c.accent : c.border,
-          ),
-        ),
-        child: Text(
-          label,
-          style: AppTypography.xs.copyWith(
-            color: active ? c.accent : c.textSecondary,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ── PM Card ───────────────────────────────────────────────────────────────────
 

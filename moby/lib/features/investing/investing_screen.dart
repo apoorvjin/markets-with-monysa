@@ -13,6 +13,7 @@ import '../../data/repositories/heatmap_repository.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
@@ -294,21 +295,17 @@ class _InstitutionalFlowCardState
             style: AppTypography.xs.copyWith(color: c.textMuted),
           ),
           const SizedBox(height: AppSpacing.s4),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (var i = 0; i < _tabs.length; i++) ...[
-                  _FilterChip(
-                    label: _tabs[i].label,
-                    active: _selected == _tabs[i].id,
-                    onTap: () => setState(() => _selected = _tabs[i].id),
-                  ),
-                  if (i < _tabs.length - 1)
-                    const SizedBox(width: AppSpacing.s2),
-                ],
-              ],
-            ),
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            children: [
+              for (final tab in _tabs)
+                AppChip(
+                  label: tab.label,
+                  active: _selected == tab.id,
+                  onTap: () => setState(() => _selected = tab.id),
+                ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s4),
           Container(
@@ -696,32 +693,28 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
             style: AppTypography.xs.copyWith(color: c.textMuted),
           ),
           const SizedBox(height: AppSpacing.s4),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                for (var i = 0; i < _indices.length; i++) ...[
-                  _FilterChip(
-                    label: _indices[i].label,
-                    active: _selected == _indices[i].id,
-                    onTap: () => setState(() => _selected = _indices[i].id),
-                  ),
-                  if (i < _indices.length - 1)
-                    const SizedBox(width: AppSpacing.s2),
-                ],
-              ],
-            ),
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            children: [
+              for (final idx in _indices)
+                AppChip(
+                  label: idx.label,
+                  active: _selected == idx.id,
+                  onTap: () => setState(() => _selected = idx.id),
+                ),
+            ],
           ),
           const SizedBox(height: AppSpacing.s2),
           Row(
             children: [
-              _FilterChip(
+              AppChip(
                 label: 'Gainers',
                 active: _moversFilter == 'gainers',
                 onTap: () => setState(() => _moversFilter = 'gainers'),
               ),
               const SizedBox(width: AppSpacing.s2),
-              _FilterChip(
+              AppChip(
                 label: 'Losers',
                 active: _moversFilter == 'losers',
                 onTap: () => setState(() => _moversFilter = 'losers'),
@@ -1114,45 +1107,6 @@ class _StatCell extends StatelessWidget {
 }
 
 // ── Filter Chip ───────────────────────────────────────────────────────────────
-
-class _FilterChip extends StatelessWidget {
-  const _FilterChip({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-        decoration: BoxDecoration(
-          color: active ? c.accent.withAlpha(25) : Colors.transparent,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-            color: active ? c.accent : c.border,
-          ),
-        ),
-        child: Text(
-          label,
-          style: AppTypography.xs.copyWith(
-            color: active ? c.accent : c.textSecondary,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 // ── Search Field ──────────────────────────────────────────────────────────────
 
@@ -1799,39 +1753,32 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
                 c: c,
               ),
               const SizedBox(height: AppSpacing.s3),
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    Text('Type:',
-                        style: AppTypography.xs.copyWith(color: c.textMuted)),
-                    const SizedBox(width: AppSpacing.s2),
-                    for (final label in ['All', 'Purchases', 'Sales']) ...[
-                      _FilterChip(
-                        label: label,
-                        active: _type == label,
-                        onTap: () => setState(() => _type = label),
-                      ),
-                      if (label != 'Sales')
-                        const SizedBox(width: AppSpacing.s2),
-                    ],
-                    const SizedBox(width: AppSpacing.s5),
-                    Text('Sort:',
-                        style: AppTypography.xs.copyWith(color: c.textMuted)),
-                    const SizedBox(width: AppSpacing.s2),
-                    _FilterChip(
-                      label: 'Date ↓',
-                      active: _sort == 'date',
-                      onTap: () => setState(() => _sort = 'date'),
+              AppChipRow(
+                label: 'Type:',
+                children: [
+                  for (final label in ['All', 'Purchases', 'Sales'])
+                    AppChip(
+                      label: label,
+                      active: _type == label,
+                      onTap: () => setState(() => _type = label),
                     ),
-                    const SizedBox(width: AppSpacing.s2),
-                    _FilterChip(
-                      label: 'Amount ↓',
-                      active: _sort == 'amount',
-                      onTap: () => setState(() => _sort = 'amount'),
-                    ),
-                  ],
-                ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              AppChipRow(
+                label: 'Sort:',
+                children: [
+                  AppChip(
+                    label: 'Date ↓',
+                    active: _sort == 'date',
+                    onTap: () => setState(() => _sort = 'date'),
+                  ),
+                  AppChip(
+                    label: 'Amount ↓',
+                    active: _sort == 'amount',
+                    onTap: () => setState(() => _sort = 'amount'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -2321,23 +2268,20 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
                     'Track where institutional money is flowing before the crowd',
                     style: AppTypography.xs.copyWith(color: c.textMuted)),
                 const SizedBox(height: AppSpacing.s4),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (int i = 0; i < _strategies.length; i++) ...[
-                        _QuiverStrategyChip(
-                          label: _strategies[i].$1,
-                          icon: _strategies[i].$2,
-                          selected: _strategy == i,
-                          onTap: () => setState(() => _strategy = i),
-                          c: c,
-                        ),
-                        if (i < _strategies.length - 1)
-                          const SizedBox(width: AppSpacing.s2),
-                      ],
-                    ],
-                  ),
+                Wrap(
+                  spacing: AppSpacing.s2,
+                  runSpacing: AppSpacing.s2,
+                  children: [
+                    for (int i = 0; i < _strategies.length; i++)
+                      AppChip(
+                        label: _strategies[i].$1,
+                        icon: _strategies[i].$2,
+                        active: _strategy == i,
+                        onTap: () => setState(() => _strategy = i),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                      ),
+                  ],
                 ),
               ],
             ),
@@ -2468,49 +2412,6 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
 }
 
 // ── Quiver Strategy Chip ──────────────────────────────────────────────────────
-
-class _QuiverStrategyChip extends StatelessWidget {
-  const _QuiverStrategyChip({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-    required this.c,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-  final AppPalette c;
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? c.accent.withAlpha(25) : c.surfaceCard,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: selected ? c.accent : c.border, width: 1),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 13, color: selected ? c.accent : c.textMuted),
-            const SizedBox(width: 5),
-            Text(label,
-                style: AppTypography.xs.copyWith(
-                    color: selected ? c.accent : c.textSecondary,
-                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 // ── Quiver Item Row ───────────────────────────────────────────────────────────
 

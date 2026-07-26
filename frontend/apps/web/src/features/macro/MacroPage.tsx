@@ -238,24 +238,73 @@ function VixTermStructureCard() {
   );
 }
 
+const HEATMAP_CATEGORIES = ["Sectors", "Regions", "Asset Classes", "Assets"] as const;
+type HeatmapCategory = (typeof HEATMAP_CATEGORIES)[number];
+const ASSET_SUBS = ["Indices", "Commodities", "Crypto"] as const;
+type AssetSub = (typeof ASSET_SUBS)[number];
+
 function MarketHeatmapsCard() {
-  const { data, isLoading } = useQuery({
+  const [category, setCategory] = useState<HeatmapCategory>("Sectors");
+  const [assetSub, setAssetSub] = useState<AssetSub>("Indices");
+
+  const sectors = useQuery({
+    queryKey: ["sectors"],
+    queryFn: () => api.getSectors(),
+    staleTime: 15 * 60_000,
+    enabled: category === "Sectors",
+  });
+  const heatmap = useQuery({
     queryKey: ["perf-heatmap"],
     queryFn: () => api.getHeatmap(),
     staleTime: 15 * 60_000,
+    enabled: category === "Regions" || category === "Asset Classes",
   });
+  const assets = useQuery({
+    queryKey: ["heatmap-assets", assetSub],
+    queryFn: () => api.getHeatmapAssets(assetSub),
+    staleTime: 30 * 60_000,
+    enabled: category === "Assets",
+  });
+
+  const loading =
+    (category === "Sectors" && sectors.isLoading) ||
+    ((category === "Regions" || category === "Asset Classes") && heatmap.isLoading) ||
+    (category === "Assets" && assets.isLoading);
+
+  const tiles =
+    category === "Sectors"
+      ? (sectors.data?.sectors ?? [])
+      : category === "Regions"
+        ? (heatmap.data?.regions ?? [])
+        : category === "Asset Classes"
+          ? (heatmap.data?.assetClasses ?? [])
+          : (assets.data?.assets ?? []);
+
   return (
     <Card>
-      {isLoading || !data ? (
-        <SkeletonList rows={4} height={48} />
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--s6)" }}>
-          {data.regions.length > 0 && <HeatmapGrid title="Regions" tiles={data.regions} />}
-          {data.assetClasses.length > 0 && (
-            <HeatmapGrid title="Asset classes" tiles={data.assetClasses} />
-          )}
+      <ChipRow>
+        {HEATMAP_CATEGORIES.map((c) => (
+          <Chip key={c} label={c} active={category === c} onClick={() => setCategory(c)} />
+        ))}
+      </ChipRow>
+      {category === "Assets" && (
+        <div style={{ marginTop: "var(--s3)" }}>
+          <ChipRow>
+            {ASSET_SUBS.map((s) => (
+              <Chip key={s} label={s} active={assetSub === s} onClick={() => setAssetSub(s)} />
+            ))}
+          </ChipRow>
         </div>
       )}
+      <div style={{ marginTop: "var(--s4)" }}>
+        {loading ? (
+          <SkeletonList rows={4} height={48} />
+        ) : tiles.length > 0 ? (
+          <HeatmapGrid title={category} tiles={tiles} />
+        ) : (
+          <ErrorView message="No data available for this category." />
+        )}
+      </div>
     </Card>
   );
 }
@@ -461,9 +510,7 @@ function AiBriefingCard() {
       <div className="page-header">
         <strong>AI Macro Briefing</strong>
         {!requested && (
-          <button type="button" className="ui-chip" data-active="true" onClick={() => setRequested(true)}>
-            Generate briefing
-          </button>
+          <Chip label="Generate briefing" active onClick={() => setRequested(true)} />
         )}
       </div>
       {requested &&

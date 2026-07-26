@@ -6,6 +6,7 @@ import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/empty_view.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/glass_card.dart';
@@ -87,41 +88,45 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
             runSpacing: AppSpacing.s2,
             children: [
               for (final d in const [7, 15, 30])
-                _ScopeChip(
+                AppChip(
                   label: '$d days',
                   active: _days == d,
                   onTap: () => setState(() => _days = d),
+                  textStyle: AppTypography.labelSm,
+                  animated: true,
                 ),
-              _ScopeChip(
+              AppChip(
                 label: 'Mega-caps',
                 active: _megaOnly,
                 onTap: () => setState(() => _megaOnly = !_megaOnly),
+                textStyle: AppTypography.labelSm,
+                animated: true,
               ),
             ],
           ),
           if (sectors.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.s2),
-            SizedBox(
-              height: 34,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _ScopeChip(
-                    label: 'All sectors',
-                    active: _sector == null,
-                    onTap: () => setState(() => _sector = null),
+            Wrap(
+              spacing: AppSpacing.s2,
+              runSpacing: AppSpacing.s2,
+              children: [
+                AppChip(
+                  label: 'All sectors',
+                  active: _sector == null,
+                  onTap: () => setState(() => _sector = null),
+                  textStyle: AppTypography.labelSm,
+                  animated: true,
+                ),
+                for (final s in sectors)
+                  AppChip(
+                    label: '${_EarningsRow.sectorEmoji(s)} $s',
+                    active: _sector == s,
+                    onTap: () =>
+                        setState(() => _sector = _sector == s ? null : s),
+                    textStyle: AppTypography.labelSm,
+                    animated: true,
                   ),
-                  for (final s in sectors) ...[
-                    const SizedBox(width: AppSpacing.s2),
-                    _ScopeChip(
-                      label: '${_EarningsRow.sectorEmoji(s)} $s',
-                      active: _sector == s,
-                      onTap: () =>
-                          setState(() => _sector = _sector == s ? null : s),
-                    ),
-                  ],
-                ],
-              ),
+              ],
             ),
           ],
           const SizedBox(height: AppSpacing.s3),
@@ -301,40 +306,6 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
       'Nov', 'Dec'
     ];
     return m[(month - 1).clamp(0, 11)];
-  }
-}
-
-class _ScopeChip extends StatelessWidget {
-  const _ScopeChip(
-      {required this.label, required this.active, required this.onTap});
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
-        decoration: BoxDecoration(
-          color: active ? c.accent.withAlpha(38) : c.surfaceCard,
-          borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-              color: active ? c.accent : c.border, width: active ? 1.2 : 1),
-        ),
-        child: Text(
-          label,
-          style: AppTypography.labelSm.copyWith(
-            color: active ? c.accent : c.textSecondary,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-          ),
-        ),
-      ),
-    );
   }
 }
 

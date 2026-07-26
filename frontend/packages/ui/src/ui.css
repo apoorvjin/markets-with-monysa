@@ -41,6 +41,13 @@
   border-color: var(--accent);
   color: var(--text-primary);
 }
+/* Touch devices (phones/tablets opening app.finbrio.net) need a real ~44px
+   tap target; mouse users keep the compact desktop size. */
+@media (pointer: coarse) {
+  .ui-chip {
+    padding: 12px var(--s4);
+  }
+}
 
 .ui-badge {
   display: inline-flex;

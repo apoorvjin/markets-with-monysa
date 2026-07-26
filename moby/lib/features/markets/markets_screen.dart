@@ -13,6 +13,7 @@ import '../../data/repositories/markets_repository.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/chart_modal.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/pro_blur_overlay.dart';
@@ -982,43 +983,20 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
             ),
             children: [
               // Category chips
-              SizedBox(
-                height: 36,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+                child: Wrap(
+                  spacing: AppSpacing.s2,
+                  runSpacing: AppSpacing.s2,
                   children: _chips.map((chip) {
                     final selected = _category == chip.$1;
-                    return Padding(
-                      padding: const EdgeInsets.only(right: AppSpacing.s2),
-                      child: GestureDetector(
-                        onTap: () => setState(() => _category = chip.$1),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? c.accent.withAlpha(30)
-                                : c.surfaceCard,
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.full),
-                            border: Border.all(
-                              color: selected
-                                  ? c.accent.withAlpha(120)
-                                  : c.border,
-                            ),
-                          ),
-                          child: Text(
-                            chip.$2,
-                            style: AppTypography.labelSm.copyWith(
-                              color: selected ? c.accent : c.textMuted,
-                              fontWeight: selected
-                                  ? FontWeight.w700
-                                  : FontWeight.w400,
-                            ),
-                          ),
-                        ),
-                      ),
+                    return AppChip(
+                      label: chip.$2,
+                      active: selected,
+                      onTap: () => setState(() => _category = chip.$1),
+                      textStyle: AppTypography.labelSm,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                     );
                   }).toList(),
                 ),

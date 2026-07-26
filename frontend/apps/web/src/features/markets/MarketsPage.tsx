@@ -66,6 +66,7 @@ const COT_GROUPS = [
 ] as const;
 
 function CftcTab() {
+  const [group, setGroup] = useState<(typeof COT_GROUPS)[number][0]>("metals");
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["cot-metals"],
     queryFn: () => api.getCotMetals(),
@@ -76,7 +77,12 @@ function CftcTab() {
   if (isLoading || !data) return <SkeletonList rows={12} />;
   return (
     <>
-      {COT_GROUPS.map(([key, label]) => {
+      <ChipRow>
+        {COT_GROUPS.map(([key, label]) => (
+          <Chip key={key} label={label} active={group === key} onClick={() => setGroup(key)} />
+        ))}
+      </ChipRow>
+      {COT_GROUPS.filter(([key]) => key === group).map(([key, label]) => {
         const rows = data[key];
         if (!rows || rows.length === 0) return null;
         return (

@@ -717,6 +717,7 @@ function QuiverTable(props: { items: QuiverItem[] }) {
 }
 
 function SmartMoneyTab() {
+  const [strategy, setStrategy] = useState<"lobbying" | "insider">("lobbying");
   const insider = useQuery({
     queryKey: ["quiver", "insider"],
     queryFn: () => api.getQuiverInsider(),
@@ -727,25 +728,33 @@ function SmartMoneyTab() {
     queryFn: () => api.getQuiverLobbying(),
     staleTime: 4 * 3600_000,
   });
+  const active = strategy === "lobbying" ? lobbying : insider;
   return (
-    <div className="grid-2">
+    <>
+      <ChipRow>
+        <Chip
+          label="Lobbying Growth"
+          active={strategy === "lobbying"}
+          onClick={() => setStrategy("lobbying")}
+        />
+        <Chip
+          label="Insider Buys"
+          active={strategy === "insider"}
+          onClick={() => setStrategy("insider")}
+        />
+      </ChipRow>
       <Card>
-        <strong>{insider.data?.meta?.label ?? "Insider buying"}</strong>
-        {insider.isLoading || !insider.data ? (
+        <strong>
+          {active.data?.meta?.label ??
+            (strategy === "lobbying" ? "Lobbying growth" : "Insider buying")}
+        </strong>
+        {active.isLoading || !active.data ? (
           <SkeletonList rows={10} height={28} />
         ) : (
-          <QuiverTable items={insider.data.items} />
+          <QuiverTable items={active.data.items} />
         )}
       </Card>
-      <Card>
-        <strong>{lobbying.data?.meta?.label ?? "Lobbying growth"}</strong>
-        {lobbying.isLoading || !lobbying.data ? (
-          <SkeletonList rows={10} height={28} />
-        ) : (
-          <QuiverTable items={lobbying.data.items} />
-        )}
-      </Card>
-    </div>
+    </>
   );
 }
 
