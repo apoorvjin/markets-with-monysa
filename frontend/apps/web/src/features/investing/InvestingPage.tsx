@@ -21,6 +21,7 @@ import {
   fmtPct,
   fmtPrice,
   FreshnessBar,
+  ProBlur,
   SkeletonList,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
@@ -47,7 +48,7 @@ export function InvestingPage() {
 
   return (
     <div className="page">
-      <div className="page-header">
+      <div className="page-header ui-enter">
         <h1 className="page-title">Investing</h1>
         <ChipRow>
           {TABS.map((t) => (
@@ -761,6 +762,18 @@ function PresidentialTab() {
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
   if (isLoading || !data) return <SkeletonList rows={10} />;
+
+  // Newest filing is Pro-gated (teaser-only on web); every earlier filing is
+  // free. Mirrors mobile's presidential_latest_filing gate. The whole gated
+  // batch collapses into a single compact teaser row instead of blurring
+  // each record — that batch alone can be hundreds of rows.
+  const latestFilingDate = data.transactions.reduce<string | null>(
+    (max, t) => (t.filingDate && (!max || t.filingDate > max) ? t.filingDate : max),
+    null,
+  );
+  const gatedCount = data.transactions.filter((t) => t.filingDate === latestFilingDate).length;
+  const visible = data.transactions.filter((t) => t.filingDate !== latestFilingDate);
+
   return (
     <Card>
       <div className="page-header">
@@ -782,7 +795,23 @@ function PresidentialTab() {
           </tr>
         </thead>
         <tbody>
-          {data.transactions.map((t, i) => (
+          {gatedCount > 0 && (
+            <tr>
+              <td colSpan={4} style={{ padding: 0 }}>
+                <div className="presidential-teaser">
+                  <span className="presidential-teaser-lock">🔒</span>
+                  <div>
+                    <div className="cell-main">
+                      {gatedCount} latest filing{gatedCount === 1 ? "" : "s"}
+                      {latestFilingDate ? ` · Filed ${latestFilingDate}` : ""}
+                    </div>
+                    <div className="cell-sub">Upgrade to Pro to see the newest disclosures</div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          )}
+          {visible.map((t, i) => (
             <tr key={i}>
               <td className="cell-main" style={{ whiteSpace: "normal" }}>
                 {t.description}
@@ -848,7 +877,16 @@ function EtfExplorerTab() {
         </div>
         <ChipRow>
           <Chip label="List" active={view === "list"} onClick={() => setView("list")} />
-          <Chip label="Rotation" active={view === "rotation"} onClick={() => setView("rotation")} />
+          <Chip
+            label="Rotation"
+            active={view === "rotation"}
+            // Rotation only covers 4 of 7 categories — reset to All so
+            // switching views never lands on an empty view.
+            onClick={() => {
+              setView("rotation");
+              setCategory("");
+            }}
+          />
         </ChipRow>
       </Card>
       {view === "list" ? (
@@ -860,6 +898,37 @@ function EtfExplorerTab() {
   );
 }
 
+/** Rolling-window returns (not calendar-quarter-aligned): MoM = trailing
+    1mo, QoQ = trailing 3mo, YoY = trailing 1y. Pro-gated teaser (permanent
+    on web — no purchase flow): only one ETF in the whole list has
+    `revealed` true (picked by the parent list); every other row's strip is
+    blurred as a single unit. */
+function EtfPerfStrip({ item, revealed }: { item: EtfItem; revealed: boolean }) {
+  const metrics: [string, number | null | undefined][] = [
+    ["MoM", item.perf1M],
+    ["QoQ", item.perf3M],
+    ["YoY", item.perf1Y],
+  ];
+  const strip = (
+    <div className="cell-sub" style={{ marginTop: 2 }}>
+      {metrics.map(([label, value], i) => (
+        <span key={label} style={{ marginLeft: i > 0 ? 10 : 0 }}>
+          {label} <span className={changeClass(value)}>{fmtPct(value)}</span>
+        </span>
+      ))}
+    </div>
+  );
+  if (revealed) return strip;
+
+  const values = metrics.map(([, v]) => v).filter((v): v is number => v != null);
+  const avg = values.length === 0 ? 0 : values.reduce((a, b) => a + b, 0) / values.length;
+  return (
+    <ProBlur positive={avg >= 0} className="etf-perf-blur">
+      {strip}
+    </ProBlur>
+  );
+}
+
 function EtfListView(props: { category: EtfCategory | "" }) {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -868,6 +937,25 @@ function EtfListView(props: { category: EtfCategory | "" }) {
     queryFn: () => api.getEtfList(props.category || undefined),
     staleTime: 10 * 60_000,
   });
+  // Exactly one ETF in the list gets its MoM/QoQ/YoY strip revealed; every
+  // other row's strip is blurred as a single unit (permanent teaser — web
+  // has no purchase flow). Picked once per data load, not on every render.
+  // That ETF is moved to the top of the list so it's visible without
+  // scrolling.
+  const revealSymbol = useMemo(
+    () =>
+      data && data.items.length > 0
+        ? (data.items[Math.floor(Math.random() * data.items.length)]?.symbol ?? null)
+        : null,
+    [data],
+  );
+  const orderedItems = useMemo(() => {
+    if (!data) return [];
+    const idx = revealSymbol ? data.items.findIndex((i) => i.symbol === revealSymbol) : -1;
+    const picked = idx > 0 ? data.items[idx] : undefined;
+    if (!picked) return data.items;
+    return [picked, ...data.items.slice(0, idx), ...data.items.slice(idx + 1)];
+  }, [data, revealSymbol]);
 
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
@@ -889,7 +977,7 @@ function EtfListView(props: { category: EtfCategory | "" }) {
           </tr>
         </thead>
         <tbody>
-          {data.items.map((item) => (
+          {orderedItems.map((item) => (
             <Fragment key={item.symbol}>
               <tr
                 className="clickable"
@@ -910,6 +998,7 @@ function EtfListView(props: { category: EtfCategory | "" }) {
                       LEV
                     </span>
                   )}
+                  <EtfPerfStrip item={item} revealed={item.symbol === revealSymbol} />
                 </td>
                 <td className="num cell-main">
                   {item.price != null ? `$${fmtPrice(item.price)}` : "—"}

@@ -11,6 +11,9 @@ class EtfItem {
     this.changePercent,
     this.preMarketPrice,
     this.preMarketChangePercent,
+    this.perf1M,
+    this.perf3M,
+    this.perf1Y,
   });
 
   final String symbol;
@@ -22,6 +25,11 @@ class EtfItem {
   final double? changePercent;
   final double? preMarketPrice;
   final double? preMarketChangePercent;
+  // Rolling-window returns (not calendar-quarter-aligned): MoM = trailing
+  // 1mo, QoQ = trailing 3mo, YoY = trailing 1y.
+  final double? perf1M;
+  final double? perf3M;
+  final double? perf1Y;
 
   bool get isLeveraged => risk == 'leveraged';
 
@@ -35,6 +43,9 @@ class EtfItem {
         changePercent: (j['changePercent'] as num?)?.toDouble(),
         preMarketPrice: (j['preMarketPrice'] as num?)?.toDouble(),
         preMarketChangePercent: (j['preMarketChangePercent'] as num?)?.toDouble(),
+        perf1M: (j['perf1M'] as num?)?.toDouble(),
+        perf3M: (j['perf3M'] as num?)?.toDouble(),
+        perf1Y: (j['perf1Y'] as num?)?.toDouble(),
       );
 }
 

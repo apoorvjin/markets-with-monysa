@@ -12,6 +12,7 @@ import {
   fmtPct,
   fmtPrice,
   FreshnessBar,
+  ProBlur,
   SkeletonList,
   Stat,
 } from "@monysa/ui";
@@ -26,7 +27,7 @@ export function MacroPage() {
   const [tab, setTab] = useState<Tab>("Dashboard");
   return (
     <div className="page">
-      <div className="page-header">
+      <div className="page-header ui-enter">
         <h1 className="page-title">Macro</h1>
         <ChipRow>
           {TABS.map((t) => (
@@ -762,6 +763,10 @@ function CorrelationTab() {
 const ADV_WINDOWS = ["1m", "3m", "6m", "1y"] as const;
 type AdvWindow = (typeof ADV_WINDOWS)[number];
 const ADV_WINDOW_LABELS: Record<AdvWindow, string> = { "1m": "1M", "3m": "3M", "6m": "6M", "1y": "1Y" };
+// 1M is free; 3M/6M/1Y are Pro (teaser-only on web — no purchase flow). Chip
+// stays selectable for everyone; the matrix is blurred on a gated window
+// rather than blocking the tap.
+const ADV_GATED_WINDOWS = new Set<AdvWindow>(["3m", "6m", "1y"]);
 
 const ADV_CATEGORIES = ["All", "Commodities", "Indices", "Crypto", "Forex", "Stocks"] as const;
 type AdvCategory = (typeof ADV_CATEGORIES)[number];
@@ -846,6 +851,58 @@ function AdvCorrelationTab() {
   if (error) return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
   if (isLoading || !data) return <SkeletonList rows={10} />;
 
+  const showOverlay = ADV_GATED_WINDOWS.has(window_);
+  const offDiag: number[] = [];
+  for (const i of visibleIdx) {
+    for (const j of visibleIdx) {
+      if (i !== j) offDiag.push(data.matrix[i]?.[j] ?? 0);
+    }
+  }
+  const avgCorr = offDiag.length === 0 ? 0 : offDiag.reduce((a, b) => a + b, 0) / offDiag.length;
+
+  const matrix = (
+    <table className="tbl" style={{ fontSize: "var(--fs-sm)" }}>
+      <thead>
+        <tr>
+          <th />
+          {visibleIdx.map((i) => (
+            <th key={data.symbols[i]!.symbol} className="num" title={data.symbols[i]!.name}>
+              {data.symbols[i]!.flag || data.symbols[i]!.symbol}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {visibleIdx.map((i) => {
+          const row = data.symbols[i]!;
+          return (
+            <tr key={row.symbol}>
+              <td className="cell-main" title={row.name}>
+                {row.flag ?? ""} {row.symbol}
+              </td>
+              {visibleIdx.map((j) => (
+                <td
+                  key={j}
+                  className="num"
+                  style={{
+                    background: corrBg(data.matrix[i]?.[j] ?? 0),
+                    color: "var(--text-primary)",
+                    cursor: i === j ? "default" : "pointer",
+                  }}
+                  onClick={() => {
+                    if (i !== j) setDrillDown({ a: row.symbol, b: data.symbols[j]!.symbol });
+                  }}
+                >
+                  {(data.matrix[i]?.[j] ?? 0).toFixed(2)}
+                </td>
+              ))}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+
   return (
     <>
       <FreshnessBar lastUpdated={data.lastUpdated} />
@@ -857,7 +914,12 @@ function AdvCorrelationTab() {
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--s3)", marginBottom: "var(--s4)" }}>
         <ChipRow>
           {ADV_WINDOWS.map((w) => (
-            <Chip key={w} label={ADV_WINDOW_LABELS[w]} active={window_ === w} onClick={() => setWindow(w)} />
+            <Chip
+              key={w}
+              label={ADV_GATED_WINDOWS.has(w) ? `🔒 ${ADV_WINDOW_LABELS[w]}` : ADV_WINDOW_LABELS[w]}
+              active={window_ === w}
+              onClick={() => setWindow(w)}
+            />
           ))}
         </ChipRow>
         <ChipRow>
@@ -868,46 +930,13 @@ function AdvCorrelationTab() {
       </div>
 
       <div className="tbl-wrap">
-        <table className="tbl" style={{ fontSize: "var(--fs-sm)" }}>
-          <thead>
-            <tr>
-              <th />
-              {visibleIdx.map((i) => (
-                <th key={data.symbols[i]!.symbol} className="num" title={data.symbols[i]!.name}>
-                  {data.symbols[i]!.flag || data.symbols[i]!.symbol}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visibleIdx.map((i) => {
-              const row = data.symbols[i]!;
-              return (
-                <tr key={row.symbol}>
-                  <td className="cell-main" title={row.name}>
-                    {row.flag ?? ""} {row.symbol}
-                  </td>
-                  {visibleIdx.map((j) => (
-                    <td
-                      key={j}
-                      className="num"
-                      style={{
-                        background: corrBg(data.matrix[i]?.[j] ?? 0),
-                        color: "var(--text-primary)",
-                        cursor: i === j ? "default" : "pointer",
-                      }}
-                      onClick={() => {
-                        if (i !== j) setDrillDown({ a: row.symbol, b: data.symbols[j]!.symbol });
-                      }}
-                    >
-                      {(data.matrix[i]?.[j] ?? 0).toFixed(2)}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        {showOverlay ? (
+          <ProBlur positive={avgCorr >= 0} className="adv-corr-blur">
+            {matrix}
+          </ProBlur>
+        ) : (
+          matrix
+        )}
       </div>
 
       <Card className="adv-corr-custom" style={{ marginTop: "var(--s5)" }}>

@@ -3,8 +3,22 @@ import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/models/heatmap_data.dart';
+import '../../services/entitlement_service.dart';
+import 'pro_blur_overlay.dart';
 
 enum _HeatmapTimeframe { d1, w1, m1, m3, m6, y1, y3, y5 }
+
+// 1D/1W are free; every other timeframe is Pro — chips stay selectable for
+// everyone (switching always works), but the rendered grid is blurred for
+// free users on a gated timeframe rather than blocking the tap.
+const _gatedTimeframes = {
+  _HeatmapTimeframe.m1,
+  _HeatmapTimeframe.m3,
+  _HeatmapTimeframe.m6,
+  _HeatmapTimeframe.y1,
+  _HeatmapTimeframe.y3,
+  _HeatmapTimeframe.y5,
+};
 
 class PerformanceHeatmap extends StatefulWidget {
   const PerformanceHeatmap({super.key, required this.tiles});
@@ -59,6 +73,72 @@ class _PerformanceHeatmapState extends State<PerformanceHeatmap> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final isPro = EntitlementService.can('macro_performance_timeframes');
+    final showOverlay = !isPro && _gatedTimeframes.contains(_tf);
+
+    final values = widget.tiles.map(_valueFor).whereType<double>().toList();
+    final avg =
+        values.isEmpty ? 0.0 : values.reduce((a, b) => a + b) / values.length;
+
+    final grid = LayoutBuilder(
+      builder: (context, constraints) {
+        const cols = 3;
+        const gap = 4.0;
+        final tileW = (constraints.maxWidth - gap * (cols - 1)) / cols;
+        const tileH = 70.0;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: widget.tiles.map((tile) {
+            final pct = _valueFor(tile);
+            final bg = _tileColor(pct, c);
+            final fg = _textColor(bg, c);
+            return Container(
+              width: tileW,
+              height: tileH,
+              decoration: BoxDecoration(
+                color: bg,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 6,
+                vertical: 8,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    tile.emoji,
+                    style: const TextStyle(fontSize: 16),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    tile.name,
+                    textAlign: TextAlign.center,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTypography.xs.copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    pct == null
+                        ? '—'
+                        : '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(2)}%',
+                    style: AppTypography.xs.copyWith(
+                      color: fg,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }).toList(),
+        );
+      },
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -68,65 +148,14 @@ class _PerformanceHeatmapState extends State<PerformanceHeatmap> {
           onChanged: (v) => setState(() => _tf = v),
         ),
         const SizedBox(height: AppSpacing.s3),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            const cols = 3;
-            const gap = 4.0;
-            final tileW = (constraints.maxWidth - gap * (cols - 1)) / cols;
-            const tileH = 70.0;
-            return Wrap(
-              spacing: gap,
-              runSpacing: gap,
-              children: widget.tiles.map((tile) {
-                final pct = _valueFor(tile);
-                final bg = _tileColor(pct, c);
-                final fg = _textColor(bg, c);
-                return Container(
-                  width: tileW,
-                  height: tileH,
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 8,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        tile.emoji,
-                        style: const TextStyle(fontSize: 16),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        tile.name,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppTypography.xs.copyWith(
-                          color: fg,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        pct == null
-                            ? '—'
-                            : '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(2)}%',
-                        style: AppTypography.xs.copyWith(
-                          color: fg,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }).toList(),
-            );
-          },
-        ),
+        showOverlay
+            ? ProBlurOverlay(
+                isPositive: avg >= 0,
+                feature: 'macro_performance_timeframes',
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                child: grid,
+              )
+            : grid,
       ],
     );
   }
@@ -141,6 +170,7 @@ class _TimeframeToggle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final isPro = EntitlementService.can('macro_performance_timeframes');
     const options = [
       (_HeatmapTimeframe.d1, '1D'),
       (_HeatmapTimeframe.w1, '1W'),
@@ -158,7 +188,9 @@ class _TimeframeToggle extends StatelessWidget {
         children: options.map((opt) {
           final (tf, label) = opt;
           final isActive = selected == tf;
+          final locked = !isPro && _gatedTimeframes.contains(tf);
           return GestureDetector(
+            // Always switches — gating hides the resulting data, not the tap.
             onTap: () => onChanged(tf),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
@@ -172,12 +204,22 @@ class _TimeframeToggle extends StatelessWidget {
                   width: 1,
                 ),
               ),
-              child: Text(
-                label,
-                style: AppTypography.xs.copyWith(
-                  color: isActive ? c.accent : c.textSecondary,
-                  fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (locked) ...[
+                    Icon(Icons.lock_rounded,
+                        size: 10, color: isActive ? c.accent : c.textMuted),
+                    const SizedBox(width: 3),
+                  ],
+                  Text(
+                    label,
+                    style: AppTypography.xs.copyWith(
+                      color: isActive ? c.accent : c.textSecondary,
+                      fontWeight: isActive ? FontWeight.w700 : FontWeight.w400,
+                    ),
+                  ),
+                ],
               ),
             ),
           );

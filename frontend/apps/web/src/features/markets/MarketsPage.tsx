@@ -16,6 +16,8 @@ import {
   ErrorView,
   fmtCompact,
   FreshnessBar,
+  ProBlur,
+  Skeleton,
   SkeletonList,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
@@ -37,7 +39,7 @@ export function MarketsPage() {
 
   return (
     <div className="page">
-      <div className="page-header">
+      <div className="page-header ui-enter">
         <h1 className="page-title">Markets</h1>
         <ChipRow>
           {TABS.map((t) => (
@@ -58,9 +60,9 @@ export function MarketsPage() {
 const COT_GROUPS = [
   ["metals", "Metals"],
   ["energy", "Energy"],
-  ["currencies", "Currencies"],
   ["indicesRates", "Indices & Rates"],
   ["agriculture", "Agriculture"],
+  ["currencies", "Currencies"],
 ] as const;
 
 function CftcTab() {
@@ -93,43 +95,62 @@ function CftcTab() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((m) => (
-                    <tr key={m.name}>
-                      <td>
-                        <span style={{ marginRight: 6 }}>{m.emoji ?? ""}</span>
-                        <span className="cell-main">{m.name}</span>
-                      </td>
-                      <td className={`num ${changeClass(m.netPosition)}`}>
-                        {m.netPosition?.toLocaleString("en-US") ?? "—"}
-                      </td>
-                      <td className="num">
-                        {m.longPct != null ? `${m.longPct.toFixed(1)}%` : "—"}
-                      </td>
-                      <td className={`num ${changeClass(m.weekNetChange)}`}>
-                        {m.weekNetChange?.toLocaleString("en-US") ?? "—"}
-                      </td>
-                      <td>
-                        <span
-                          className="ui-badge"
-                          data-tone={
-                            (m.sentiment ?? "").toLowerCase().includes("bull")
-                              ? "buy"
-                              : (m.sentiment ?? "").toLowerCase().includes("bear")
-                                ? "sell"
-                                : "hold"
-                          }
-                        >
-                          {m.sentiment ?? "—"}
-                        </span>
-                        {m.usdBias && (
-                          <span className="cell-sub" style={{ marginLeft: 8 }}>
-                            USD {m.usdBias}
-                          </span>
-                        )}
-                      </td>
-                      <td className="cell-sub">{m.reportDate ?? "—"}</td>
-                    </tr>
-                  ))}
+                  {rows.map((m, i) => {
+                    if (i === 0) {
+                      return (
+                        <tr key={m.name}>
+                          <td>
+                            <span style={{ marginRight: 6 }}>{m.emoji ?? ""}</span>
+                            <span className="cell-main">{m.name}</span>
+                          </td>
+                          <td className={`num ${changeClass(m.netPosition)}`}>
+                            {m.netPosition?.toLocaleString("en-US") ?? "—"}
+                          </td>
+                          <td className="num">
+                            {m.longPct != null ? `${m.longPct.toFixed(1)}%` : "—"}
+                          </td>
+                          <td className={`num ${changeClass(m.weekNetChange)}`}>
+                            {m.weekNetChange?.toLocaleString("en-US") ?? "—"}
+                          </td>
+                          <td>
+                            <span
+                              className="ui-badge"
+                              data-tone={
+                                (m.sentiment ?? "").toLowerCase().includes("bull")
+                                  ? "buy"
+                                  : (m.sentiment ?? "").toLowerCase().includes("bear")
+                                    ? "sell"
+                                    : "hold"
+                              }
+                            >
+                              {m.sentiment ?? "—"}
+                            </span>
+                            {m.usdBias && (
+                              <span className="cell-sub" style={{ marginLeft: 8 }}>
+                                USD {m.usdBias}
+                              </span>
+                            )}
+                          </td>
+                          <td className="cell-sub">{m.reportDate ?? "—"}</td>
+                        </tr>
+                      );
+                    }
+                    return (
+                      <tr key={m.name}>
+                        <td colSpan={6} style={{ padding: "var(--s2) 0" }}>
+                          <ProBlur positive={(m.netPosition ?? 0) >= 0} className="cftc-row-blur">
+                            <span style={{ marginRight: 6 }}>{m.emoji ?? ""}</span>
+                            <span className="cell-main">{m.name}</span>
+                            <span className="cell-sub" style={{ marginLeft: 10 }}>
+                              net {m.netPosition?.toLocaleString("en-US") ?? "—"} · long{" "}
+                              {m.longPct != null ? `${m.longPct.toFixed(1)}%` : "—"} ·{" "}
+                              {m.sentiment ?? "—"}
+                            </span>
+                          </ProBlur>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -137,6 +158,33 @@ function CftcTab() {
         );
       })}
     </>
+  );
+}
+
+// Loosely mimics a squarified treemap mosaic (varied tile sizes stacked in
+// rows) so the loading state doesn't jump-cut into a completely different
+// shape once data arrives — a generic row-list skeleton reads nothing like
+// the eventual tile grid. Total height roughly matches CanvasTreemap's own
+// height={620} so the page doesn't visibly resize when data loads.
+function TreemapSkeleton() {
+  const rows: { height: number; flexes: number[] }[] = [
+    { height: 200, flexes: [3, 2] },
+    { height: 140, flexes: [1, 1, 1, 1] },
+    { height: 160, flexes: [2, 1, 2] },
+    { height: 100, flexes: [1, 1, 1, 1, 1] },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {rows.map((row, i) => (
+        <div key={i} style={{ display: "flex", gap: 4 }}>
+          {row.flexes.map((flex, j) => (
+            <div key={j} style={{ flex }}>
+              <Skeleton height={row.height} />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -191,7 +239,7 @@ function TreemapTab() {
           {TREEMAP_TIMEFRAMES.map((tf) => (
             <Chip
               key={tf}
-              label={TF_LABEL[tf]}
+              label={tf === "1d" ? TF_LABEL[tf] : `🔒 ${TF_LABEL[tf]}`}
               active={timeframe === tf}
               onClick={() => setTimeframe(tf)}
             />
@@ -219,23 +267,29 @@ function TreemapTab() {
       {error ? (
         <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />
       ) : isLoading || !data ? (
-        <SkeletonList rows={6} height={80} />
+        <TreemapSkeleton />
       ) : (
         <>
-          <CanvasTreemap
-            height={620}
-            data={treemapData}
-            onGroupSelect={focusedSector ? undefined : (g) => setFocusedSector(g)}
-            onSelect={(d) => {
-              if (d) {
-                void navigate({
-                  to: "/asset/$symbol",
-                  params: { symbol: d.id },
-                  search: { name: d.sublabel?.split(" · ")[0] ?? d.id },
-                });
-              }
-            }}
-          />
+          {timeframe !== "1d" ? (
+            <ProBlur positive={weightedAvg >= 0} className="treemap-blur">
+              <CanvasTreemap height={620} data={treemapData} />
+            </ProBlur>
+          ) : (
+            <CanvasTreemap
+              height={620}
+              data={treemapData}
+              onGroupSelect={focusedSector ? undefined : (g) => setFocusedSector(g)}
+              onSelect={(d) => {
+                if (d) {
+                  void navigate({
+                    to: "/asset/$symbol",
+                    params: { symbol: d.id },
+                    search: { name: d.sublabel?.split(" · ")[0] ?? d.id },
+                  });
+                }
+              }}
+            />
+          )}
           {timeframe === "1d" && (
             <div className="cell-sub" style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 4px 0" }}>
               <span
@@ -277,7 +331,7 @@ function FuturesTab(props: { kind: "indices" | "commodities" | "forex" }) {
   return (
     <>
       <FreshnessBar lastUpdated={data.lastUpdated} />
-      <MarketTable items={data.items} />
+      <MarketTable items={data.items} isForex={props.kind === "forex"} />
     </>
   );
 }

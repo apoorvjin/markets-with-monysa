@@ -11,8 +11,8 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 import 'sector_impact_sheet.dart';
 
-final _tariffsProvider = FutureProvider<List<CountryTariff>>(
-    (_) => TariffsData.instance.load());
+final _tariffsProvider =
+    FutureProvider<List<CountryTariff>>((_) => TariffsData.instance.load());
 
 class CountryDetailScreen extends ConsumerWidget {
   const CountryDetailScreen({super.key, required this.countryCode});
@@ -32,16 +32,16 @@ class CountryDetailScreen extends ConsumerWidget {
     return Scaffold(
       backgroundColor: c.background,
       body: async.when(
-        loading: () => Center(
-            child: CircularProgressIndicator(color: c.accent)),
+        loading: () =>
+            Center(child: CircularProgressIndicator(color: c.accent)),
         error: (_, __) => const ErrorView(message: 'Country not found'),
         data: (countries) {
-          final matches =
-              countries.where((c) => c.countryCode == countryCode);
+          final matches = countries.where((c) => c.countryCode == countryCode);
           if (matches.isEmpty) {
             return const ErrorView(message: 'Country not found');
           }
           final country = matches.first;
+          final canViewStocks = EntitlementService.can('country_top_stocks');
 
           return CustomScrollView(
             slivers: [
@@ -95,8 +95,8 @@ class CountryDetailScreen extends ConsumerWidget {
                           const SizedBox(height: AppSpacing.s4),
                           Text(
                             country.laymanExplanation,
-                            style: AppTypography.lg.copyWith(
-                                color: c.textSecondary, height: 1.6),
+                            style: AppTypography.lg
+                                .copyWith(color: c.textSecondary, height: 1.6),
                             textAlign: TextAlign.center,
                           ),
                         ],
@@ -127,21 +127,31 @@ class CountryDetailScreen extends ConsumerWidget {
 
                     const SizedBox(height: AppSpacing.s5),
                     FilledButton.icon(
-                      onPressed: () => context.push(
-                          '/country/$countryCode/stocks?name=${Uri.encodeComponent(country.countryName)}'),
-                      icon: const Icon(Icons.bar_chart),
+                      onPressed: () {
+                        if (canViewStocks) {
+                          context.push(
+                              '/country/$countryCode/stocks?name=${Uri.encodeComponent(country.countryName)}');
+                        } else {
+                          UpgradeSheet.show(context,
+                              feature: 'country_top_stocks');
+                        }
+                      },
+                      icon: Icon(
+                          canViewStocks ? Icons.bar_chart : Icons.lock_rounded),
                       label: const Text('View Top Listed Stocks'),
                       style: FilledButton.styleFrom(
                         backgroundColor: c.accent,
                         foregroundColor: c.background,
                         minimumSize: const Size(double.infinity, 48),
                         shape: RoundedRectangleBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppRadius.md),
+                          borderRadius: BorderRadius.circular(AppRadius.md),
                         ),
                       ),
                     ),
-                    SizedBox(height: AppSpacing.s5 + MediaQuery.of(context).padding.bottom + 64),
+                    SizedBox(
+                        height: AppSpacing.s5 +
+                            MediaQuery.of(context).padding.bottom +
+                            64),
                   ]),
                 ),
               ),
@@ -235,8 +245,8 @@ class _SectorRow extends StatelessWidget {
                   const SizedBox(width: 3),
                   Text(
                     EntitlementService.can('exposure_ai') ? 'AI' : 'Pro',
-                    style: AppTypography.xs.copyWith(
-                        color: c.accent, fontWeight: FontWeight.w700),
+                    style: AppTypography.xs
+                        .copyWith(color: c.accent, fontWeight: FontWeight.w700),
                   ),
                 ],
               ),
@@ -271,8 +281,8 @@ class _DebtRow extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(debt.category,
-                    style: AppTypography.labelMd.copyWith(
-                        color: c.textSecondary)),
+                    style:
+                        AppTypography.labelMd.copyWith(color: c.textSecondary)),
               ),
               Text(
                 '\$${debt.amountBillions.toStringAsFixed(1)}B',

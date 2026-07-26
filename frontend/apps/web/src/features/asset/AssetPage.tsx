@@ -196,7 +196,7 @@ export function AssetPage(props: { symbol: string; name?: string }) {
 
   return (
     <div className="page">
-      <div className="page-header">
+      <div className="page-header ui-enter">
         <h1 className="page-title">
           {props.name ?? symbol}{" "}
           <span style={{ color: "var(--text-faint)", fontWeight: 500 }}>

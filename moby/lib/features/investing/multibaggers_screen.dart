@@ -11,6 +11,7 @@ import '../../shared/widgets/empty_view.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
+import '../../shared/widgets/shimmer_list.dart';
 import '../../shared/widgets/theme_toggle.dart';
 
 // Maps the (country, version) pair to the repository cache key used in
@@ -69,6 +70,28 @@ final _mbSingleScanProvider = FutureProvider.autoDispose
   ),
 );
 
+// Foreign suffix/exchange pairs, one entry per non-US market this screen
+// supports. Used both to match a country's own stocks and — inverted — to
+// deny-list every *other* market's stocks from the 'us' bucket, so a cross
+// -listing (e.g. Apple's Frankfurt '.DE' or Toyota's ADR) can't leak into
+// the wrong country just because its suffix wasn't explicitly recognized.
+const _foreignSuffixes = [
+  '.NS', '.BO', // india
+  '.L', // uk
+  '.T', '.OS', // japan
+  '.HK', // hongkong
+  '.SS', '.SZ', // china
+  '.PA', '.AS', '.BR', '.MI', '.OL', '.LS', '.DE', '.F', // euronext (+ DE)
+];
+const _foreignExchanges = {
+  'NSI', 'BSE', // india
+  'LSE', 'IOB', // uk
+  'JPX', 'TSE', 'OSA', // japan
+  'HKG', // hongkong
+  'SHH', 'SHZ', // china
+  'EPA', 'AMS', 'BRU', 'MIL', 'OSL', 'GER', 'FRA', // euronext (+ DE)
+};
+
 bool _isStockForCountry(StockSearchResult r, String country) {
   final sym = r.symbol.toUpperCase();
   final exc = r.exchange.toUpperCase();
@@ -87,20 +110,20 @@ bool _isStockForCountry(StockSearchResult r, String country) {
       return sym.endsWith('.SS') || sym.endsWith('.SZ') ||
           exc == 'SHH' || exc == 'SHZ';
     case 'euronext':
+      // Info sheet advertises "FR + NL + DE + IT + NO combined" — include
+      // Germany's suffix/exchange codes too, not just the Euronext members.
       return sym.endsWith('.PA') || sym.endsWith('.AS') ||
           sym.endsWith('.BR') || sym.endsWith('.MI') ||
           sym.endsWith('.OL') || sym.endsWith('.LS') ||
+          sym.endsWith('.DE') || sym.endsWith('.F') ||
           exc == 'EPA' || exc == 'AMS' || exc == 'BRU' ||
-          exc == 'MIL' || exc == 'OSL';
+          exc == 'MIL' || exc == 'OSL' || exc == 'GER' || exc == 'FRA';
     case 'us':
     default:
-      // Exclude known international suffixes; class suffixes like .A/.B are fine
-      return !sym.endsWith('.NS') && !sym.endsWith('.BO') &&
-          !sym.endsWith('.L') && !sym.endsWith('.T') &&
-          !sym.endsWith('.HK') && !sym.endsWith('.SS') &&
-          !sym.endsWith('.SZ') && !sym.endsWith('.PA') &&
-          !sym.endsWith('.AS') && !sym.endsWith('.BR') &&
-          !sym.endsWith('.MI') && !sym.endsWith('.OL');
+      // Class suffixes like .A/.B are fine — only reject symbols/exchanges
+      // that are known listings of one of the *other* markets above.
+      return !_foreignSuffixes.any(sym.endsWith) &&
+          !_foreignExchanges.contains(exc);
   }
 }
 
@@ -418,7 +441,7 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
           searchBar,
           Expanded(
             child: async.when(
-              loading: () => const _ScannerSkeleton(),
+              loading: () => const _ScannerLoadingView(),
               error: (e, _) => ErrorView(
                 message: '${_countryLabel(_country)} scanner unavailable',
                 onRetry: () => ref.invalidate(_multibaggersProvider(_args)),
@@ -1018,27 +1041,75 @@ class _PctChip extends StatelessWidget {
   }
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
+// ── Loading state — shimmer + delayed "still scanning" hint ──────────────────
 
-class _ScannerSkeleton extends StatelessWidget {
-  const _ScannerSkeleton();
+class _ScannerLoadingView extends StatefulWidget {
+  const _ScannerLoadingView();
+
+  @override
+  State<_ScannerLoadingView> createState() => _ScannerLoadingViewState();
+}
+
+class _ScannerLoadingViewState extends State<_ScannerLoadingView> {
+  bool _showHint = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Most scans resolve well under this — only shown if it's genuinely slow
+    // (cold cache, full market pass), so users don't think it's stuck.
+    _timer = Timer(const Duration(seconds: 5), () {
+      if (mounted) setState(() => _showHint = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(
-          vertical: AppSpacing.s3, horizontal: AppSpacing.s5),
-      itemCount: 8,
-      itemBuilder: (_, __) => Container(
-        margin: const EdgeInsets.only(bottom: AppSpacing.s3),
-        height: 96,
-        decoration: BoxDecoration(
-          color: c.surface,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: c.border),
-        ),
-      ),
+    return Stack(
+      children: [
+        const ShimmerList(count: 6, type: ShimmerRowType.scannerCard),
+        if (_showHint)
+          Positioned(
+            top: AppSpacing.s3,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
+                decoration: BoxDecoration(
+                  color: c.surfaceElevated,
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                  border: Border.all(color: c.border),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 12,
+                      height: 12,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: c.accent),
+                    ),
+                    const SizedBox(width: AppSpacing.s2),
+                    Text(
+                      'Still scanning — this can take a few seconds',
+                      style: AppTypography.xs.copyWith(color: c.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

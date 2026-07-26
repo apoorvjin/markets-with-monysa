@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
@@ -52,6 +53,8 @@ class ProfileScreen extends ConsumerWidget {
           _AccountSection(),
           SizedBox(height: AppSpacing.s6),
           _AboutSection(),
+          SizedBox(height: AppSpacing.s4),
+          _DeleteAccountLink(),
         ],
       ),
     );
@@ -296,8 +299,8 @@ class _SubscriptionCardState extends State<_SubscriptionCard> {
               ),
               child: Text(
                 _planLabel(plan).toUpperCase(),
-                style: AppTypography.labelSm.copyWith(
-                    color: c.accent, fontWeight: FontWeight.w700),
+                style: AppTypography.labelSm
+                    .copyWith(color: c.accent, fontWeight: FontWeight.w700),
               ),
             ),
             const SizedBox(width: AppSpacing.s3),
@@ -403,7 +406,9 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
       setState(() {
         _enabled = ok;
         _loading = false;
-        _error = ok ? null : 'Could not enable — check notification permission in Settings';
+        _error = ok
+            ? null
+            : 'Could not enable — check notification permission in Settings';
       });
     } else {
       await PushNotificationService.disable();
@@ -556,8 +561,7 @@ class _ThemeChip extends ConsumerWidget {
                 label,
                 style: AppTypography.labelSm.copyWith(
                   color: selected ? c.background : c.textMuted,
-                  fontWeight:
-                      selected ? FontWeight.w700 : FontWeight.w400,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w400,
                 ),
               ),
             ],
@@ -675,7 +679,7 @@ Future<void> _confirmChartProviderSwitch(
       title: Text('Switch Chart Provider',
           style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
       content: Text(
-        'Switching to ${next.label} will restart the app. Continue?',
+        'Switch to ${next.label} for chart data?',
         style: AppTypography.md.copyWith(color: c.textSecondary),
       ),
       actions: [
@@ -693,8 +697,15 @@ Future<void> _confirmChartProviderSwitch(
     ),
   );
   if (confirmed != true) return;
+  // Takes effect immediately — ChartProviderNotifier.set() updates Riverpod
+  // state and the currentChartRenderer global (read fresh on every chart
+  // request by ChartRendererInterceptor) synchronously, no restart needed.
   await ref.read(chartProviderProvider.notifier).set(next);
-  if (context.mounted) RestartWidget.restartApp(context);
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Chart provider switched to ${next.label}')),
+    );
+  }
 }
 
 class _ChartProviderSection extends ConsumerWidget {
@@ -1019,92 +1030,6 @@ class _AccountSection extends ConsumerWidget {
     }
   }
 
-  Future<void> _deleteAccount(BuildContext context) async {
-    final c = context.colors;
-    final passwordCtrl = TextEditingController();
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: c.surface,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppRadius.md)),
-        title: Text('Delete Account',
-            style: AppTypography.headingSm.copyWith(color: c.danger)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'This permanently deletes your account and cannot be undone. Enter your password to confirm.',
-              style: AppTypography.sm.copyWith(color: c.textSecondary),
-            ),
-            const SizedBox(height: AppSpacing.s4),
-            TextField(
-              controller: passwordCtrl,
-              obscureText: true,
-              style: AppTypography.md.copyWith(color: c.textPrimary),
-              decoration: InputDecoration(
-                hintText: 'Password',
-                hintStyle: AppTypography.md.copyWith(color: c.textMuted),
-                filled: true,
-                fillColor: c.surfaceCard,
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  borderSide: BorderSide(color: c.border),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  borderSide: BorderSide(color: c.border),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                  borderSide: BorderSide(color: c.danger),
-                ),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: Text('Cancel',
-                style: AppTypography.labelMd.copyWith(color: c.textMuted)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: Text('Delete',
-                style: AppTypography.labelMd.copyWith(color: c.danger)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true) return;
-    try {
-      await AuthService.deleteAccount(passwordCtrl.text);
-      if (context.mounted) context.go('/auth');
-    } on AuthException catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(e.message),
-            behavior: SnackBarBehavior.floating,
-            margin: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              bottom: 80 + MediaQuery.of(context).padding.bottom,
-            ),
-          ),
-        );
-      }
-    } finally {
-      passwordCtrl.dispose();
-    }
-  }
-
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
@@ -1143,13 +1068,6 @@ class _AccountSection extends ConsumerWidget {
                 label: 'Sign Out',
                 color: c.danger,
                 onTap: () => _signOut(context),
-              ),
-              Divider(height: 1, color: c.border),
-              _ActionRow(
-                icon: Icons.delete_forever_rounded,
-                label: 'Delete Account',
-                color: c.danger,
-                onTap: () => _deleteAccount(context),
               ),
             ],
           ),
@@ -1226,7 +1144,16 @@ class _AboutSection extends StatelessWidget {
             children: [
               const _AboutRow(label: 'App', value: 'FinBrio'),
               Divider(height: 1, color: c.border),
-              const _AboutRow(label: 'Version', value: '1.0.0'),
+              FutureBuilder<PackageInfo>(
+                future: PackageInfo.fromPlatform(),
+                builder: (context, snapshot) {
+                  final info = snapshot.data;
+                  final value = info == null
+                      ? '—'
+                      : '${info.version} (${info.buildNumber})';
+                  return _AboutRow(label: 'Version', value: value);
+                },
+              ),
               Divider(height: 1, color: c.border),
               const _AboutLinkRow(
                 label: 'Privacy Policy',
@@ -1291,13 +1218,123 @@ class _AboutRow extends StatelessWidget {
           horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
       child: Row(
         children: [
-          Text(label,
-              style: AppTypography.md.copyWith(color: c.textSecondary)),
+          Text(label, style: AppTypography.md.copyWith(color: c.textSecondary)),
           const Spacer(),
-          Text(value,
-              style: AppTypography.md.copyWith(color: c.textPrimary)),
+          Text(value, style: AppTypography.md.copyWith(color: c.textPrimary)),
         ],
       ),
     );
+  }
+}
+
+// ── Delete Account — free-standing link below the About/Support container ───
+
+class _DeleteAccountLink extends StatelessWidget {
+  const _DeleteAccountLink();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Center(
+      child: InkWell(
+        onTap: () => _deleteAccount(context),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
+          child: Text(
+            'Delete Account',
+            style: AppTypography.sm.copyWith(
+              color: c.danger,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _deleteAccount(BuildContext context) async {
+  final c = context.colors;
+  final passwordCtrl = TextEditingController();
+
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: c.surface,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md)),
+      title: Text('Delete Account',
+          style: AppTypography.headingSm.copyWith(color: c.danger)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'This permanently deletes your account and cannot be undone. Enter your password to confirm.',
+            style: AppTypography.sm.copyWith(color: c.textSecondary),
+          ),
+          const SizedBox(height: AppSpacing.s4),
+          TextField(
+            controller: passwordCtrl,
+            obscureText: true,
+            style: AppTypography.md.copyWith(color: c.textPrimary),
+            decoration: InputDecoration(
+              hintText: 'Password',
+              hintStyle: AppTypography.md.copyWith(color: c.textMuted),
+              filled: true,
+              fillColor: c.surfaceCard,
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                borderSide: BorderSide(color: c.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                borderSide: BorderSide(color: c.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                borderSide: BorderSide(color: c.danger),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: Text('Cancel',
+              style: AppTypography.labelMd.copyWith(color: c.textMuted)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: Text('Delete',
+              style: AppTypography.labelMd.copyWith(color: c.danger)),
+        ),
+      ],
+    ),
+  );
+
+  if (confirmed != true) return;
+  try {
+    await AuthService.deleteAccount(passwordCtrl.text);
+    if (context.mounted) context.go('/auth');
+  } on AuthException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          behavior: SnackBarBehavior.floating,
+          margin: EdgeInsets.only(
+            left: 16,
+            right: 16,
+            bottom: 80 + MediaQuery.of(context).padding.bottom,
+          ),
+        ),
+      );
+    }
+  } finally {
+    passwordCtrl.dispose();
   }
 }

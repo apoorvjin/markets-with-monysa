@@ -10,9 +10,11 @@ import '../../data/models/adv_correlation_models.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../providers/custom_correlation_symbols_provider.dart';
+import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_shell_insets.dart';
 import '../../shared/widgets/correlation_matrix_grid.dart';
 import '../../shared/widgets/error_view.dart';
+import '../../shared/widgets/pro_blur_overlay.dart';
 
 /// New, additive "Adv Correlation" tab — sits next to the existing
 /// CorrelationTab (untouched). Bigger market-cap-ranked universe, a
@@ -21,15 +23,17 @@ import '../../shared/widgets/error_view.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
-final _advCorrelationProvider =
-    FutureProvider.autoDispose.family<AdvCorrelationData, String>((ref, window) {
+final _advCorrelationProvider = FutureProvider.autoDispose
+    .family<AdvCorrelationData, String>((ref, window) {
   ref.keepAlive(); // server-cached 4h; stable within a session
   return TradingRepository.instance.fetchAdvCorrelation(window: window);
 });
 
 final _advCorrelationCustomProvider = FutureProvider.autoDispose
-    .family<AdvCorrelationData, ({String symbolsCsv, String window})>((ref, args) {
-  final symbols = args.symbolsCsv.split(',').where((s) => s.isNotEmpty).toList();
+    .family<AdvCorrelationData, ({String symbolsCsv, String window})>(
+        (ref, args) {
+  final symbols =
+      args.symbolsCsv.split(',').where((s) => s.isNotEmpty).toList();
   return TradingRepository.instance.fetchAdvCorrelationCustom(
     symbols: symbols,
     window: args.window,
@@ -38,21 +42,34 @@ final _advCorrelationCustomProvider = FutureProvider.autoDispose
 
 final _advCorrelationHistoryProvider = FutureProvider.autoDispose
     .family<CorrelationHistoryData, ({String a, String b})>((ref, args) {
-  return TradingRepository.instance.fetchAdvCorrelationHistory(a: args.a, b: args.b);
+  return TradingRepository.instance
+      .fetchAdvCorrelationHistory(a: args.a, b: args.b);
 });
 
-final _advSearchProvider = FutureProvider.autoDispose
-    .family<List<StockSearchResult>, String>(
+final _advSearchProvider =
+    FutureProvider.autoDispose.family<List<StockSearchResult>, String>(
   (_, query) => TradingRepository.instance.searchStocks(query),
 );
 
 // ── Tab Widget ────────────────────────────────────────────────────────────────
 
 const _kWindows = <(String, String)>[
-  ('1m', '1M'), ('3m', '3M'), ('6m', '6M'), ('1y', '1Y'),
+  ('1m', '1M'),
+  ('3m', '3M'),
+  ('6m', '6M'),
+  ('1y', '1Y'),
 ];
+// 1M is free; 3M/6M/1Y are Pro — chip stays selectable for everyone, but the
+// matrix is blurred for free users on a gated window rather than blocking
+// the tap.
+const _gatedWindows = {'3m', '6m', '1y'};
 const _kCategories = <String>[
-  'All', 'Commodities', 'Indices', 'Crypto', 'Forex', 'Stocks',
+  'All',
+  'Commodities',
+  'Indices',
+  'Crypto',
+  'Forex',
+  'Stocks',
 ];
 
 class AdvCorrelationTab extends ConsumerStatefulWidget {
@@ -90,7 +107,8 @@ class _AdvCorrelationTabState extends ConsumerState<AdvCorrelationTab> {
     });
   }
 
-  void _showPairHistory(BuildContext context, AdvCorrelationSymbol a, AdvCorrelationSymbol b) {
+  void _showPairHistory(
+      BuildContext context, AdvCorrelationSymbol a, AdvCorrelationSymbol b) {
     showAppBottomSheet(
       context: context,
       builder: (_) => _PairHistorySheet(a: a, b: b),
@@ -103,6 +121,9 @@ class _AdvCorrelationTabState extends ConsumerState<AdvCorrelationTab> {
       builder: (sheetContext) => const _AdvCorrelationInfoSheet(),
     );
   }
+
+  bool get _canSeeAllWindows =>
+      EntitlementService.can('macro_correlation_timeframes');
 
   @override
   Widget build(BuildContext context) {
@@ -123,7 +144,8 @@ class _AdvCorrelationTabState extends ConsumerState<AdvCorrelationTab> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text('Adv Correlation',
-                        style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                        style: AppTypography.headingSm
+                            .copyWith(color: c.textPrimary)),
                     const SizedBox(height: 2),
                     Text('180+ assets · market-cap-ranked stocks',
                         style: AppTypography.xs.copyWith(color: c.textMuted)),
@@ -132,7 +154,8 @@ class _AdvCorrelationTabState extends ConsumerState<AdvCorrelationTab> {
               ),
               GestureDetector(
                 onTap: () => _showInfo(context),
-                child: Icon(Icons.info_outline_rounded, size: 20, color: c.textMuted),
+                child: Icon(Icons.info_outline_rounded,
+                    size: 20, color: c.textMuted),
               ),
             ],
           ),
@@ -147,11 +170,17 @@ class _AdvCorrelationTabState extends ConsumerState<AdvCorrelationTab> {
               children: [
                 for (int i = 0; i < _kWindows.length; i++) ...[
                   _Chip(
-                    label: _kWindows[i].$2,
+                    label: !_canSeeAllWindows &&
+                            _gatedWindows.contains(_kWindows[i].$1)
+                        ? '🔒 ${_kWindows[i].$2}'
+                        : _kWindows[i].$2,
                     active: _window == _kWindows[i].$1,
+                    // Always switches — gating hides the resulting matrix,
+                    // not the tap.
                     onTap: () => setState(() => _window = _kWindows[i].$1),
                   ),
-                  if (i < _kWindows.length - 1) const SizedBox(width: AppSpacing.s2),
+                  if (i < _kWindows.length - 1)
+                    const SizedBox(width: AppSpacing.s2),
                 ],
               ],
             ),
@@ -169,9 +198,11 @@ class _AdvCorrelationTabState extends ConsumerState<AdvCorrelationTab> {
                   _Chip(
                     label: _kCategories[i],
                     active: _categoryFilter == _kCategories[i],
-                    onTap: () => setState(() => _categoryFilter = _kCategories[i]),
+                    onTap: () =>
+                        setState(() => _categoryFilter = _kCategories[i]),
                   ),
-                  if (i < _kCategories.length - 1) const SizedBox(width: AppSpacing.s2),
+                  if (i < _kCategories.length - 1)
+                    const SizedBox(width: AppSpacing.s2),
                 ],
               ],
             ),
@@ -242,17 +273,35 @@ class _AdvCorrelationContent extends ConsumerWidget {
     final visSymbols = [for (final i in visible) data.symbols[i]];
     final visMatrix = [
       for (final i in visible)
-        [for (final j in visible) (i < data.matrix.length && j < data.matrix[i].length) ? data.matrix[i][j] : 0.0],
+        [
+          for (final j in visible)
+            (i < data.matrix.length && j < data.matrix[i].length)
+                ? data.matrix[i][j]
+                : 0.0
+        ],
     ];
+
+    final showOverlay =
+        !EntitlementService.can('macro_correlation_timeframes') &&
+            _gatedWindows.contains(window);
+    final offDiag = <double>[
+      for (var i = 0; i < visMatrix.length; i++)
+        for (var j = 0; j < visMatrix[i].length; j++)
+          if (i != j) visMatrix[i][j],
+    ];
+    final avgCorr = offDiag.isEmpty
+        ? 0.0
+        : offDiag.reduce((a, b) => a + b) / offDiag.length;
 
     // Scaffold has resizeToAvoidBottomInset: false (see volatility_screen.dart),
     // so this scroll view must push its own content above the keyboard —
     // otherwise the search field near the bottom (Your Custom Picks) is
     // covered instead of being scrolled into view.
-    final bottomInset = appShellBottomInset(context) + MediaQuery.of(context).viewInsets.bottom;
+    final bottomInset =
+        appShellBottomInset(context) + MediaQuery.of(context).viewInsets.bottom;
     return SingleChildScrollView(
-      padding: EdgeInsets.fromLTRB(
-          AppSpacing.s4, AppSpacing.s4, AppSpacing.s4, AppSpacing.s4 + bottomInset),
+      padding: EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s4, AppSpacing.s4,
+          AppSpacing.s4 + bottomInset),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -284,11 +333,22 @@ class _AdvCorrelationContent extends ConsumerWidget {
               borderRadius: BorderRadius.circular(AppRadius.md),
             ),
             clipBehavior: Clip.antiAlias,
-            child: CorrelationMatrixGrid(
-              symbols: visSymbols,
-              matrix: visMatrix,
-              onCellTap: onCellTap,
-            ),
+            child: showOverlay
+                ? ProBlurOverlay(
+                    isPositive: avgCorr >= 0,
+                    feature: 'macro_correlation_timeframes',
+                    borderRadius: BorderRadius.zero,
+                    child: CorrelationMatrixGrid(
+                      symbols: visSymbols,
+                      matrix: visMatrix,
+                      onCellTap: onCellTap,
+                    ),
+                  )
+                : CorrelationMatrixGrid(
+                    symbols: visSymbols,
+                    matrix: visMatrix,
+                    onCellTap: onCellTap,
+                  ),
           ),
           const SizedBox(height: AppSpacing.s5),
           _CustomPicksCard(
@@ -437,7 +497,8 @@ class _CustomPicksCard extends ConsumerWidget {
                       dense: true,
                       contentPadding: EdgeInsets.zero,
                       title: Text(r.symbol,
-                          style: AppTypography.sm.copyWith(color: c.textPrimary)),
+                          style:
+                              AppTypography.sm.copyWith(color: c.textPrimary)),
                       subtitle: Text(r.name,
                           style: AppTypography.xs.copyWith(color: c.textMuted)),
                       onTap: () {
@@ -469,7 +530,8 @@ class _CustomPicksCard extends ConsumerWidget {
           ],
           if (pinnedSymbols.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.s4),
-            _CustomMatrix(symbols: pinnedSymbols, window: window, onCellTap: onCellTap),
+            _CustomMatrix(
+                symbols: pinnedSymbols, window: window, onCellTap: onCellTap),
           ],
         ],
       ),
@@ -478,7 +540,8 @@ class _CustomPicksCard extends ConsumerWidget {
 }
 
 class _CustomMatrix extends ConsumerWidget {
-  const _CustomMatrix({required this.symbols, required this.window, required this.onCellTap});
+  const _CustomMatrix(
+      {required this.symbols, required this.window, required this.onCellTap});
   final List<String> symbols;
   final String window;
   final void Function(AdvCorrelationSymbol a, AdvCorrelationSymbol b) onCellTap;
@@ -530,10 +593,11 @@ class _PairHistorySheet extends ConsumerWidget {
     return Container(
       decoration: BoxDecoration(
         color: c.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+        borderRadius:
+            const BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
       ),
-      padding: EdgeInsets.fromLTRB(
-          AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s4 + bottomInset),
+      padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s4, AppSpacing.s5,
+          AppSpacing.s4 + bottomInset),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -597,11 +661,14 @@ class _RollingCorrelationChart extends StatelessWidget {
         gridData: FlGridData(
           horizontalInterval: 0.5,
           drawVerticalLine: false,
-          getDrawingHorizontalLine: (_) => FlLine(color: c.border, strokeWidth: 0.5),
+          getDrawingHorizontalLine: (_) =>
+              FlLine(color: c.border, strokeWidth: 0.5),
         ),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles:
+              const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           leftTitles: AxisTitles(
             sideTitles: SideTitles(
               showTitles: true,
@@ -618,7 +685,8 @@ class _RollingCorrelationChart extends StatelessWidget {
               reservedSize: 24,
               getTitlesWidget: (v, _) {
                 final i = v.toInt();
-                if (i < 0 || i >= data.points.length) return const SizedBox.shrink();
+                if (i < 0 || i >= data.points.length)
+                  return const SizedBox.shrink();
                 return Text(data.points[i].date.substring(5),
                     style: AppTypography.xs.copyWith(color: c.textMuted));
               },
@@ -664,11 +732,12 @@ class _AdvCorrelationInfoSheet extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: c.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+        borderRadius:
+            const BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
       ),
       child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-            AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s5 + bottomInset),
+        padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s4,
+            AppSpacing.s5, AppSpacing.s5 + bottomInset),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -697,7 +766,8 @@ class _AdvCorrelationInfoSheet extends StatelessWidget {
               c: c,
               icon: Icons.schedule_rounded,
               title: 'Timeframe chips (1M/3M/6M/1Y)',
-              desc: 'Recompute the same 180+ symbols\' Pearson correlation over a '
+              desc:
+                  'Recompute the same 180+ symbols\' Pearson correlation over a '
                   'shorter or longer daily-close window.',
             ),
             _InfoRow(
@@ -710,7 +780,8 @@ class _AdvCorrelationInfoSheet extends StatelessWidget {
               c: c,
               icon: Icons.grid_on_rounded,
               title: 'Matrix',
-              desc: 'Tap any flag/symbol header for its full name. Tap any cell '
+              desc:
+                  'Tap any flag/symbol header for its full name. Tap any cell '
                   '(not the diagonal) to see how that pair\'s correlation has '
                   'shifted over the past year.',
             ),
@@ -735,7 +806,8 @@ class _AdvCorrelationInfoSheet extends StatelessWidget {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.lightbulb_outline_rounded, size: 16, color: c.accent),
+                  Icon(Icons.lightbulb_outline_rounded,
+                      size: 16, color: c.accent),
                   const SizedBox(width: AppSpacing.s2),
                   Expanded(
                     child: Text(
@@ -781,9 +853,11 @@ class _InfoRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(title,
-                    style: AppTypography.labelSm.copyWith(color: c.textPrimary)),
+                    style:
+                        AppTypography.labelSm.copyWith(color: c.textPrimary)),
                 const SizedBox(height: 2),
-                Text(desc, style: AppTypography.xs.copyWith(color: c.textMuted)),
+                Text(desc,
+                    style: AppTypography.xs.copyWith(color: c.textMuted)),
               ],
             ),
           ),

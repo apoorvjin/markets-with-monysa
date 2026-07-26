@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { signalTone, timeAgo } from "./format";
+import { isFresh, signalTone, timeAgo } from "./format";
 
 export * from "./format";
 
@@ -87,11 +87,41 @@ export function Stat(props: {
   );
 }
 
-/** "X ago" freshness banner — mirrors freshness_bar.dart. */
+/** "X ago" freshness banner — mirrors freshness_bar.dart. Shows a pulsing
+    live dot when the timestamp is recent (< 90s), matching the marketing
+    site's LIVE badge. */
 export function FreshnessBar(props: { lastUpdated: string | null | undefined }) {
   const label = timeAgo(props.lastUpdated);
   if (!label) return null;
-  return <div className="ui-freshness">Updated {label}</div>;
+  return (
+    <div className="ui-freshness">
+      {isFresh(props.lastUpdated) && <span className="ui-live-dot" aria-hidden="true" />}
+      Updated {label}
+    </div>
+  );
+}
+
+/** Blurs children behind a gain/loss-tinted "Upgrade to Pro" overlay.
+    Visual-only teaser — web has no purchase flow, so this never unlocks;
+    mirrors ProBlurOverlay in the Flutter app (pro_blur_overlay.dart). */
+export function ProBlur(props: {
+  children: ReactNode;
+  positive: boolean;
+  className?: string;
+  /** Override for tight spaces where "Upgrade to Pro" would clip (e.g. an
+      inline metric chip). Defaults to the full phrase. */
+  label?: string;
+}) {
+  return (
+    <span className={`pro-blur ${props.className ?? ""}`}>
+      <span className="pro-blur-content" aria-hidden="true">
+        {props.children}
+      </span>
+      <span className="pro-blur-overlay" data-tone={props.positive ? "up" : "down"}>
+        {props.label ?? "Upgrade to Pro"}
+      </span>
+    </span>
+  );
 }
 
 export function ErrorView(props: { message?: string; onRetry?: () => void }) {

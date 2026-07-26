@@ -16,6 +16,7 @@ import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
+import '../../shared/widgets/rrg_quadrant_grid.dart';
 import '../../shared/widgets/shimmer_list.dart';
 import '../../shared/widgets/sparkline_chart.dart';
 import '../../shared/widgets/error_view.dart';
@@ -2908,59 +2909,15 @@ class _SectorRotationSection extends ConsumerWidget {
                       (s['rsRatio'] as num) < 100 &&
                       (s['rsMomentum'] as num) >= 100)
                   .toList();
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _QuadrantCard(
-                          sectors: improving,
-                          label: 'Improving',
-                          arrow: '↖',
-                          color: Colors.blue.shade400,
-                          desc: 'Weak · gaining speed',
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      Expanded(
-                        child: _QuadrantCard(
-                          sectors: leading,
-                          label: 'Leading',
-                          arrow: '↗',
-                          color: Colors.teal.shade400,
-                          desc: 'Strong · gaining speed',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.s2),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _QuadrantCard(
-                          sectors: lagging,
-                          label: 'Lagging',
-                          arrow: '↙',
-                          color: Colors.red.shade400,
-                          desc: 'Weak · losing speed',
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.s2),
-                      Expanded(
-                        child: _QuadrantCard(
-                          sectors: weakening,
-                          label: 'Weakening',
-                          arrow: '↘',
-                          color: Colors.orange.shade400,
-                          desc: 'Strong · losing speed',
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+              RrgQuadrantItem toItem(Map<String, dynamic> s) => RrgQuadrantItem(
+                    emoji: s['emoji'] as String? ?? '',
+                    label: _sectorAbbrev(s['name'] as String? ?? ''),
+                  );
+              return RrgQuadrantGrid(
+                leading: leading.map(toItem).toList(),
+                improving: improving.map(toItem).toList(),
+                weakening: weakening.map(toItem).toList(),
+                lagging: lagging.map(toItem).toList(),
               );
             },
           ),
@@ -2993,88 +2950,6 @@ String _sectorAbbrev(String name) {
   return name.length > 5 ? name.substring(0, 4) : name;
 }
 
-// ── Quadrant card ─────────────────────────────────────────────────────────────
-
-class _QuadrantCard extends StatelessWidget {
-  const _QuadrantCard({
-    required this.sectors,
-    required this.label,
-    required this.arrow,
-    required this.color,
-    required this.desc,
-  });
-
-  final List<Map<String, dynamic>> sectors;
-  final String label;
-  final String arrow;
-  final Color color;
-  final String desc;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.s3),
-      decoration: BoxDecoration(
-        color: color.withAlpha(18),
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border: Border.all(color: color.withAlpha(70)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(arrow,
-                  style: TextStyle(
-                      color: color,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700)),
-              const SizedBox(width: 4),
-              Text(label,
-                  style:
-                      AppTypography.labelSm.copyWith(color: color)),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(desc,
-              style: AppTypography.xs
-                  .copyWith(color: c.textMuted, fontSize: 9)),
-          const SizedBox(height: AppSpacing.s2),
-          if (sectors.isEmpty)
-            Text('—',
-                style: AppTypography.sm.copyWith(color: c.textFaint))
-          else
-            Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: sectors.map((s) {
-                final emoji = s['emoji'] as String? ?? '';
-                final name =
-                    _sectorAbbrev(s['name'] as String? ?? '');
-                return Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: color.withAlpha(30),
-                    borderRadius:
-                        BorderRadius.circular(AppRadius.full),
-                  ),
-                  child: Text(
-                    '$emoji $name',
-                    style: AppTypography.xs.copyWith(
-                        color: c.textPrimary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600),
-                  ),
-                );
-              }).toList(),
-            ),
-        ],
-      ),
-    );
-  }
-}
 
 // ── Sector rotation info helpers ──────────────────────────────────────────────
 

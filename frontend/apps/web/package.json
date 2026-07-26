@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@fontsource-variable/space-grotesk": "^5.3.0",
     "@monysa/api-client": "workspace:*",
     "@monysa/charts": "workspace:*",
     "@monysa/contracts": "workspace:*",

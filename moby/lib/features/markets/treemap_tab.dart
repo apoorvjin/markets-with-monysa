@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shimmer/shimmer.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
@@ -20,21 +21,21 @@ class _IndexOption {
 }
 
 const _kIndices = <_IndexOption>[
-  _IndexOption('sp500',       '🇺🇸 S&P 500'),
-  _IndexOption('ndx',         '🇺🇸 NASDAQ 100'),
-  _IndexOption('dji',         '🇺🇸 Dow Jones'),
+  _IndexOption('sp500', '🇺🇸 S&P 500'),
+  _IndexOption('ndx', '🇺🇸 NASDAQ 100'),
+  _IndexOption('dji', '🇺🇸 Dow Jones'),
   _IndexOption('russell2000', '🇺🇸 Russell 2000'),
-  _IndexOption('ftse100',     '🇬🇧 FTSE 100'),
-  _IndexOption('dax40',       '🇩🇪 DAX 40'),
-  _IndexOption('nikkei225',   '🇯🇵 Nikkei 225'),
-  _IndexOption('hsi',         '🇭🇰 Hang Seng'),
-  _IndexOption('nifty50',     '🇮🇳 Nifty 50'),
+  _IndexOption('ftse100', '🇬🇧 FTSE 100'),
+  _IndexOption('dax40', '🇩🇪 DAX 40'),
+  _IndexOption('nikkei225', '🇯🇵 Nikkei 225'),
+  _IndexOption('hsi', '🇭🇰 Hang Seng'),
+  _IndexOption('nifty50', '🇮🇳 Nifty 50'),
 ];
 
 const _kTimeframes = <(String, String)>[
-  ('1d',  '1D'),
-  ('1w',  '1W'),
-  ('1m',  '1M'),
+  ('1d', '1D'),
+  ('1w', '1W'),
+  ('1m', '1M'),
   ('ytd', 'YTD'),
 ];
 
@@ -77,11 +78,16 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
   String _index = 'sp500';
   String _timeframe = '1d';
 
+  void _selectTimeframe(String tf) {
+    if (tf != '1d' && !EntitlementService.can('heatmap_extended_timeframes')) {
+      UpgradeSheet.show(context, feature: 'heatmap_extended_timeframes');
+      return;
+    }
+    setState(() => _timeframe = tf);
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!EntitlementService.can('treemap_heatmap')) {
-      return const _PaywallView();
-    }
     final c = context.colors;
     final key = _TreemapKey(_index, _timeframe);
     final async = ref.watch(_treemapProvider(key));
@@ -93,12 +99,12 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
           selectedIndex: _index,
           selectedTimeframe: _timeframe,
           onSelectIndex: (id) => setState(() => _index = id),
-          onSelectTimeframe: (tf) => setState(() => _timeframe = tf),
+          onSelectTimeframe: _selectTimeframe,
           onInfo: () => _showInfo(context),
         ),
         Expanded(
           child: async.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
+            loading: () => const _TreemapSkeleton(),
             error: (e, _) => ErrorView(
               message: 'Could not load heatmap.\n$e',
               onRetry: () => ref.invalidate(_treemapProvider(key)),
@@ -126,7 +132,8 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
                     final treemapHeight = viewportHeight * 2.5 - 60;
                     return SingleChildScrollView(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
+                      padding:
+                          EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
                       child: Column(
                         children: [
                           Padding(
@@ -141,8 +148,8 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
                               lastUpdated: data.lastUpdated.toIso8601String()),
                           if (data.stocks.length < _kLimit)
                             Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                  AppSpacing.s4, AppSpacing.s2, AppSpacing.s4, 0),
+                              padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
+                                  AppSpacing.s2, AppSpacing.s4, 0),
                               child: Text(
                                 'Showing ${data.stocks.length} of ${data.total} resolved',
                                 style: AppTypography.xs
@@ -168,8 +175,8 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
                           ),
                           if (data.timeframe == '1d')
                             Padding(
-                              padding: const EdgeInsets.fromLTRB(AppSpacing.s4, 0,
-                                  AppSpacing.s4, AppSpacing.s3),
+                              padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
+                                  0, AppSpacing.s4, AppSpacing.s3),
                               child: Row(
                                 children: [
                                   Container(
@@ -304,6 +311,66 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
   }
 }
 
+// ── Treemap loading skeleton ──────────────────────────────────────────────────
+// Loosely mimics a squarified treemap mosaic (varied tile sizes stacked in
+// rows) so the loading state doesn't jump-cut into a completely different
+// shape once data arrives — a plain spinner gives no preview of the eventual
+// tile grid. Row/tile ratios mirror the web TreemapSkeleton for parity.
+
+class _TreemapSkeleton extends StatelessWidget {
+  const _TreemapSkeleton();
+
+  static const _rows = <(double, List<int>)>[
+    (2.0, [3, 2]),
+    (1.4, [1, 1, 1, 1]),
+    (1.6, [2, 1, 2]),
+    (1.0, [1, 1, 1, 1, 1]),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor =
+        isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE8EAF0);
+    final highlightColor =
+        isDark ? const Color(0xFF2E2E2E) : const Color(0xFFF8F9FC);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s3, vertical: AppSpacing.s2),
+      child: Shimmer.fromColors(
+        baseColor: baseColor,
+        highlightColor: highlightColor,
+        child: Column(
+          children: [
+            for (final (flexHeight, tiles) in _rows) ...[
+              Expanded(
+                flex: (flexHeight * 10).round(),
+                child: Row(
+                  children: [
+                    for (final tileFlex in tiles) ...[
+                      Expanded(
+                        flex: tileFlex,
+                        child: Container(
+                          margin: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _LegendRow extends StatelessWidget {
   final Color color;
   final String label;
@@ -325,8 +392,7 @@ class _LegendRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Text(label,
-              style: AppTypography.sm.copyWith(color: c.textSecondary)),
+          Text(label, style: AppTypography.sm.copyWith(color: c.textSecondary)),
         ],
       ),
     );
@@ -392,6 +458,8 @@ class _Header extends StatelessWidget {
                 _TimeframeChip(
                   label: tf.$2,
                   selected: tf.$1 == selectedTimeframe,
+                  locked: tf.$1 != '1d' &&
+                      !EntitlementService.can('heatmap_extended_timeframes'),
                   onTap: () => onSelectTimeframe(tf.$1),
                 ),
                 const SizedBox(width: 6),
@@ -407,10 +475,12 @@ class _Header extends StatelessWidget {
 class _TimeframeChip extends StatelessWidget {
   final String label;
   final bool selected;
+  final bool locked;
   final VoidCallback onTap;
   const _TimeframeChip({
     required this.label,
     required this.selected,
+    required this.locked,
     required this.onTap,
   });
 
@@ -426,12 +496,22 @@ class _TimeframeChip extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.full),
           border: Border.all(color: selected ? c.accent : c.border),
         ),
-        child: Text(
-          label,
-          style: AppTypography.sm.copyWith(
-            color: selected ? Colors.white : c.textPrimary,
-            fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-          ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (locked) ...[
+              Icon(Icons.lock_rounded,
+                  size: 11, color: selected ? Colors.white : c.textMuted),
+              const SizedBox(width: 4),
+            ],
+            Text(
+              label,
+              style: AppTypography.sm.copyWith(
+                color: selected ? Colors.white : c.textPrimary,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -606,9 +686,7 @@ class _IndexChip extends StatelessWidget {
     final bg = selected
         ? c.accent.withValues(alpha: 0.18)
         : (enabled ? c.surface : c.surfaceElevated);
-    final fg = enabled
-        ? (selected ? c.accent : c.textPrimary)
-        : c.textMuted;
+    final fg = enabled ? (selected ? c.accent : c.textPrimary) : c.textMuted;
     final border = selected ? c.accent : c.border;
     return GestureDetector(
       onTap: enabled ? onTap : null,
@@ -652,9 +730,9 @@ class _SectorDrillInScreen extends StatelessWidget {
     final mq = MediaQuery.of(context);
     final bottomInset = mq.padding.bottom;
     final totalCap = stocks.fold<double>(0, (a, s) => a + s.marketCap);
-    final weighted = stocks.fold<double>(
-            0, (a, s) => a + (s.changePercent * s.marketCap)) /
-        (totalCap == 0 ? 1 : totalCap);
+    final weighted =
+        stocks.fold<double>(0, (a, s) => a + (s.changePercent * s.marketCap)) /
+            (totalCap == 0 ? 1 : totalCap);
     return Scaffold(
       backgroundColor: c.background,
       appBar: AppBar(
@@ -673,8 +751,8 @@ class _SectorDrillInScreen extends StatelessWidget {
       body: SafeArea(
         top: false,
         child: Padding(
-          padding: EdgeInsets.fromLTRB(
-              AppSpacing.s3, AppSpacing.s2, AppSpacing.s3, bottomInset + AppSpacing.s4),
+          padding: EdgeInsets.fromLTRB(AppSpacing.s3, AppSpacing.s2,
+              AppSpacing.s3, bottomInset + AppSpacing.s4),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -688,8 +766,7 @@ class _SectorDrillInScreen extends StatelessWidget {
                     Text(
                       '${stocks.length} stocks · '
                       'avg ${weighted >= 0 ? '+' : ''}${weighted.toStringAsFixed(2)}%',
-                      style: AppTypography.xs
-                          .copyWith(color: c.textSecondary),
+                      style: AppTypography.xs.copyWith(color: c.textSecondary),
                     ),
                   ],
                 ),
@@ -701,53 +778,12 @@ class _SectorDrillInScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(AppRadius.sm),
                   // onSectorTap: null → no further drill-in from inside the
                   // already-focused sector view.
-                  child: SectorTreemap(stocks: stocks, marketState: marketState),
+                  child:
+                      SectorTreemap(stocks: stocks, marketState: marketState),
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PaywallView extends StatelessWidget {
-  const _PaywallView();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.s6),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.grid_view_rounded, size: 48, color: c.accent),
-            const SizedBox(height: AppSpacing.s4),
-            Text(
-              'Market Heatmap',
-              style: AppTypography.headingMd.copyWith(color: c.textPrimary),
-            ),
-            const SizedBox(height: AppSpacing.s2),
-            Text(
-              'S&P 500 stocks sized by market cap, coloured by 1D change.\nUpgrade to Pro to unlock.',
-              textAlign: TextAlign.center,
-              style: AppTypography.sm.copyWith(color: c.textSecondary),
-            ),
-            const SizedBox(height: AppSpacing.s5),
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: c.accent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 12),
-              ),
-              onPressed: () =>
-                  UpgradeSheet.show(context, feature: 'treemap_heatmap'),
-              child: const Text('Upgrade to Pro'),
-            ),
-          ],
         ),
       ),
     );

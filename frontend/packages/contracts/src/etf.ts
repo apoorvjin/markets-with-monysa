@@ -22,6 +22,11 @@ export const EtfItem = z
     changePercent: z.number().nullish(),
     preMarketPrice: z.number().nullish(),
     preMarketChangePercent: z.number().nullish(),
+    // Rolling-window returns (not calendar-quarter-aligned): MoM = trailing
+    // 1mo, QoQ = trailing 3mo, YoY = trailing 1y.
+    perf1M: z.number().nullish(),
+    perf3M: z.number().nullish(),
+    perf1Y: z.number().nullish(),
   })
   .passthrough();
 export type EtfItem = z.infer<typeof EtfItem>;

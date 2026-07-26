@@ -13,6 +13,8 @@ export function MoversCard({
   title: string;
   items: MoverItem[];
 }) {
+  const maxAbs = Math.max(1e-9, ...items.map((i) => Math.abs(i.change)));
+
   return (
     <div className="ui-metric-card movers-card">
       <div className="movers-card-title">{title}</div>
@@ -21,6 +23,13 @@ export function MoversCard({
           <span className="movers-rank">{i + 1}</span>
           <span className="movers-name" title={item.name}>
             {item.name}
+          </span>
+          <span className="ui-gradient-bar movers-bar">
+            <span
+              className="ui-gradient-bar-fill"
+              data-dir={item.change < 0 ? "down" : "up"}
+              style={{ width: `${(Math.abs(item.change) / maxAbs) * 100}%` }}
+            />
           </span>
           <span className={`movers-pct ${changeClass(item.change)}`}>
             {fmtPct(item.change)}

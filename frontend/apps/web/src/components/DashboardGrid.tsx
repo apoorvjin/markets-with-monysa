@@ -120,7 +120,7 @@ export function DashboardGrid() {
   const isLoading = indicesQ.isLoading;
 
   return (
-    <div className="dash-grid">
+    <div className="dash-grid ui-enter" style={{ animationDelay: "80ms" }}>
       {/* ── Left column ─────────────────────────────────────────────── */}
       <div className="dash-left">
         {/* Breadcrumb selector */}
@@ -180,7 +180,7 @@ export function DashboardGrid() {
       </div>
 
       {/* ── Right panel ─────────────────────────────────────────────── */}
-      <div className="dash-right">
+      <div className="dash-right ui-glow-card">
         {/* Performance chips — bonds + fear & greed */}
         <div className="perf-chips">
           <div className="perf-chip">

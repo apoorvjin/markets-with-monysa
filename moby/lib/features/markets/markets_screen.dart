@@ -10,10 +10,12 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/models/market_item.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/markets_repository.dart';
+import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_logo_badge.dart';
 import '../../shared/widgets/chart_modal.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
+import '../../shared/widgets/pro_blur_overlay.dart';
 import '../../shared/widgets/shimmer_list.dart';
 import 'treemap_tab.dart';
 
@@ -521,6 +523,7 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                           for (final key in grouped.keys) {
                             grouped[key] = _sortItems(grouped[key]!, _sortBy, _ascending);
                           }
+                          var revealed = false;
                           return grouped.entries.expand((entry) => [
                             Padding(
                               padding: const EdgeInsets.fromLTRB(
@@ -531,7 +534,15 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                                     .copyWith(color: c.textMuted, letterSpacing: 1.2),
                               ),
                             ),
-                            ...entry.value.map((item) => _MarketRow(key: ValueKey(item.symbol), item: item, isForex: true)),
+                            ...entry.value.map((item) {
+                              final reveal = !revealed;
+                              revealed = true;
+                              return _MarketRow(
+                                  key: ValueKey(item.symbol),
+                                  item: item,
+                                  isForex: true,
+                                  revealFxLabel: reveal);
+                            }),
                           ]).toList();
                         })(),
                       )
@@ -543,7 +554,8 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                         itemBuilder: (ctx, i) => _MarketRow(
                               key: ValueKey(sorted[i].symbol),
                               item: sorted[i],
-                              isForex: true),
+                              isForex: true,
+                              revealFxLabel: i == 0),
                       ),
               ),
             ),
@@ -557,9 +569,17 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
 // ── Market Row ────────────────────────────────────────────────────────────────
 
 class _MarketRow extends StatefulWidget {
-  const _MarketRow({required this.item, this.isForex = false, super.key});
+  const _MarketRow({
+    required this.item,
+    this.isForex = false,
+    this.revealFxLabel = false,
+    super.key,
+  });
   final MarketItem item;
   final bool isForex;
+  /// When true, shows the FX rate-comparison label unblurred even for free
+  /// users — exactly one row (the first rendered) is always free.
+  final bool revealFxLabel;
 
   @override
   State<_MarketRow> createState() => _MarketRowState();
@@ -627,7 +647,9 @@ class _MarketRowState extends State<_MarketRow> {
                       style: AppTypography.sm.copyWith(color: c.textMuted)),
                   if (widget.isForex) ...[
                     const SizedBox(height: 2),
-                    _FxDifferential(symbol: item.symbol),
+                    _FxDifferential(
+                        symbol: item.symbol,
+                        forceReveal: widget.revealFxLabel),
                   ],
                 ],
               ),
@@ -860,8 +882,9 @@ class _Stat extends StatelessWidget {
 // ── FX Rate Differential ──────────────────────────────────────────────────────
 
 class _FxDifferential extends ConsumerWidget {
-  const _FxDifferential({required this.symbol});
+  const _FxDifferential({required this.symbol, this.forceReveal = false});
   final String symbol;
+  final bool forceReveal;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -884,12 +907,25 @@ class _FxDifferential extends ConsumerWidget {
     final diffColor = diff >= 0 ? c.positive : c.danger;
     final diffStr = '${diff >= 0 ? '+' : ''}${diff.toStringAsFixed(2)}%';
 
-    return Text(
+    final label = Text(
       "${baseInfo.label} ${baseInfo.rate.toStringAsFixed(2)}% vs "
       "${quoteInfo.label} ${quoteInfo.rate.toStringAsFixed(2)}% ($diffStr)",
       style: AppTypography.xs.copyWith(color: diffColor),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
+    );
+
+    if (forceReveal || EntitlementService.can('forex_rate_comparison')) {
+      return label;
+    }
+
+    return SizedBox(
+      width: double.infinity,
+      child: ProBlurOverlay(
+        isPositive: diff >= 0,
+        feature: 'forex_rate_comparison',
+        child: label,
+      ),
     );
   }
 }
@@ -911,9 +947,9 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
   static const _chips = [
     (_CotCategory.metals,      'Metals'),
     (_CotCategory.energy,      'Energy'),
+    (_CotCategory.indices,     'Indices & Rates'),
     (_CotCategory.agriculture, 'Agriculture'),
     (_CotCategory.currencies,  'Currencies'),
-    (_CotCategory.indices,     'Indices & Rates'),
   ];
 
   @override
@@ -989,7 +1025,18 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
               ),
               const SizedBox(height: AppSpacing.s3),
               if (items.isNotEmpty)
-                ...items.map((m) => _CotCard(metal: m))
+                ...items.asMap().entries.map((entry) {
+                  final card = _CotCard(metal: entry.value);
+                  final revealed = entry.key == 0 ||
+                      EntitlementService.can('cftc_categories');
+                  if (revealed) return card;
+                  return ProBlurOverlay(
+                    isPositive: entry.value.netPosition >= 0,
+                    feature: 'cftc_categories',
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                    child: card,
+                  );
+                })
               else
                 Padding(
                   padding: const EdgeInsets.all(AppSpacing.s8),

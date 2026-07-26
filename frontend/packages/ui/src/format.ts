@@ -39,6 +39,14 @@ export function timeAgo(iso: string | null | undefined): string {
   return `${Math.floor(secs / 86400)}d ago`;
 }
 
+/** True when a timestamp is recent enough to badge as "live" (default 90s). */
+export function isFresh(iso: string | null | undefined, thresholdSecs = 90): boolean {
+  if (!iso) return false;
+  const ts = Date.parse(iso);
+  if (Number.isNaN(ts)) return false;
+  return (Date.now() - ts) / 1000 < thresholdSecs;
+}
+
 /** CSS class for a signed change value. */
 export function changeClass(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n) || n === 0) return "num-flat";

@@ -33,9 +33,11 @@ Start the API first (`npm run server:dev` from the repo root). Port is always
 
 ## Production CORS
 
-The server only grants CORS to localhost in dev. When deploying the web app,
-set `ALLOWED_ORIGINS=https://your-web-domain` on the API (comma-separated list,
-already supported by `server/index.ts`).
+The server only grants CORS to localhost in dev. The web app is deployed to
+`https://app.finbrio.net` (Vercel, via `./deploy_web.sh` at the repo root) —
+that origin must be present in the API's `ALLOWED_ORIGINS` secret
+(comma-separated list, already supported by `server/index.ts`), alongside
+the marketing site's `https://www.finbrio.net`.
 
 ## Conventions
 

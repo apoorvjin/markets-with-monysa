@@ -1,10 +1,14 @@
 import type { Express, Response } from "express";
-import { fetchYahooPrice } from "./shared";
+import { fetchYahooPrice, fetchRangeData } from "./shared";
 import { fetchYahooFundData } from "./heatmap";
 import { getEtfRotationQuadrants } from "./economy";
 import { ETF_UNIVERSE, ETF_ROTATION_CATEGORIES, type EtfCategory } from "../data/etf_universe";
 
-const LIST_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+// perf1M/perf3M/perf1Y add 3 Yahoo range-fetches per ETF (~129 total across
+// the 43-ETF universe) on top of the live quote — these are rolling-window
+// period returns that don't move intraday, so a much longer TTL than a live
+// quote is safe here.
+const LIST_CACHE_TTL = 60 * 60 * 1000; // 60 minutes
 const listCache = new Map<string, { data: unknown; ts: number }>();
 
 const PROFILE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -34,7 +38,12 @@ export function registerEtfRoutes(app: Express): void {
 
     const etfs = category ? ETF_UNIVERSE.filter((e) => e.category === category) : ETF_UNIVERSE;
     const items = await Promise.all(etfs.map(async (etf) => {
-      const price = await fetchYahooPrice(etf.symbol).catch(() => null);
+      const [price, perf1M, perf3M, perf1Y] = await Promise.all([
+        fetchYahooPrice(etf.symbol).catch(() => null),
+        fetchRangeData(etf.symbol, "1mo").catch(() => null),
+        fetchRangeData(etf.symbol, "3mo").catch(() => null),
+        fetchRangeData(etf.symbol, "1y").catch(() => null),
+      ]);
       return {
         symbol: etf.symbol,
         name: etf.name,
@@ -45,6 +54,11 @@ export function registerEtfRoutes(app: Express): void {
         changePercent: price?.changePercent ?? null,
         preMarketPrice: price?.preMarketPrice ?? null,
         preMarketChangePercent: price?.preMarketChangePercent ?? null,
+        // Rolling-window returns (not calendar-quarter-aligned): MoM = 1mo,
+        // QoQ = trailing 3mo, YoY = trailing 1y — mirrors /api/sectors.
+        perf1M: perf1M?.changePercent ?? null,
+        perf3M: perf3M?.changePercent ?? null,
+        perf1Y: perf1Y?.changePercent ?? null,
       };
     }));
 

@@ -23,6 +23,20 @@ export const FuturesResponse = z.object({
 });
 export type FuturesResponse = z.infer<typeof FuturesResponse>;
 
+/** One entry of /api/central-bank-rates, keyed by 3-letter currency code. */
+export const CbRateInfo = z.object({
+  label: z.string(),
+  rate: z.number(),
+});
+export type CbRateInfo = z.infer<typeof CbRateInfo>;
+
+export const CentralBankRatesResponse = z.object({
+  rates: z.record(CbRateInfo),
+  lastUpdated: z.string().nullish(),
+  source: z.string().nullish(),
+});
+export type CentralBankRatesResponse = z.infer<typeof CentralBankRatesResponse>;
+
 export const Candle = z.object({
   time: z.union([z.string(), z.number()]),
   open: z.number(),

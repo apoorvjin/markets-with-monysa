@@ -41,7 +41,7 @@ export function TradingPage() {
   const alerts = useAlerts();
   return (
     <div className="page">
-      <div className="page-header">
+      <div className="page-header ui-enter">
         <h1 className="page-title">Trading</h1>
         <ChipRow>
           {TABS.map((t) => (

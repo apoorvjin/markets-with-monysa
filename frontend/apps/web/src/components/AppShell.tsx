@@ -1,7 +1,8 @@
 import { Link, Outlet } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getTheme, toggleTheme, type Theme } from "../lib/theme";
 import { CommandPalette } from "./CommandPalette";
+import { MarketStatus } from "./MarketStatus";
 
 const NAV = [
   {
@@ -63,6 +64,8 @@ const NAV = [
 export function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
+  const mainRef = useRef<HTMLElement>(null);
+  const progressBarRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -75,13 +78,43 @@ export function AppShell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  useEffect(() => {
+    const main = mainRef.current;
+    const bar = progressBarRef.current;
+    if (!main || !bar) return;
+    let ticking = false;
+    const update = () => {
+      const max = main.scrollHeight - main.clientHeight;
+      bar.style.width = max > 0 ? `${(main.scrollTop / max) * 100}%` : "0%";
+      ticking = false;
+    };
+    const onScroll = () => {
+      if (!ticking) {
+        ticking = true;
+        requestAnimationFrame(update);
+      }
+    };
+    main.addEventListener("scroll", onScroll, { passive: true });
+    update();
+    return () => main.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <div className="shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <div className="scroll-progress" aria-hidden="true">
+        <span ref={progressBarRef} />
+      </div>
       <aside className="sidebar">
         <div className="sidebar-logo">
           <div className="sidebar-logo-dot" />
-          Fin<span>Brio</span>
+          <span className="sidebar-logo-word">
+            Fin<span className="sidebar-logo-accent">Brio</span>
+          </span>
         </div>
+        <MarketStatus />
         <nav>
           {NAV.map((n) => (
             <Link
@@ -117,7 +150,7 @@ export function AppShell() {
           </div>
         </div>
       </aside>
-      <main className="main">
+      <main className="main" id="main-content" ref={mainRef}>
         <Outlet />
       </main>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />

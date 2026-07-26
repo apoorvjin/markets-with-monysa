@@ -60,8 +60,8 @@ final _tenXV3CryptoAssetScannerProvider =
   (_) => TradingRepository.instance.fetchTenXV3CryptoAssets(),
 );
 
-final _stockSearchProvider = FutureProvider.autoDispose
-    .family<List<StockSearchResult>, String>(
+final _stockSearchProvider =
+    FutureProvider.autoDispose.family<List<StockSearchResult>, String>(
   (_, query) => TradingRepository.instance.searchStocks(query),
 );
 
@@ -128,32 +128,160 @@ class _StrategyDef {
 }
 
 const _fallbackStrategies = [
-  _StrategyDef(label: 'S1', title: 'Technical Analysis', description: 'Pure price-action signals using momentum and volatility indicators.', detail: 'RSI-14 · MACD · EMA crossovers · Bollinger Bands · ATR · Rate of Change', accentHex: '00D4AA'),
-  _StrategyDef(label: 'S2', title: 'Multi-Factor', description: 'Builds on S1 with volatility-adaptive entry and exit thresholds.', detail: 'All S1 indicators + dynamic thresholds calibrated to current market vol', accentHex: 'FFB84D'),
-  _StrategyDef(label: 'S3', title: 'Hybrid (Tech + Sentiment)', description: 'Blends technical signals with real-time news sentiment scoring.', detail: 'S1 signals (65%) + NLP sentiment from latest headlines (35%)', accentHex: 'FF4D6A'),
-  _StrategyDef(label: 'S4', title: 'Regime-Adaptive', description: 'Detects market regime first, then activates the right engine — Trend or Mean Reversion.', detail: 'ADX > 25 → Trend Engine (EMA200 1.2×, MACD, Volume) · ADX < 18 → Range Engine (RSI, Bollinger, ATR) · High-conviction threshold (0.55)', accentHex: '00C49A'),
-  _StrategyDef(label: 'S5', title: 'Professional Systematic', description: 'Four-regime classification with dynamic indicator weights, consensus gate, and calibrated confidence — built for high-probability setups.', detail: 'Quiet Trend (0.45) · Quiet Range (0.60) · Volatile Trend (0.65) · Chaotic → No Trade · ≥60% consensus required · OBV + volume confirmation · score-to-win-rate calibration', accentHex: 'FFB84D'),
-  _StrategyDef(label: 'S6', title: 'Adaptive Hybrid', description: 'Regime-aware fusion of S2 technical signals and enhanced news sentiment — weights shift automatically based on volatility and trend strength.', detail: 'High-vol: tech 90% / news 10% · Strong-trend: 85/15 · Low-vol: 60/40 · Default: 70/30 · Freshness decay · Source credibility · Negation detection · BUY >0.45 / SELL <−0.35', accentHex: '00D4AA'),
-  _StrategyDef(label: 'S7', title: 'APEX — Adaptive Probabilistic EXecution', description: 'Five-regime classifier with regime-specific direction engines, divergence veto, higher-timeframe permission layer, and a 0–100 quality gate that must hit 60 before any trade fires.', detail: 'Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade) · VWAP · OBV · Divergence veto · HTF alignment · Cross-asset confirmation · Regime-aware SL/TP (1:1.8 → 2:4.5)', accentHex: 'FF4D6A'),
-  _StrategyDef(label: 'S8', title: 'Ensemble — S4 + S5 + S7 Weighted Consensus', description: 'Runs three strategies simultaneously and weights their votes by per-regime historical accuracy. Requires 2 of 3 to agree before firing — when engines split, the answer is HOLD.', detail: 'Strong Trend: S7 50% · S4 35% · S5 15% · Ranging: S5 45% · S7 35% · S4 20% · Volatile Break: S7 55% · S4 35% · S5 10% · Full position on 3/3 · 60% size on 2/3 · No trade on 1/3 or split', accentHex: '00C49A'),
-  _StrategyDef(label: 'S9', title: 'Silver Liquidity Sweep', description: 'Session-gated stop-hunt entries at Fibonacci confluence — optimised for Silver (SI=F) intraday. Fires only when all four conditions align simultaneously.', detail: 'London KZ (02:00–05:00 ET) · NY KZ (07:00–10:00 ET) · Liquidity sweep (wick beyond recent H/L, close back inside) · 9 EMA power candle (body >60% of range) · Fib 0.618/0.786 long · Fib 0.236/0.382 short', accentHex: 'C0C0C0'),
+  _StrategyDef(
+      label: 'S1',
+      title: 'Technical Analysis',
+      description:
+          'Pure price-action signals using momentum and volatility indicators.',
+      detail:
+          'RSI-14 · MACD · EMA crossovers · Bollinger Bands · ATR · Rate of Change',
+      accentHex: '00D4AA'),
+  _StrategyDef(
+      label: 'S2',
+      title: 'Multi-Factor',
+      description:
+          'Builds on S1 with volatility-adaptive entry and exit thresholds.',
+      detail:
+          'All S1 indicators + dynamic thresholds calibrated to current market vol',
+      accentHex: 'FFB84D'),
+  _StrategyDef(
+      label: 'S3',
+      title: 'Hybrid (Tech + Sentiment)',
+      description:
+          'Blends technical signals with real-time news sentiment scoring.',
+      detail: 'S1 signals (65%) + NLP sentiment from latest headlines (35%)',
+      accentHex: 'FF4D6A'),
+  _StrategyDef(
+      label: 'S4',
+      title: 'Regime-Adaptive',
+      description:
+          'Detects market regime first, then activates the right engine — Trend or Mean Reversion.',
+      detail:
+          'ADX > 25 → Trend Engine (EMA200 1.2×, MACD, Volume) · ADX < 18 → Range Engine (RSI, Bollinger, ATR) · High-conviction threshold (0.55)',
+      accentHex: '00C49A'),
+  _StrategyDef(
+      label: 'S5',
+      title: 'Professional Systematic',
+      description:
+          'Four-regime classification with dynamic indicator weights, consensus gate, and calibrated confidence — built for high-probability setups.',
+      detail:
+          'Quiet Trend (0.45) · Quiet Range (0.60) · Volatile Trend (0.65) · Chaotic → No Trade · ≥60% consensus required · OBV + volume confirmation · score-to-win-rate calibration',
+      accentHex: 'FFB84D'),
+  _StrategyDef(
+      label: 'S6',
+      title: 'Adaptive Hybrid',
+      description:
+          'Regime-aware fusion of S2 technical signals and enhanced news sentiment — weights shift automatically based on volatility and trend strength.',
+      detail:
+          'High-vol: tech 90% / news 10% · Strong-trend: 85/15 · Low-vol: 60/40 · Default: 70/30 · Freshness decay · Source credibility · Negation detection · BUY >0.45 / SELL <−0.35',
+      accentHex: '00D4AA'),
+  _StrategyDef(
+      label: 'S7',
+      title: 'APEX — Adaptive Probabilistic EXecution',
+      description:
+          'Five-regime classifier with regime-specific direction engines, divergence veto, higher-timeframe permission layer, and a 0–100 quality gate that must hit 60 before any trade fires.',
+      detail:
+          'Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade) · VWAP · OBV · Divergence veto · HTF alignment · Cross-asset confirmation · Regime-aware SL/TP (1:1.8 → 2:4.5)',
+      accentHex: 'FF4D6A'),
+  _StrategyDef(
+      label: 'S8',
+      title: 'Ensemble — S4 + S5 + S7 Weighted Consensus',
+      description:
+          'Runs three strategies simultaneously and weights their votes by per-regime historical accuracy. Requires 2 of 3 to agree before firing — when engines split, the answer is HOLD.',
+      detail:
+          'Strong Trend: S7 50% · S4 35% · S5 15% · Ranging: S5 45% · S7 35% · S4 20% · Volatile Break: S7 55% · S4 35% · S5 10% · Full position on 3/3 · 60% size on 2/3 · No trade on 1/3 or split',
+      accentHex: '00C49A'),
+  _StrategyDef(
+      label: 'S9',
+      title: 'Silver Liquidity Sweep',
+      description:
+          'Session-gated stop-hunt entries at Fibonacci confluence — optimised for Silver (SI=F) intraday. Fires only when all four conditions align simultaneously.',
+      detail:
+          'London KZ (02:00–05:00 ET) · NY KZ (07:00–10:00 ET) · Liquidity sweep (wick beyond recent H/L, close back inside) · 9 EMA power candle (body >60% of range) · Fib 0.618/0.786 long · Fib 0.236/0.382 short',
+      accentHex: 'C0C0C0'),
   // ── Enhanced strategies ─────────────────────────────────────────────────────
-  _StrategyDef(label: 'S1+', title: 'Technical Analysis+', description: 'S1 enhanced with OBV institutional flow scoring and volume-participation gate.', detail: 'All S1 indicators + OBV slope + volume gate (sub-50% avg → 0.55×) + MACD near-crossover bonus · Threshold 0.35', accentHex: '00D4AA'),
-  _StrategyDef(label: 'S2+', title: 'Multi-Factor+', description: 'S2 with regime-aware weight shifting and candle-body direction lock.', detail: 'S1+ base + ADX regime weights + candle direction lock (opposing body ≥30% → 0.72×) · Threshold 0.35', accentHex: 'FFB84D'),
-  _StrategyDef(label: 'S3+', title: 'Hybrid+', description: 'S3 with stricter news quality gate and adaptive blend that shifts when news is stale.', detail: 'S1+ (65%) + enhanced sentiment (35%) · Relevance ≥0.5 · Min 3 articles · Stale >6h → 80/20 split', accentHex: 'FF4D6A'),
-  _StrategyDef(label: 'S4+', title: 'Regime-Adaptive+', description: 'S4 with fixed neutral-zone engine, BB-width amplifier in MR mode, and volume scoring in Trend.', detail: 'ADX 18–25 → Weak Trend (0.70×) · MR + BB-width amp (compressed 1.30×) · Vol confirms trend · Trend 0.45 / MR 0.65', accentHex: '00C49A'),
-  _StrategyDef(label: 'S5+', title: 'Professional Systematic+', description: 'S5 with volume-spike gate, weighted consensus gate, and EMA200 stretch penalty.', detail: 'S5 + vol ≥1.5× for Volatile Trend · Weighted consensus ≥60% · EMA200 stretch >4%/8% → penalty', accentHex: 'FFB84D'),
-  _StrategyDef(label: 'S6+', title: 'Adaptive Hybrid+', description: 'S6 with stricter source credibility, stale-news penalty, and minimum article gate.', detail: 'S2+ tech + S6+ sentiment · Unknown sources 0.35 · Stale low-vol → 80/20 · Min 3 articles gate', accentHex: '00D4AA'),
-  _StrategyDef(label: 'S7+', title: 'APEX+ — 2-Bar HTF · Expanded Cross-Asset', description: 'APEX with 2-bar HTF persistence, VWAP in ranging engine, EMA50 direction lock, and 25-pair cross-asset map.', detail: 'All S7 + 2-bar HTF confirmation + Range: VWAP (0.8×) + Breakout: EMA50 lock + 25 cross-asset pairs', accentHex: 'FF4D6A'),
-  _StrategyDef(label: 'S8+', title: 'Ensemble+ — Regime-Shared · S7 Abstention', description: 'S8 with S7+ abstaining on quality fail, shared regime across sub-strategies, and differentiated sizing.', detail: 'S4+ + S5+ + S7+ · S7+ abstains (not HOLD) when quality <60 · Full/50% risk by agreement set · Threshold 0.38', accentHex: '00C49A'),
-  _StrategyDef(label: 'S9+', title: 'Silver Liquidity Sweep+', description: 'S9 with extended sweep lookback (20 bars) and wider Fibonacci structure (50 bars).', detail: 'Sweep: 20-bar range (was 10) · Fib POI: 50-bar swing (was 20) · Captures deeper institutional liquidity levels', accentHex: 'C0C0C0'),
+  _StrategyDef(
+      label: 'S1+',
+      title: 'Technical Analysis+',
+      description:
+          'S1 enhanced with OBV institutional flow scoring and volume-participation gate.',
+      detail:
+          'All S1 indicators + OBV slope + volume gate (sub-50% avg → 0.55×) + MACD near-crossover bonus · Threshold 0.35',
+      accentHex: '00D4AA'),
+  _StrategyDef(
+      label: 'S2+',
+      title: 'Multi-Factor+',
+      description:
+          'S2 with regime-aware weight shifting and candle-body direction lock.',
+      detail:
+          'S1+ base + ADX regime weights + candle direction lock (opposing body ≥30% → 0.72×) · Threshold 0.35',
+      accentHex: 'FFB84D'),
+  _StrategyDef(
+      label: 'S3+',
+      title: 'Hybrid+',
+      description:
+          'S3 with stricter news quality gate and adaptive blend that shifts when news is stale.',
+      detail:
+          'S1+ (65%) + enhanced sentiment (35%) · Relevance ≥0.5 · Min 3 articles · Stale >6h → 80/20 split',
+      accentHex: 'FF4D6A'),
+  _StrategyDef(
+      label: 'S4+',
+      title: 'Regime-Adaptive+',
+      description:
+          'S4 with fixed neutral-zone engine, BB-width amplifier in MR mode, and volume scoring in Trend.',
+      detail:
+          'ADX 18–25 → Weak Trend (0.70×) · MR + BB-width amp (compressed 1.30×) · Vol confirms trend · Trend 0.45 / MR 0.65',
+      accentHex: '00C49A'),
+  _StrategyDef(
+      label: 'S5+',
+      title: 'Professional Systematic+',
+      description:
+          'S5 with volume-spike gate, weighted consensus gate, and EMA200 stretch penalty.',
+      detail:
+          'S5 + vol ≥1.5× for Volatile Trend · Weighted consensus ≥60% · EMA200 stretch >4%/8% → penalty',
+      accentHex: 'FFB84D'),
+  _StrategyDef(
+      label: 'S6+',
+      title: 'Adaptive Hybrid+',
+      description:
+          'S6 with stricter source credibility, stale-news penalty, and minimum article gate.',
+      detail:
+          'S2+ tech + S6+ sentiment · Unknown sources 0.35 · Stale low-vol → 80/20 · Min 3 articles gate',
+      accentHex: '00D4AA'),
+  _StrategyDef(
+      label: 'S7+',
+      title: 'APEX+ — 2-Bar HTF · Expanded Cross-Asset',
+      description:
+          'APEX with 2-bar HTF persistence, VWAP in ranging engine, EMA50 direction lock, and 25-pair cross-asset map.',
+      detail:
+          'All S7 + 2-bar HTF confirmation + Range: VWAP (0.8×) + Breakout: EMA50 lock + 25 cross-asset pairs',
+      accentHex: 'FF4D6A'),
+  _StrategyDef(
+      label: 'S8+',
+      title: 'Ensemble+ — Regime-Shared · S7 Abstention',
+      description:
+          'S8 with S7+ abstaining on quality fail, shared regime across sub-strategies, and differentiated sizing.',
+      detail:
+          'S4+ + S5+ + S7+ · S7+ abstains (not HOLD) when quality <60 · Full/50% risk by agreement set · Threshold 0.38',
+      accentHex: '00C49A'),
+  _StrategyDef(
+      label: 'S9+',
+      title: 'Silver Liquidity Sweep+',
+      description:
+          'S9 with extended sweep lookback (20 bars) and wider Fibonacci structure (50 bars).',
+      detail:
+          'Sweep: 20-bar range (was 10) · Fib POI: 50-bar swing (was 20) · Captures deeper institutional liquidity levels',
+      accentHex: 'C0C0C0'),
 ];
 
 final _strategiesProvider = FutureProvider<List<_StrategyDef>>((ref) async {
   try {
-    final data = await ApiClient.instance.get(ApiEndpoints.tradingStrategies) as Map<String, dynamic>;
+    final data = await ApiClient.instance.get(ApiEndpoints.tradingStrategies)
+        as Map<String, dynamic>;
     final list = data['strategies'] as List;
-    return list.map((e) => _StrategyDef.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => _StrategyDef.fromJson(e as Map<String, dynamic>))
+        .toList();
   } catch (_) {
     return _fallbackStrategies;
   }
@@ -242,7 +370,14 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
   Timer? _refreshTimer;
   DateTime _lastQuotesUpdate = DateTime.now();
 
-  static const _categories = ['Watchlist', 'Commodities', 'Indices', 'Stocks', 'Forex', 'Crypto'];
+  static const _categories = [
+    'Watchlist',
+    'Commodities',
+    'Indices',
+    'Stocks',
+    'Forex',
+    'Crypto'
+  ];
 
   @override
   void initState() {
@@ -307,7 +442,8 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
             Expanded(
               child: Center(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: AppSpacing.s8),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -321,8 +457,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
                         child: Stack(
                           alignment: Alignment.center,
                           children: [
-                            Icon(Icons.star_rounded,
-                                size: 30, color: c.accent),
+                            Icon(Icons.star_rounded, size: 30, color: c.accent),
                           ],
                         ),
                       ),
@@ -332,9 +467,9 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
                               .copyWith(color: c.textPrimary),
                           textAlign: TextAlign.center),
                       const SizedBox(height: AppSpacing.s2),
-                      Text(
-                          'Star any asset to track it here',
-                          style: AppTypography.md.copyWith(color: c.textSecondary),
+                      Text('Star any asset to track it here',
+                          style:
+                              AppTypography.md.copyWith(color: c.textSecondary),
                           textAlign: TextAlign.center),
                       const SizedBox(height: AppSpacing.s6),
                       FilledButton.icon(
@@ -383,7 +518,8 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
                   backgroundColor: c.surface,
                   onRefresh: () => ref.refresh(_quotesProvider.future),
                   child: ListView.builder(
-                    padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
+                    padding: EdgeInsets.only(
+                        bottom: MediaQuery.of(context).padding.bottom),
                     itemCount: filtered.length,
                     itemBuilder: (ctx, i) => _AssetRow(
                         key: ValueKey(filtered[i].symbol), item: filtered[i]),
@@ -404,8 +540,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
         onRetry: () => ref.invalidate(_quotesProvider),
       ),
       data: (quotes) {
-        final filtered =
-            quotes.where((q) => q.category == _category).toList();
+        final filtered = quotes.where((q) => q.category == _category).toList();
 
         return Column(
           children: [
@@ -421,7 +556,8 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
                 backgroundColor: c.surface,
                 onRefresh: () => ref.refresh(_quotesProvider.future),
                 child: ListView.builder(
-                  padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
+                  padding: EdgeInsets.only(
+                      bottom: MediaQuery.of(context).padding.bottom),
                   itemCount: filtered.length,
                   itemBuilder: (ctx, i) => _AssetRow(
                       key: ValueKey(filtered[i].symbol), item: filtered[i]),
@@ -511,8 +647,7 @@ class _CategoryFilter extends StatelessWidget {
               decoration: BoxDecoration(
                 color: isActive ? c.accent : c.surfaceCard,
                 borderRadius: BorderRadius.circular(AppRadius.full),
-                border: Border.all(
-                    color: isActive ? c.accent : c.border),
+                border: Border.all(color: isActive ? c.accent : c.border),
               ),
               child: cat == 'Watchlist'
                   ? Icon(
@@ -588,10 +723,12 @@ class _StocksSearchViewState extends ConsumerState<_StocksSearchView> {
             decoration: InputDecoration(
               hintText: 'Search by name or ticker (e.g. AAPL, Tesla)',
               hintStyle: AppTypography.md.copyWith(color: c.textMuted),
-              prefixIcon: Icon(Icons.search_rounded, color: c.textMuted, size: 20),
+              prefixIcon:
+                  Icon(Icons.search_rounded, color: c.textMuted, size: 20),
               suffixIcon: _controller.text.isNotEmpty
                   ? IconButton(
-                      icon: Icon(Icons.clear_rounded, color: c.textMuted, size: 18),
+                      icon: Icon(Icons.clear_rounded,
+                          color: c.textMuted, size: 18),
                       onPressed: () {
                         _controller.clear();
                         setState(() => _query = '');
@@ -619,9 +756,10 @@ class _StocksSearchViewState extends ConsumerState<_StocksSearchView> {
         ),
 
         // Results
-        Expanded(child: _query.isEmpty
-            ? _EmptySearch()
-            : _SearchResults(query: _query)),
+        Expanded(
+            child: _query.isEmpty
+                ? _EmptySearch()
+                : _SearchResults(query: _query)),
       ],
     );
   }
@@ -634,7 +772,8 @@ class _EmptySearch extends StatelessWidget {
     return Align(
       alignment: Alignment.topCenter,
       child: Padding(
-        padding: const EdgeInsets.only(top: 60, left: AppSpacing.s8, right: AppSpacing.s8),
+        padding: const EdgeInsets.only(
+            top: 60, left: AppSpacing.s8, right: AppSpacing.s8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -645,7 +784,8 @@ class _EmptySearch extends StatelessWidget {
                 color: c.accentDim,
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.manage_search_rounded, size: 26, color: c.accent),
+              child:
+                  Icon(Icons.manage_search_rounded, size: 26, color: c.accent),
             ),
             const SizedBox(height: AppSpacing.s4),
             Text('Search any stock worldwide',
@@ -672,10 +812,10 @@ class _SearchResults extends ConsumerWidget {
     final async = ref.watch(_stockSearchProvider(query));
 
     return async.when(
-      loading: () => Center(
-          child: CircularProgressIndicator(color: c.accent)),
+      loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
       error: (_, __) => Center(
-          child: Text('Search failed', style: AppTypography.md.copyWith(color: c.textMuted))),
+          child: Text('Search failed',
+              style: AppTypography.md.copyWith(color: c.textMuted))),
       data: (results) {
         if (results.isEmpty) {
           return Center(
@@ -736,8 +876,8 @@ class _StockResultRow extends StatelessWidget {
                   result.symbol.length > 4
                       ? result.symbol.substring(0, 4)
                       : result.symbol,
-                  style: AppTypography.labelSm.copyWith(
-                      color: c.accent, fontWeight: FontWeight.w700),
+                  style: AppTypography.labelSm
+                      .copyWith(color: c.accent, fontWeight: FontWeight.w700),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -748,9 +888,8 @@ class _StockResultRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(result.symbol,
-                      style: AppTypography.labelLg
-                          .copyWith(color: c.textPrimary,
-                              fontWeight: FontWeight.w600)),
+                      style: AppTypography.labelLg.copyWith(
+                          color: c.textPrimary, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 2),
                   Text(result.name,
                       style: AppTypography.sm.copyWith(color: c.textSecondary),
@@ -764,7 +903,8 @@ class _StockResultRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: c.surfaceCard,
                     borderRadius: BorderRadius.circular(AppRadius.xs),
@@ -808,9 +948,8 @@ class _AssetRowState extends State<_AssetRow> {
     if (oldPrice != null && newPrice != null && oldPrice != newPrice) {
       final c = context.colors;
       final isUp = newPrice > oldPrice;
-      setState(() => _flashColor = isUp
-          ? c.positive.withAlpha(36)
-          : c.danger.withAlpha(36));
+      setState(() => _flashColor =
+          isUp ? c.positive.withAlpha(36) : c.danger.withAlpha(36));
       Future.delayed(const Duration(milliseconds: 700), () {
         if (mounted) setState(() => _flashColor = null);
       });
@@ -824,9 +963,8 @@ class _AssetRowState extends State<_AssetRow> {
     final pct = item.changePercent;
     final isUp = (pct ?? 0) >= 0;
     final pctColor = isUp ? c.positive : c.danger;
-    final pctStr = pct == null
-        ? '--'
-        : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
+    final pctStr =
+        pct == null ? '--' : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
 
     return InkWell(
       onTap: () {
@@ -850,7 +988,8 @@ class _AssetRowState extends State<_AssetRow> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(item.name,
-                      style: AppTypography.labelLg.copyWith(color: c.textPrimary),
+                      style:
+                          AppTypography.labelLg.copyWith(color: c.textPrimary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
@@ -867,7 +1006,8 @@ class _AssetRowState extends State<_AssetRow> {
                   child: Text(
                     _formatPrice(item.price),
                     key: ValueKey(item.price),
-                    style: AppTypography.numericLg.copyWith(color: c.textPrimary),
+                    style:
+                        AppTypography.numericLg.copyWith(color: c.textPrimary),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -877,7 +1017,8 @@ class _AssetRowState extends State<_AssetRow> {
                 if (item.preMarketChangePercent != null) ...[
                   const SizedBox(height: 2),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                     decoration: BoxDecoration(
                       color: c.warning.withAlpha(25),
                       borderRadius: BorderRadius.circular(4),
@@ -944,18 +1085,19 @@ void _showStrategyInfo(BuildContext context) {
               ),
               const SizedBox(height: AppSpacing.s5),
               Text('Trading Strategies',
-                  style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+                  style:
+                      AppTypography.headingMd.copyWith(color: c.textPrimary)),
               const SizedBox(height: AppSpacing.s4),
               ...strategies.expand((s) => [
-                _StrategyInfoRow(
-                  label: s.label,
-                  title: s.title,
-                  description: s.description,
-                  detail: s.detail,
-                  accentColor: s.accentColor,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-              ]),
+                    _StrategyInfoRow(
+                      label: s.label,
+                      title: s.title,
+                      description: s.description,
+                      detail: s.detail,
+                      accentColor: s.accentColor,
+                    ),
+                    const SizedBox(height: AppSpacing.s4),
+                  ]),
             ],
           ),
         );
@@ -995,8 +1137,8 @@ class _StrategyInfoRow extends StatelessWidget {
           ),
           child: Center(
             child: Text(label,
-                style: AppTypography.labelSm.copyWith(
-                    color: accentColor, fontWeight: FontWeight.w700)),
+                style: AppTypography.labelSm
+                    .copyWith(color: accentColor, fontWeight: FontWeight.w700)),
           ),
         ),
         const SizedBox(width: AppSpacing.s4),
@@ -1005,8 +1147,8 @@ class _StrategyInfoRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(title,
-                  style: AppTypography.labelMd
-                      .copyWith(color: c.textPrimary, fontWeight: FontWeight.w700)),
+                  style: AppTypography.labelMd.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w700)),
               const SizedBox(height: 2),
               Text(description,
                   style: AppTypography.sm.copyWith(color: c.textSecondary)),
@@ -1070,7 +1212,8 @@ class _SignalsTabState extends ConsumerState<_SignalsTab> {
             decoration: BoxDecoration(
               color: const Color(0xFFC0C0C0).withAlpha(18),
               border: Border(
-                  bottom: BorderSide(color: const Color(0xFFC0C0C0).withAlpha(50))),
+                  bottom:
+                      BorderSide(color: const Color(0xFFC0C0C0).withAlpha(50))),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1094,18 +1237,23 @@ class _SignalsTabState extends ConsumerState<_SignalsTab> {
           ),
         Expanded(
           child: quotesAsync.when(
-            loading: () => Center(
-                child: CircularProgressIndicator(color: c.accent)),
+            loading: () =>
+                Center(child: CircularProgressIndicator(color: c.accent)),
             error: (e, _) => const ErrorView(message: 'Failed to load assets'),
             data: (quotes) {
               final filtered = isS9
                   ? quotes.where((q) => q.symbol == 'SI=F').toList()
                   : (effectiveType == 'ALL'
                       ? quotes
-                      : quotes.where((q) => q.category == effectiveType).toList());
+                      : quotes
+                          .where((q) => q.category == effectiveType)
+                          .toList());
 
               return ListView.builder(
-                padding: EdgeInsets.only(top: AppSpacing.s3, bottom: AppSpacing.s3 + MediaQuery.of(context).padding.bottom),
+                padding: EdgeInsets.only(
+                    top: AppSpacing.s3,
+                    bottom:
+                        AppSpacing.s3 + MediaQuery.of(context).padding.bottom),
                 itemCount: filtered.length + 1,
                 itemBuilder: (ctx, i) {
                   if (i == filtered.length) return const _DisclaimerBar();
@@ -1233,7 +1381,8 @@ class _StrategyGrid extends StatelessWidget {
       final isSelected = strategy == s;
       final isS9Chip = s == TradingStrategy.s9 || s == TradingStrategy.s9Plus;
       final isAdvanced = int.parse(s.serverParam) >= 4;
-      final isLocked = isAdvanced && !EntitlementService.can('signals_advanced');
+      final isLocked =
+          isAdvanced && !EntitlementService.can('signals_advanced');
       final chipColor =
           isS9Chip ? Color.lerp(c.accent, silver, 0.5)! : c.accent;
       final chipDim = isS9Chip
@@ -1297,11 +1446,14 @@ class _StrategyGrid extends StatelessWidget {
     }
 
     Widget spacerRow4() => Row(children: const [
-      Expanded(child: SizedBox()), SizedBox(width: 5),
-      Expanded(child: SizedBox()), SizedBox(width: 5),
-      Expanded(child: SizedBox()), SizedBox(width: 5),
-      Expanded(child: SizedBox()),
-    ]);
+          Expanded(child: SizedBox()),
+          SizedBox(width: 5),
+          Expanded(child: SizedBox()),
+          SizedBox(width: 5),
+          Expanded(child: SizedBox()),
+          SizedBox(width: 5),
+          Expanded(child: SizedBox()),
+        ]);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1344,7 +1496,8 @@ class _StrategyGrid extends StatelessWidget {
           Expanded(child: Container(height: 1, color: c.border.withAlpha(60))),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text('Enhanced', style: AppTypography.xs.copyWith(color: c.textMuted)),
+            child: Text('Enhanced',
+                style: AppTypography.xs.copyWith(color: c.textMuted)),
           ),
           Expanded(child: Container(height: 1, color: c.border.withAlpha(60))),
         ]),
@@ -1467,8 +1620,7 @@ class _SignalErrorRow extends StatelessWidget {
             const SizedBox(width: AppSpacing.s2),
             Expanded(
               child: Text(quote.name,
-                  style: AppTypography.labelMd
-                      .copyWith(color: c.textMuted),
+                  style: AppTypography.labelMd.copyWith(color: c.textMuted),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis),
             ),
@@ -1546,7 +1698,8 @@ class _SignalCardContent extends StatelessWidget {
                 const SizedBox(width: AppSpacing.s2),
                 Expanded(
                   child: Text(quote.name,
-                      style: AppTypography.labelLg.copyWith(color: c.textPrimary),
+                      style:
+                          AppTypography.labelLg.copyWith(color: c.textPrimary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                 ),
@@ -1554,8 +1707,8 @@ class _SignalCardContent extends StatelessWidget {
                 const SizedBox(width: AppSpacing.s3),
                 Text(
                   '${signal.confidence.toInt()}%',
-                  style: AppTypography.sm.copyWith(
-                      color: confColor, fontWeight: FontWeight.w700),
+                  style: AppTypography.sm
+                      .copyWith(color: confColor, fontWeight: FontWeight.w700),
                 ),
               ],
             ),
@@ -1577,8 +1730,8 @@ class _SignalCardContent extends StatelessWidget {
                 _SignalStat('Entry', _fmt(signal.entry), c.textPrimary, c),
                 _SignalStat('SL', _fmt(signal.stopLoss), c.danger, c),
                 _SignalStat('TP', _fmt(signal.takeProfit), c.positive, c),
-                _SignalStat('R:R',
-                    signal.riskReward.toStringAsFixed(2), c.accent, c),
+                _SignalStat(
+                    'R:R', signal.riskReward.toStringAsFixed(2), c.accent, c),
               ],
             ),
             if (signal.vwap != null) ...[
@@ -1612,12 +1765,11 @@ class _SignalCardContent extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('• ',
-                          style: TextStyle(
-                              color: c.textMuted, fontSize: 12)),
+                          style: TextStyle(color: c.textMuted, fontSize: 12)),
                       Expanded(
                         child: Text(r,
-                            style: AppTypography.xs.copyWith(
-                                color: c.textSecondary)),
+                            style: AppTypography.xs
+                                .copyWith(color: c.textSecondary)),
                       ),
                     ],
                   ),
@@ -1647,11 +1799,10 @@ class _SignalStat extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: AppTypography.xs.copyWith(color: palette.textMuted)),
+        Text(label, style: AppTypography.xs.copyWith(color: palette.textMuted)),
         Text(value,
-            style: AppTypography.sm.copyWith(
-                color: color, fontWeight: FontWeight.w600)),
+            style: AppTypography.sm
+                .copyWith(color: color, fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -1677,13 +1828,12 @@ class _LoadingRow extends StatelessWidget {
         children: [
           Expanded(
               child: Text(name,
-                  style: AppTypography.labelLg.copyWith(
-                      color: c.textMuted))),
+                  style: AppTypography.labelLg.copyWith(color: c.textMuted))),
           SizedBox(
               width: 14,
               height: 14,
-              child: CircularProgressIndicator(
-                  strokeWidth: 1.5, color: c.accent)),
+              child:
+                  CircularProgressIndicator(strokeWidth: 1.5, color: c.accent)),
         ],
       ),
     );
@@ -1740,8 +1890,13 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
     final alerts = ref.watch(alertProvider);
 
     return ListView(
-      padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5, AppSpacing.s5,
-          AppSpacing.s5 + MediaQuery.of(context).padding.bottom + MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.fromLTRB(
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5,
+          AppSpacing.s5 +
+              MediaQuery.of(context).padding.bottom +
+              MediaQuery.of(context).viewInsets.bottom),
       children: [
         // Add new alert
         Container(
@@ -1755,7 +1910,8 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('New Alert',
-                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                  style:
+                      AppTypography.headingSm.copyWith(color: c.textPrimary)),
               const SizedBox(height: AppSpacing.s4),
               TextField(
                 controller: _symbolCtrl,
@@ -1862,8 +2018,7 @@ class _AlertsTabState extends ConsumerState<_AlertsTab> {
                           .copyWith(color: c.textPrimary),
                       textAlign: TextAlign.center),
                   const SizedBox(height: AppSpacing.s2),
-                  Text(
-                      'Get notified when any asset hits your target price',
+                  Text('Get notified when any asset hits your target price',
                       style: AppTypography.md.copyWith(color: c.textSecondary),
                       textAlign: TextAlign.center),
                 ],
@@ -1936,7 +2091,8 @@ class _AlertRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(alert.name,
-                    style: AppTypography.labelLg.copyWith(color: c.textPrimary)),
+                    style:
+                        AppTypography.labelLg.copyWith(color: c.textPrimary)),
                 Text(
                   '${isAbove ? 'Above' : 'Below'} \$${alert.targetPrice.toStringAsFixed(2)}',
                   style: AppTypography.sm.copyWith(color: c.textMuted),
@@ -1953,7 +2109,8 @@ class _AlertRow extends StatelessWidget {
                 builder: (ctx) => AlertDialog(
                   backgroundColor: c.surface,
                   title: Text('Delete Alert',
-                      style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                      style: AppTypography.headingSm
+                          .copyWith(color: c.textPrimary)),
                   content: Text(
                     'Remove the ${alert.direction == "above" ? "above" : "below"} '
                     '\$${alert.targetPrice.toStringAsFixed(2)} alert for ${alert.name}?',
@@ -1968,8 +2125,8 @@ class _AlertRow extends StatelessWidget {
                     TextButton(
                       onPressed: () => Navigator.of(ctx).pop(true),
                       child: Text('Delete',
-                          style: AppTypography.sm.copyWith(color: c.danger,
-                              fontWeight: FontWeight.w600)),
+                          style: AppTypography.sm.copyWith(
+                              color: c.danger, fontWeight: FontWeight.w600)),
                     ),
                   ],
                 ),
@@ -2002,12 +2159,18 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
 
   static String _cacheKeyFor(String version) {
     switch (version) {
-      case 'v2': return 'assets-v2';
-      case 'v3': return 'assets-v3';
-      case 'v3c': return 'commodities-v3';
-      case 'v3f': return 'forex-v3';
-      case 'v3crypto': return 'crypto-v3';
-      default: return 'assets-v1';
+      case 'v2':
+        return 'assets-v2';
+      case 'v3':
+        return 'assets-v3';
+      case 'v3c':
+        return 'commodities-v3';
+      case 'v3f':
+        return 'forex-v3';
+      case 'v3crypto':
+        return 'crypto-v3';
+      default:
+        return 'assets-v1';
     }
   }
 
@@ -2027,10 +2190,20 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
       _type = t;
       _minSignals = 0;
       _signalFilter = {};
-      if (t == 'Indices') { _version = 'v3'; return; }
-      if (t == 'Forex')   { _version = 'v3f'; return; }
-      if (t == 'Crypto')  { _version = 'v3crypto'; return; }
-      if (_version == 'v3' || _version == 'v3f' || _version == 'v3crypto') _version = 'v1';
+      if (t == 'Indices') {
+        _version = 'v3';
+        return;
+      }
+      if (t == 'Forex') {
+        _version = 'v3f';
+        return;
+      }
+      if (t == 'Crypto') {
+        _version = 'v3crypto';
+        return;
+      }
+      if (_version == 'v3' || _version == 'v3f' || _version == 'v3crypto')
+        _version = 'v1';
     });
   }
 
@@ -2054,11 +2227,13 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
           _signalFilter = next;
         }),
         onInfo: () => _showPMInfo(context, version: _version),
-        onBacktest: (_version == 'v3' || _version == 'v3c' ||
-                _version == 'v3f' || _version == 'v3crypto')
+        onBacktest: (_version == 'v3' ||
+                _version == 'v3c' ||
+                _version == 'v3f' ||
+                _version == 'v3crypto')
             ? null
-            : () => context.push(
-                '/trading/10x-backtest?version=$_version&type=assets'),
+            : () => context
+                .push('/trading/10x-backtest?version=$_version&type=assets'),
       );
 
   @override
@@ -2082,7 +2257,9 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
       loading: () => Column(
         children: [
           filterRow,
-          const Expanded(child: _PMSkeleton()),
+          const Expanded(
+            child: ShimmerList(count: 6, type: ShimmerRowType.scannerCard),
+          ),
         ],
       ),
       error: (e, _) => Column(
@@ -2102,32 +2279,34 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
             .where((r) => r.category == _type)
             .where((r) => r.signalsActive >= _minSignals)
             .where((r) {
-              if (_signalFilter.isEmpty) return true;
-              for (final sig in _signalFilter) {
-                if (isV3) {
-                  if (sig == 'THRUST' && !r.thrust) return false;
-                  if (sig == 'BASE' && !r.base) return false;
-                  if (sig == 'UPTREND' && !r.uptrend) return false;
-                  if (sig == 'NEW_HIGH' && !r.newHighReclaim) return false;
-                  if (sig == 'BREAKOUT' && !r.regimeBreakout) return false;
-                } else if (_version == 'v3c' || _version == 'v3crypto') {
-                  if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen)) return false;
-                  if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
-                  if (sig == 'CATALYST' && !r.regimeBreakout) return false;
-                } else if (_version == 'v3f') {
-                  if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen)) return false;
-                  if (sig == 'RANGE' && !r.heartbeat) return false;
-                  if (sig == 'BREAKOUT' && !r.regimeBreakout) return false;
-                } else {
-                  if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen)) return false;
-                  if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
-                  if (sig == 'REC_QTR' && !r.recordQuarter) return false;
-                  if (sig == 'TREND' && !r.trendUp) return false;
-                }
-              }
-              return true;
-            })
-            .toList();
+          if (_signalFilter.isEmpty) return true;
+          for (final sig in _signalFilter) {
+            if (isV3) {
+              if (sig == 'THRUST' && !r.thrust) return false;
+              if (sig == 'BASE' && !r.base) return false;
+              if (sig == 'UPTREND' && !r.uptrend) return false;
+              if (sig == 'NEW_HIGH' && !r.newHighReclaim) return false;
+              if (sig == 'BREAKOUT' && !r.regimeBreakout) return false;
+            } else if (_version == 'v3c' || _version == 'v3crypto') {
+              if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen))
+                return false;
+              if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
+              if (sig == 'CATALYST' && !r.regimeBreakout) return false;
+            } else if (_version == 'v3f') {
+              if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen))
+                return false;
+              if (sig == 'RANGE' && !r.heartbeat) return false;
+              if (sig == 'BREAKOUT' && !r.regimeBreakout) return false;
+            } else {
+              if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen))
+                return false;
+              if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
+              if (sig == 'REC_QTR' && !r.recordQuarter) return false;
+              if (sig == 'TREND' && !r.trendUp) return false;
+            }
+          }
+          return true;
+        }).toList();
         if (_sort == 'volume') {
           filtered.sort((a, b) => b.volumeRatio.compareTo(a.volumeRatio));
         }
@@ -2148,7 +2327,8 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
                           padding: const EdgeInsets.all(AppSpacing.s8),
                           child: Text(
                             'No assets match the current filter.',
-                            style: AppTypography.sm.copyWith(color: c.textMuted),
+                            style:
+                                AppTypography.sm.copyWith(color: c.textMuted),
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -2244,8 +2424,7 @@ class _PMFilterRow extends StatelessWidget {
                     Text('How it works',
                         style: AppTypography.xs.copyWith(color: c.accent)),
                     const SizedBox(width: 4),
-                    Icon(Icons.info_outline_rounded,
-                        size: 15, color: c.accent),
+                    Icon(Icons.info_outline_rounded, size: 15, color: c.accent),
                   ],
                 ),
               ),
@@ -2296,14 +2475,16 @@ class _PMFilterRow extends StatelessWidget {
                 _PMChip(
                   label: 'v1 Original',
                   active: version == 'v1',
-                  disabled: type == 'Indices' || type == 'Forex' || type == 'Crypto',
+                  disabled:
+                      type == 'Indices' || type == 'Forex' || type == 'Crypto',
                   onTap: () => onVersion('v1'),
                 ),
                 const SizedBox(width: AppSpacing.s2),
                 _PMChip(
                   label: 'v2 Pine-Aligned',
                   active: version == 'v2',
-                  disabled: type == 'Indices' || type == 'Forex' || type == 'Crypto',
+                  disabled:
+                      type == 'Indices' || type == 'Forex' || type == 'Crypto',
                   onTap: () => onVersion('v2'),
                 ),
                 const SizedBox(width: AppSpacing.s2),
@@ -2418,7 +2599,8 @@ class _PMFilterRow extends StatelessWidget {
                   : version == 'v3c' || version == 'v3crypto'
                       ? [
                           Text('Signals:',
-                              style: AppTypography.xs.copyWith(color: c.textMuted)),
+                              style: AppTypography.xs
+                                  .copyWith(color: c.textMuted)),
                           const SizedBox(width: AppSpacing.s2),
                           _PMChip(
                             label: 'VOL',
@@ -2441,7 +2623,8 @@ class _PMFilterRow extends StatelessWidget {
                       : version == 'v3f'
                           ? [
                               Text('Signals:',
-                                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+                                  style: AppTypography.xs
+                                      .copyWith(color: c.textMuted)),
                               const SizedBox(width: AppSpacing.s2),
                               _PMChip(
                                 label: 'VOL',
@@ -2462,34 +2645,35 @@ class _PMFilterRow extends StatelessWidget {
                               ),
                             ]
                           : [
-                          Text('Signals:',
-                              style: AppTypography.xs.copyWith(color: c.textMuted)),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'VOL',
-                            active: signalFilter.contains('VOL'),
-                            onTap: () => onSignalToggle('VOL'),
-                          ),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'HEARTBEAT',
-                            active: signalFilter.contains('HEARTBEAT'),
-                            onTap: () => onSignalToggle('HEARTBEAT'),
-                          ),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'REC. QTR',
-                            active: signalFilter.contains('REC_QTR'),
-                            onTap: () => onSignalToggle('REC_QTR'),
-                          ),
-                          const SizedBox(width: AppSpacing.s2),
-                          _PMChip(
-                            label: 'TREND ↑',
-                            active: signalFilter.contains('TREND'),
-                            disabled: version == 'v1',
-                            onTap: () => onSignalToggle('TREND'),
-                          ),
-                        ],
+                              Text('Signals:',
+                                  style: AppTypography.xs
+                                      .copyWith(color: c.textMuted)),
+                              const SizedBox(width: AppSpacing.s2),
+                              _PMChip(
+                                label: 'VOL',
+                                active: signalFilter.contains('VOL'),
+                                onTap: () => onSignalToggle('VOL'),
+                              ),
+                              const SizedBox(width: AppSpacing.s2),
+                              _PMChip(
+                                label: 'HEARTBEAT',
+                                active: signalFilter.contains('HEARTBEAT'),
+                                onTap: () => onSignalToggle('HEARTBEAT'),
+                              ),
+                              const SizedBox(width: AppSpacing.s2),
+                              _PMChip(
+                                label: 'REC. QTR',
+                                active: signalFilter.contains('REC_QTR'),
+                                onTap: () => onSignalToggle('REC_QTR'),
+                              ),
+                              const SizedBox(width: AppSpacing.s2),
+                              _PMChip(
+                                label: 'TREND ↑',
+                                active: signalFilter.contains('TREND'),
+                                disabled: version == 'v1',
+                                onTap: () => onSignalToggle('TREND'),
+                              ),
+                            ],
             ),
           ),
           const SizedBox(height: AppSpacing.s2),
@@ -2644,11 +2828,26 @@ class _PMCard extends StatelessWidget {
               runSpacing: AppSpacing.s2,
               children: version == 'v3'
                   ? [
-                      _PMSignalPill(label: 'THRUST', active: item.thrust, activeColor: c.positive),
-                      _PMSignalPill(label: 'BASE', active: item.base, activeColor: c.accent),
-                      _PMSignalPill(label: 'UPTREND', active: item.uptrend, activeColor: c.accent),
-                      _PMSignalPill(label: 'NEW HIGH', active: item.newHighReclaim, activeColor: c.positive),
-                      _PMSignalPill(label: 'BREAKOUT', active: item.regimeBreakout, activeColor: c.warning),
+                      _PMSignalPill(
+                          label: 'THRUST',
+                          active: item.thrust,
+                          activeColor: c.positive),
+                      _PMSignalPill(
+                          label: 'BASE',
+                          active: item.base,
+                          activeColor: c.accent),
+                      _PMSignalPill(
+                          label: 'UPTREND',
+                          active: item.uptrend,
+                          activeColor: c.accent),
+                      _PMSignalPill(
+                          label: 'NEW HIGH',
+                          active: item.newHighReclaim,
+                          activeColor: c.positive),
+                      _PMSignalPill(
+                          label: 'BREAKOUT',
+                          active: item.regimeBreakout,
+                          activeColor: c.warning),
                     ]
                   : version == 'v3c' || version == 'v3crypto'
                       ? [
@@ -2661,8 +2860,14 @@ class _PMCard extends StatelessWidget {
                                 ? c.warning
                                 : c.positive,
                           ),
-                          _PMSignalPill(label: 'HEARTBEAT', active: item.heartbeat, activeColor: c.accent),
-                          _PMSignalPill(label: 'CATALYST', active: item.regimeBreakout, activeColor: c.warning),
+                          _PMSignalPill(
+                              label: 'HEARTBEAT',
+                              active: item.heartbeat,
+                              activeColor: c.accent),
+                          _PMSignalPill(
+                              label: 'CATALYST',
+                              active: item.regimeBreakout,
+                              activeColor: c.warning),
                         ]
                       : version == 'v3f'
                           ? [
@@ -2671,12 +2876,19 @@ class _PMCard extends StatelessWidget {
                                     ? 'VOL ${item.volumeRatio.toStringAsFixed(1)}x'
                                     : 'VOL —',
                                 active: item.volumeSpike && item.volumeGreen,
-                                activeColor: item.volumeSpike && !item.volumeGreen
-                                    ? c.warning
-                                    : c.positive,
+                                activeColor:
+                                    item.volumeSpike && !item.volumeGreen
+                                        ? c.warning
+                                        : c.positive,
                               ),
-                              _PMSignalPill(label: 'RANGE', active: item.heartbeat, activeColor: c.accent),
-                              _PMSignalPill(label: 'BREAKOUT', active: item.regimeBreakout, activeColor: c.warning),
+                              _PMSignalPill(
+                                  label: 'RANGE',
+                                  active: item.heartbeat,
+                                  activeColor: c.accent),
+                              _PMSignalPill(
+                                  label: 'BREAKOUT',
+                                  active: item.regimeBreakout,
+                                  activeColor: c.warning),
                             ]
                           : [
                               _PMSignalPill(
@@ -2684,19 +2896,28 @@ class _PMCard extends StatelessWidget {
                                     ? 'VOL ${item.volumeRatio.toStringAsFixed(1)}x'
                                     : 'VOL —',
                                 active: item.volumeSpike && item.volumeGreen,
-                                activeColor: item.volumeSpike && !item.volumeGreen
-                                    ? c.warning
-                                    : c.positive,
+                                activeColor:
+                                    item.volumeSpike && !item.volumeGreen
+                                        ? c.warning
+                                        : c.positive,
                               ),
-                              _PMSignalPill(label: 'HEARTBEAT', active: item.heartbeat, activeColor: c.accent),
+                              _PMSignalPill(
+                                  label: 'HEARTBEAT',
+                                  active: item.heartbeat,
+                                  activeColor: c.accent),
                               _PMSignalPill(
                                 label: 'REC. QTR',
                                 active: item.recordQuarter,
                                 activeColor: c.positive,
                                 locked: !item.epsApplicable,
                               ),
-                              if (version == 'v2' || item.trendUp || item.signalsActive >= 4)
-                                _PMSignalPill(label: 'TREND ↑', active: item.trendUp, activeColor: c.accent),
+                              if (version == 'v2' ||
+                                  item.trendUp ||
+                                  item.signalsActive >= 4)
+                                _PMSignalPill(
+                                    label: 'TREND ↑',
+                                    active: item.trendUp,
+                                    activeColor: c.accent),
                             ],
             ),
             const SizedBox(height: AppSpacing.s3),
@@ -2845,30 +3066,6 @@ class _PMPctChip extends StatelessWidget {
   }
 }
 
-// ── PM Skeleton ───────────────────────────────────────────────────────────────
-
-class _PMSkeleton extends StatelessWidget {
-  const _PMSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return ListView.builder(
-      padding: const EdgeInsets.all(AppSpacing.s5),
-      itemCount: 6,
-      itemBuilder: (_, __) => Container(
-        height: 110,
-        margin: const EdgeInsets.only(bottom: AppSpacing.s3),
-        decoration: BoxDecoration(
-          color: c.surfaceCard,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: c.border),
-        ),
-      ),
-    );
-  }
-}
-
 // ── PM Info Sheet ─────────────────────────────────────────────────────────────
 
 void _showPMInfo(BuildContext context, {String version = 'v1'}) {
@@ -2906,7 +3103,8 @@ void _showPMInfo(BuildContext context, {String version = 'v1'}) {
 List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
       Center(
         child: Container(
-          width: 36, height: 4,
+          width: 36,
+          height: 4,
           decoration: BoxDecoration(
               color: c.border, borderRadius: BorderRadius.circular(2)),
         ),
@@ -2936,8 +3134,10 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.positive,
         label: 'THRUST',
         title: 'Buying Thrust / Volume',
-        rule: "Volume ≥ 2× 20-bar avg on a green day — OR, when no volume is available (cash indices like SPX), a price thrust: today's range ≥ 1.5× avg AND close in the top 30% of the range.",
-        explanation: 'Index volume spikes are smaller than single stocks, so this is tuned to 2× (not 3×) with a thrust fallback for vol-less indices.',
+        rule:
+            "Volume ≥ 2× 20-bar avg on a green day — OR, when no volume is available (cash indices like SPX), a price thrust: today's range ≥ 1.5× avg AND close in the top 30% of the range.",
+        explanation:
+            'Index volume spikes are smaller than single stocks, so this is tuned to 2× (not 3×) with a thrust fallback for vol-less indices.',
         examples: '^GSPC, ^NDX, ^N225',
         c: c,
       ),
@@ -2947,8 +3147,10 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.accent,
         label: 'BASE',
         title: 'Base / Heartbeat',
-        rule: '120-bar high-to-low range ≤ 20%. The index is consolidating sideways, not trending.',
-        explanation: 'Indexes mean-revert, so a tight base after a correction often precedes a regime change.',
+        rule:
+            '120-bar high-to-low range ≤ 20%. The index is consolidating sideways, not trending.',
+        explanation:
+            'Indexes mean-revert, so a tight base after a correction often precedes a regime change.',
         examples: 'Common after corrections / range-bound macro regimes.',
         c: c,
       ),
@@ -2959,7 +3161,8 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
         label: 'UPTREND',
         title: 'Trend Filter (MA200)',
         rule: 'Close > 200-day simple moving average.',
-        explanation: 'Avoids fading into a bear market. Reclaims only count when price is above the long-term trend.',
+        explanation:
+            'Avoids fading into a bear market. Reclaims only count when price is above the long-term trend.',
         examples: 'Used as a filter — required for a valid BREAKOUT.',
         c: c,
       ),
@@ -2969,8 +3172,10 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.positive,
         label: 'NEW HIGH',
         title: 'New-High Reclaim',
-        rule: "Close > prior 252-day high (~1 year, excluding today), AND uptrend is active.",
-        explanation: "An index has no EPS, so the workbook's \"record quarter\" is replaced with the closest honest analog: price reclaiming a prior high in an uptrend.",
+        rule:
+            "Close > prior 252-day high (~1 year, excluding today), AND uptrend is active.",
+        explanation:
+            "An index has no EPS, so the workbook's \"record quarter\" is replaced with the closest honest analog: price reclaiming a prior high in an uptrend.",
         examples: 'S&P reclaiming 2022 ATH in late 2023.',
         c: c,
       ),
@@ -2980,8 +3185,10 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.warning,
         label: 'BREAKOUT',
         title: 'Regime Breakout (composite)',
-        rule: 'BASE active within the last 15 bars + NEW HIGH + (THRUST or volume spike) + UPTREND, all at once.',
-        explanation: 'The full Pine "fullSignal" — the index has been coiling, just reclaimed a 1-year high in an uptrend on a thrust day. Treat as a regime / core-exposure signal, not a swing trade.',
+        rule:
+            'BASE active within the last 15 bars + NEW HIGH + (THRUST or volume spike) + UPTREND, all at once.',
+        explanation:
+            'The full Pine "fullSignal" — the index has been coiling, just reclaimed a 1-year high in an uptrend on a thrust day. Treat as a regime / core-exposure signal, not a swing trade.',
         examples: 'Rare. Usually fires a few times a year per index.',
         c: c,
       ),
@@ -2995,7 +3202,8 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
         ),
         child: Text(
           'Indexes are diversified baskets — treat outputs as regime / trend signals for core exposure, NOT as multibagger hunts. Not financial advice.',
-          style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
+          style:
+              AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
         ),
       ),
     ];
@@ -3003,7 +3211,8 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
 List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
       Center(
         child: Container(
-          width: 36, height: 4,
+          width: 36,
+          height: 4,
           decoration: BoxDecoration(
               color: c.border, borderRadius: BorderRadius.circular(2)),
         ),
@@ -3034,7 +3243,8 @@ List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
         label: 'VOL',
         title: 'Institutional Buying Spike',
         rule: 'Volume ≥ 3× the 20-bar average on a green (up) day.',
-        explanation: 'Commodities need a higher threshold than equities (3× vs 2×) to distinguish genuine institutional accumulation from normal noise.',
+        explanation:
+            'Commodities need a higher threshold than equities (3× vs 2×) to distinguish genuine institutional accumulation from normal noise.',
         examples: 'GC=F, CL=F, ZW=F — green spike after a quiet consolidation.',
         c: c,
       ),
@@ -3044,8 +3254,10 @@ List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.accent,
         label: 'HEARTBEAT',
         title: 'Heartbeat Consolidation',
-        rule: 'High-to-low range over ~400 bars (≈ 1.5–2 years) is ≤ 35% of the low, AND recent lows are not collapsing vs. the older floor.',
-        explanation: 'Commodities exhibit multi-year sideways accumulation before major moves. A tight, stable base with a living floor (not dying) is the defining setup.',
+        rule:
+            'High-to-low range over ~400 bars (≈ 1.5–2 years) is ≤ 35% of the low, AND recent lows are not collapsing vs. the older floor.',
+        explanation:
+            'Commodities exhibit multi-year sideways accumulation before major moves. A tight, stable base with a living floor (not dying) is the defining setup.',
         examples: 'Gold 2018–2019, WTI 2017–2018 sideways periods.',
         c: c,
       ),
@@ -3055,9 +3267,12 @@ List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.warning,
         label: 'CATALYST',
         title: 'Breakout Catalyst',
-        rule: 'Close > prior 100-bar high AND a green volume spike fires on the same day.',
-        explanation: 'Replaces the stock "Record Quarter" — the closest honest analog for commodities is a confirmed regime change: price breaking above the consolidation high on institutional buying volume.',
-        examples: 'Gold breaking above a multi-year range top with a volume thrust.',
+        rule:
+            'Close > prior 100-bar high AND a green volume spike fires on the same day.',
+        explanation:
+            'Replaces the stock "Record Quarter" — the closest honest analog for commodities is a confirmed regime change: price breaking above the consolidation high on institutional buying volume.',
+        examples:
+            'Gold breaking above a multi-year range top with a volume thrust.',
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3070,7 +3285,8 @@ List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
         ),
         child: Text(
           'Commodity signals are regime-level (multi-month cycles). A CATALYST alone without HEARTBEAT is an ordinary breakout — the full setup (all 3) is rare and historically high-quality. Not financial advice.',
-          style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
+          style:
+              AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
         ),
       ),
     ];
@@ -3078,7 +3294,8 @@ List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
 List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
       Center(
         child: Container(
-          width: 36, height: 4,
+          width: 36,
+          height: 4,
           decoration: BoxDecoration(
               color: c.border, borderRadius: BorderRadius.circular(2)),
         ),
@@ -3109,7 +3326,8 @@ List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
         label: 'VOL',
         title: 'Tick-Volume Spike',
         rule: 'Tick volume ≥ 2× the 20-bar average on a green (up) candle.',
-        explanation: 'Forex is OTC/decentralised — TradingView "volume" is tick count, a weak proxy for real flow. A 2× threshold catches meaningful activity spikes while ignoring micro noise.',
+        explanation:
+            'Forex is OTC/decentralised — TradingView "volume" is tick count, a weak proxy for real flow. A 2× threshold catches meaningful activity spikes while ignoring micro noise.',
         examples: 'EUR/USD, GBP/USD, USD/JPY daily bars.',
         c: c,
       ),
@@ -3120,7 +3338,8 @@ List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
         label: 'RANGE',
         title: 'Range Consolidation',
         rule: 'High-to-low range over 100 bars is ≤ 8% of the low price.',
-        explanation: 'FX majors trade in tight ranges (single-digit % per year). A ≤ 8% band over 100 days signals genuine coiling — much stricter than equities or commodities.',
+        explanation:
+            'FX majors trade in tight ranges (single-digit % per year). A ≤ 8% band over 100 days signals genuine coiling — much stricter than equities or commodities.',
         examples: 'EUR/USD holding a 200-pip band for 3+ months.',
         c: c,
       ),
@@ -3130,9 +3349,12 @@ List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.warning,
         label: 'BREAKOUT',
         title: 'Long Range Breakout',
-        rule: 'Range active recently (within 15 bars) + close > prior 100-bar high + close > 100-bar SMA + green tick-volume spike.',
-        explanation: 'All conditions must fire simultaneously: direction (above trend MA), magnitude (new range high), and confirmation (tick-volume surge). Short breakouts are not scored here.',
-        examples: 'EUR/USD breaking above a 3-month compression zone on heavy tick volume.',
+        rule:
+            'Range active recently (within 15 bars) + close > prior 100-bar high + close > 100-bar SMA + green tick-volume spike.',
+        explanation:
+            'All conditions must fire simultaneously: direction (above trend MA), magnitude (new range high), and confirmation (tick-volume surge). Short breakouts are not scored here.',
+        examples:
+            'EUR/USD breaking above a 3-month compression zone on heavy tick volume.',
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3145,7 +3367,8 @@ List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
         ),
         child: Text(
           'Forex is a range-breakout tool, not a 10X multibagger hunter — FX majors move single-digit %, not 10×. Tick-volume is a proxy only. Session filter (London/NY overlap) is not applied on daily bars. Not financial advice.',
-          style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
+          style:
+              AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
         ),
       ),
     ];
@@ -3153,7 +3376,8 @@ List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
 List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
       Center(
         child: Container(
-          width: 36, height: 4,
+          width: 36,
+          height: 4,
           decoration: BoxDecoration(
               color: c.border, borderRadius: BorderRadius.circular(2)),
         ),
@@ -3184,7 +3408,8 @@ List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
         label: 'VOL',
         title: 'Volume Spike',
         rule: 'Volume ≥ 3× the 20-bar average on a green (up) candle.',
-        explanation: 'Crypto volume on major exchange pairs is the most reliable of all four asset classes. 3× threshold filters wash-trading noise and flags genuine institutional accumulation.',
+        explanation:
+            'Crypto volume on major exchange pairs is the most reliable of all four asset classes. 3× threshold filters wash-trading noise and flags genuine institutional accumulation.',
         examples: 'BTC-USD, ETH-USD on Coinbase or Binance daily bars.',
         c: c,
       ),
@@ -3194,9 +3419,12 @@ List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.accent,
         label: 'HEARTBEAT',
         title: 'Accumulation Base',
-        rule: "Price range over 180 bars (≈ 6 months) is ≤ 40% of the low AND recent lows are not collapsing (≥ 97% of the base low).",
-        explanation: "Crypto cycles are faster than equities — 6-month bases are common before major moves. The 40% threshold is wider than stocks to accommodate crypto's inherent volatility. Collapsing lows signal distribution, not accumulation.",
-        examples: "BTC's long consolidation periods in 2019–2020 and 2022–2023.",
+        rule:
+            "Price range over 180 bars (≈ 6 months) is ≤ 40% of the low AND recent lows are not collapsing (≥ 97% of the base low).",
+        explanation:
+            "Crypto cycles are faster than equities — 6-month bases are common before major moves. The 40% threshold is wider than stocks to accommodate crypto's inherent volatility. Collapsing lows signal distribution, not accumulation.",
+        examples:
+            "BTC's long consolidation periods in 2019–2020 and 2022–2023.",
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3205,9 +3433,12 @@ List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.warning,
         label: 'CATALYST',
         title: 'Base Breakout',
-        rule: 'Base active recently (within 10 bars) + close > prior 90-bar high + green volume spike on the same day.',
-        explanation: 'Replaces the stock "Record Quarter" — the honest analog for crypto is a confirmed regime change: breaking the base high on heavy buying volume. All three must fire together for the full setup.',
-        examples: 'BTC/ETH breaking a 6-month range high with a 3× volume thrust.',
+        rule:
+            'Base active recently (within 10 bars) + close > prior 90-bar high + green volume spike on the same day.',
+        explanation:
+            'Replaces the stock "Record Quarter" — the honest analog for crypto is a confirmed regime change: breaking the base high on heavy buying volume. All three must fire together for the full setup.',
+        examples:
+            'BTC/ETH breaking a 6-month range high with a 3× volume thrust.',
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3220,7 +3451,8 @@ List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
         ),
         child: Text(
           'Survivorship bias is extreme in crypto — 10X candidates also go to zero. Volume data on aggregated/index tickers may include wash trades; prefer major exchange pairs. Position-size as if it can rug. Not financial advice.',
-          style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
+          style:
+              AppTypography.xs.copyWith(color: c.textSecondary, height: 1.55),
         ),
       ),
     ];
@@ -3228,7 +3460,8 @@ List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
 List<Widget> _pmV1v2InfoChildren(AppPalette c, BuildContext ctx) => [
       Center(
         child: Container(
-          width: 36, height: 4,
+          width: 36,
+          height: 4,
           decoration: BoxDecoration(
               color: c.border, borderRadius: BorderRadius.circular(2)),
         ),
@@ -3258,9 +3491,12 @@ List<Widget> _pmV1v2InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.positive,
         label: 'VOL',
         title: 'Volume Spike',
-        rule: 'Current volume ≥ 2× the 20-bar average, AND the candle closes green',
-        explanation: 'A surge in buying volume on an up-candle signals aggressive accumulation. Smart money is stepping in.',
-        examples: 'GC=F, BTC-USD, SPY — often triggers before earnings or macro catalysts.',
+        rule:
+            'Current volume ≥ 2× the 20-bar average, AND the candle closes green',
+        explanation:
+            'A surge in buying volume on an up-candle signals aggressive accumulation. Smart money is stepping in.',
+        examples:
+            'GC=F, BTC-USD, SPY — often triggers before earnings or macro catalysts.',
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3269,8 +3505,10 @@ List<Widget> _pmV1v2InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.accent,
         label: 'HEARTBEAT',
         title: 'Heartbeat (Near Breakout)',
-        rule: 'Price is within 5% of the 52-week high, AND 20-day range is < 8% of price',
-        explanation: 'The asset is coiling just below a major resistance level with decreasing volatility — the classic pre-breakout setup.',
+        rule:
+            'Price is within 5% of the 52-week high, AND 20-day range is < 8% of price',
+        explanation:
+            'The asset is coiling just below a major resistance level with decreasing volatility — the classic pre-breakout setup.',
         examples: 'Gold near ATH, AAPL in tight consolidation.',
         c: c,
       ),
@@ -3280,10 +3518,14 @@ List<Widget> _pmV1v2InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.positive,
         label: 'REC. QTR',
         title: 'Record Quarter',
-        rule: 'Latest quarterly EPS or revenue is an all-time high for the company',
-        explanation: 'Fundamental momentum: the business is performing at peak. Combines well with technical signals.',
-        examples: 'Stock scanner only. N/A for indices, commodities, and forex.',
-        note: 'N/A shown as a lock icon — EPS data not available for this asset class.',
+        rule:
+            'Latest quarterly EPS or revenue is an all-time high for the company',
+        explanation:
+            'Fundamental momentum: the business is performing at peak. Combines well with technical signals.',
+        examples:
+            'Stock scanner only. N/A for indices, commodities, and forex.',
+        note:
+            'N/A shown as a lock icon — EPS data not available for this asset class.',
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3292,8 +3534,10 @@ List<Widget> _pmV1v2InfoChildren(AppPalette c, BuildContext ctx) => [
         color: c.accent,
         label: 'TREND ↑',
         title: 'Trend Confirmation (v2 only)',
-        rule: 'Price closed above the 50-bar high, confirming a breakout from the accumulation range',
-        explanation: 'v2 adds this 4th signal as a breakout confirmation gate — the asset has already started moving.',
+        rule:
+            'Price closed above the 50-bar high, confirming a breakout from the accumulation range',
+        explanation:
+            'v2 adds this 4th signal as a breakout confirmation gate — the asset has already started moving.',
         examples: 'v2 scanner only. Not available in v1.',
         c: c,
       ),
@@ -3343,7 +3587,8 @@ class _PMSignalRow extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 36, height: 36,
+          width: 36,
+          height: 36,
           decoration: BoxDecoration(
             color: color.withAlpha(25),
             borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -3359,7 +3604,8 @@ class _PMSignalRow extends StatelessWidget {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                     decoration: BoxDecoration(
                       color: color.withAlpha(25),
                       borderRadius: BorderRadius.circular(AppRadius.full),
@@ -3403,7 +3649,8 @@ class _PMSignalRow extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.s3),
               Text(explanation,
-                  style: AppTypography.xs.copyWith(color: c.textSecondary, height: 1.6)),
+                  style: AppTypography.xs
+                      .copyWith(color: c.textSecondary, height: 1.6)),
               const SizedBox(height: AppSpacing.s3),
               Text('Examples: $examples',
                   style: AppTypography.xs.copyWith(
@@ -3482,18 +3729,22 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
               Icon(Icons.compare_arrows_rounded, size: 48, color: c.accent),
               const SizedBox(height: AppSpacing.s4),
               Text('Strategy Comparison',
-                  style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+                  style:
+                      AppTypography.headingMd.copyWith(color: c.textPrimary)),
               const SizedBox(height: AppSpacing.s3),
               Text(
                 'Compare S1–S9 versus their enhanced S1+–S9+ counterparts side-by-side for any asset. Requires Pro.',
-                style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.5),
+                style: AppTypography.sm
+                    .copyWith(color: c.textSecondary, height: 1.5),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: AppSpacing.s5),
               GestureDetector(
-                onTap: () => UpgradeSheet.show(context, feature: 'signals_advanced'),
+                onTap: () =>
+                    UpgradeSheet.show(context, feature: 'signals_advanced'),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5, vertical: AppSpacing.s3),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s5, vertical: AppSpacing.s3),
                   decoration: BoxDecoration(
                     color: c.accent,
                     borderRadius: BorderRadius.circular(AppRadius.full),
@@ -3514,7 +3765,8 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
         // ── Controls bar ─────────────────────────────────────────────────────
         Container(
           color: c.surface,
-          padding: const EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, AppSpacing.s3),
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s4, AppSpacing.s3, AppSpacing.s4, AppSpacing.s3),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -3530,9 +3782,11 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                         style: AppTypography.sm.copyWith(color: c.textPrimary),
                         decoration: InputDecoration(
                           hintText: 'Enter symbol (e.g. AAPL, BTC-USD)',
-                          hintStyle: AppTypography.sm.copyWith(color: c.textMuted),
+                          hintStyle:
+                              AppTypography.sm.copyWith(color: c.textMuted),
                           isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 8),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(AppRadius.sm),
                             borderSide: BorderSide(color: c.border),
@@ -3549,7 +3803,8 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                         onSubmitted: (v) {
                           final trimmed = v.trim().toUpperCase();
                           if (trimmed.isNotEmpty) {
-                            ref.read(_compareSymbolProvider.notifier).state = trimmed;
+                            ref.read(_compareSymbolProvider.notifier).state =
+                                trimmed;
                           }
                           setState(() => _editing = false);
                         },
@@ -3558,7 +3813,8 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                     const SizedBox(width: 8),
                     GestureDetector(
                       onTap: () => setState(() => _editing = false),
-                      child: Icon(Icons.close_rounded, color: c.textMuted, size: 18),
+                      child: Icon(Icons.close_rounded,
+                          color: c.textMuted, size: 18),
                     ),
                   ],
                 )
@@ -3571,7 +3827,8 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                         setState(() => _editing = true);
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.s3, vertical: 6),
                         decoration: BoxDecoration(
                           color: c.accent.withAlpha(20),
                           borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -3582,7 +3839,8 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                           children: [
                             Text(symbol,
                                 style: AppTypography.labelMd.copyWith(
-                                    color: c.accent, fontWeight: FontWeight.w700)),
+                                    color: c.accent,
+                                    fontWeight: FontWeight.w700)),
                             const SizedBox(width: 4),
                             Icon(Icons.edit_rounded, size: 12, color: c.accent),
                           ],
@@ -3592,26 +3850,31 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                     const SizedBox(width: AppSpacing.s3),
                     // TF selector
                     ..._tfs.map((t) => Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: GestureDetector(
-                        onTap: () => ref.read(_compareTfProvider.notifier).state = t,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: tf == t ? c.accent.withAlpha(25) : Colors.transparent,
-                            borderRadius: BorderRadius.circular(AppRadius.full),
-                            border: Border.all(
-                              color: tf == t ? c.accent : c.border,
+                          padding: const EdgeInsets.only(right: 6),
+                          child: GestureDetector(
+                            onTap: () =>
+                                ref.read(_compareTfProvider.notifier).state = t,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
+                                color: tf == t
+                                    ? c.accent.withAlpha(25)
+                                    : Colors.transparent,
+                                borderRadius:
+                                    BorderRadius.circular(AppRadius.full),
+                                border: Border.all(
+                                  color: tf == t ? c.accent : c.border,
+                                ),
+                              ),
+                              child: Text(t.toUpperCase(),
+                                  style: AppTypography.xs.copyWith(
+                                    color: tf == t ? c.accent : c.textSecondary,
+                                    fontWeight: FontWeight.w600,
+                                  )),
                             ),
                           ),
-                          child: Text(t.toUpperCase(),
-                              style: AppTypography.xs.copyWith(
-                                color: tf == t ? c.accent : c.textSecondary,
-                                fontWeight: FontWeight.w600,
-                              )),
-                        ),
-                      ),
-                    )),
+                        )),
                   ],
                 ),
               const SizedBox(height: AppSpacing.s2),
@@ -3625,18 +3888,26 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                     return Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: GestureDetector(
-                        onTap: () => ref.read(_compareSymbolProvider.notifier).state = sym,
+                        onTap: () => ref
+                            .read(_compareSymbolProvider.notifier)
+                            .state = sym,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
                             color: selected ? c.surface : Colors.transparent,
                             borderRadius: BorderRadius.circular(AppRadius.full),
-                            border: Border.all(color: selected ? c.border : c.border.withAlpha(80)),
+                            border: Border.all(
+                                color: selected
+                                    ? c.border
+                                    : c.border.withAlpha(80)),
                           ),
                           child: Text(name,
                               style: AppTypography.xs.copyWith(
                                 color: selected ? c.textPrimary : c.textMuted,
-                                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                                fontWeight: selected
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
                               )),
                         ),
                       ),
@@ -3659,21 +3930,27 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
               final pairs = (data['pairs'] as List<dynamic>? ?? []);
               if (pairs.isEmpty) {
                 return Center(
-                  child: Text('No comparison data', style: AppTypography.sm.copyWith(color: c.textMuted)),
+                  child: Text('No comparison data',
+                      style: AppTypography.sm.copyWith(color: c.textMuted)),
                 );
               }
               return ListView.builder(
-                padding: EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s3, AppSpacing.s4,
+                padding: EdgeInsets.fromLTRB(
+                    AppSpacing.s4,
+                    AppSpacing.s3,
+                    AppSpacing.s4,
                     AppSpacing.s4 + MediaQuery.of(context).padding.bottom),
                 itemCount: pairs.length,
                 itemBuilder: (ctx, i) {
                   final pair = pairs[i] as Map<String, dynamic>;
-                  final baseId  = pair['baseId'] as String;
-                  final plusId  = pair['enhancedId'] as String;
-                  final base    = pair['base'] as Map<String, dynamic>?;
-                  final plus    = pair['enhanced'] as Map<String, dynamic>?;
+                  final baseId = pair['baseId'] as String;
+                  final plusId = pair['enhancedId'] as String;
+                  final base = pair['base'] as Map<String, dynamic>?;
+                  final plus = pair['enhanced'] as Map<String, dynamic>?;
                   final baseLbl = 'S$baseId';
-                  final plusLbl = 'S$plusId' == 'S10' ? 'S1+' : 'S${int.parse(plusId) - 9}+';
+                  final plusLbl = 'S$plusId' == 'S10'
+                      ? 'S1+'
+                      : 'S${int.parse(plusId) - 9}+';
                   return Padding(
                     padding: const EdgeInsets.only(bottom: AppSpacing.s3),
                     child: GlassCard(
@@ -3684,21 +3961,31 @@ class _ComparisonTabState extends ConsumerState<_ComparisonTab> {
                             children: [
                               Text('$baseLbl vs $plusLbl',
                                   style: AppTypography.labelMd.copyWith(
-                                      color: c.textPrimary, fontWeight: FontWeight.w700)),
+                                      color: c.textPrimary,
+                                      fontWeight: FontWeight.w700)),
                               const Spacer(),
                               if (base != null)
-                                Text(base['strategy_title'] as String? ?? baseLbl,
-                                    style: AppTypography.xs.copyWith(color: c.textMuted)),
+                                Text(
+                                    base['strategy_title'] as String? ??
+                                        baseLbl,
+                                    style: AppTypography.xs
+                                        .copyWith(color: c.textMuted)),
                             ],
                           ),
                           const SizedBox(height: AppSpacing.s3),
                           Row(
                             children: [
-                              Expanded(child: _CompareSignalCard(
-                                label: baseLbl, signal: base, isBase: true)),
+                              Expanded(
+                                  child: _CompareSignalCard(
+                                      label: baseLbl,
+                                      signal: base,
+                                      isBase: true)),
                               const SizedBox(width: AppSpacing.s3),
-                              Expanded(child: _CompareSignalCard(
-                                label: plusLbl, signal: plus, isBase: false)),
+                              Expanded(
+                                  child: _CompareSignalCard(
+                                      label: plusLbl,
+                                      signal: plus,
+                                      isBase: false)),
                             ],
                           ),
                         ],
@@ -3736,20 +4023,24 @@ class _CompareSignalCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.sm),
           border: Border.all(color: c.border),
         ),
-        child: Text('No data', style: AppTypography.xs.copyWith(color: c.textMuted)),
+        child: Text('No data',
+            style: AppTypography.xs.copyWith(color: c.textMuted)),
       );
     }
     final direction = signal!['direction'] as String? ?? 'HOLD';
     final confidence = signal!['confidence'];
-    final confNum = confidence is num ? confidence.toDouble() : double.tryParse(confidence?.toString() ?? '') ?? 0.0;
-    final entry    = signal!['entry'];
-    final sl       = signal!['stopLoss'];
-    final tp       = signal!['takeProfit'];
-    final rr       = signal!['riskReward'];
-    final reasoning = (signal!['reasoning'] as List<dynamic>? ?? []).cast<String>();
+    final confNum = confidence is num
+        ? confidence.toDouble()
+        : double.tryParse(confidence?.toString() ?? '') ?? 0.0;
+    final entry = signal!['entry'];
+    final sl = signal!['stopLoss'];
+    final tp = signal!['takeProfit'];
+    final rr = signal!['riskReward'];
+    final reasoning =
+        (signal!['reasoning'] as List<dynamic>? ?? []).cast<String>();
 
     Color dirColor(String d) {
-      if (d == 'BUY')  return c.signalColor('BUY');
+      if (d == 'BUY') return c.signalColor('BUY');
       if (d == 'SELL') return c.signalColor('SELL');
       return c.textMuted;
     }
@@ -3779,7 +4070,8 @@ class _CompareSignalCard extends StatelessWidget {
                 ),
                 child: Text(direction,
                     style: AppTypography.xs.copyWith(
-                        color: dirColor(direction), fontWeight: FontWeight.w700)),
+                        color: dirColor(direction),
+                        fontWeight: FontWeight.w700)),
               ),
             ],
           ),
@@ -3788,30 +4080,35 @@ class _CompareSignalCard extends StatelessWidget {
               style: AppTypography.xs.copyWith(color: c.textSecondary)),
           if (entry != null) ...[
             const SizedBox(height: 4),
-            Text('Entry: $entry', style: AppTypography.xs.copyWith(color: c.textSecondary)),
+            Text('Entry: $entry',
+                style: AppTypography.xs.copyWith(color: c.textSecondary)),
           ],
           if (sl != null && tp != null) ...[
-            Text('SL: $sl  TP: $tp', style: AppTypography.xs.copyWith(color: c.textMuted)),
+            Text('SL: $sl  TP: $tp',
+                style: AppTypography.xs.copyWith(color: c.textMuted)),
           ],
           if (rr != null)
-            Text('R/R: $rr', style: AppTypography.xs.copyWith(color: c.textMuted)),
+            Text('R/R: $rr',
+                style: AppTypography.xs.copyWith(color: c.textMuted)),
           if (reasoning.isNotEmpty) ...[
             const SizedBox(height: 6),
             ...reasoning.take(2).map((r) => Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('• ', style: AppTypography.xs.copyWith(color: c.textMuted)),
-                  Expanded(child: Text(r,
-                      style: AppTypography.xs.copyWith(color: c.textMuted, height: 1.4))),
-                ],
-              ),
-            )),
+                  padding: const EdgeInsets.only(bottom: 2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('• ',
+                          style: AppTypography.xs.copyWith(color: c.textMuted)),
+                      Expanded(
+                          child: Text(r,
+                              style: AppTypography.xs
+                                  .copyWith(color: c.textMuted, height: 1.4))),
+                    ],
+                  ),
+                )),
           ],
         ],
       ),
     );
   }
 }
-

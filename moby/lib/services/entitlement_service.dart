@@ -73,6 +73,14 @@ abstract final class EntitlementService {
     'best_setups': {Plan.pro},
     'backtest_filter': {Plan.pro},
     'treemap_heatmap': {Plan.pro},
+    'heatmap_extended_timeframes': {Plan.pro},
+    'forex_rate_comparison': {Plan.pro},
+    'cftc_categories': {Plan.pro},
+    'presidential_latest_filing': {Plan.pro},
+    'etf_performance_metrics': {Plan.pro},
+    'country_top_stocks': {Plan.pro},
+    'macro_performance_timeframes': {Plan.pro},
+    'macro_correlation_timeframes': {Plan.pro},
   };
 
   static String get requiredPlanLabel => 'Pro';

@@ -1,8 +1,21 @@
 .ui-card {
+  position: relative;
+  overflow: hidden;
   background: var(--surface-card);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   padding: var(--s5);
+}
+/* Thin gradient hairline across the top edge — a cheap, single-element
+   "premium" signature that doesn't add per-row cost in large lists. */
+.ui-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 60%, transparent) 50%, transparent);
 }
 
 .ui-chip {
@@ -54,6 +67,72 @@
   color: var(--text-secondary);
 }
 
+.pro-blur {
+  position: relative;
+  display: inline-flex;
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.pro-blur-content {
+  filter: blur(4px);
+  user-select: none;
+  pointer-events: none;
+}
+.pro-blur-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--s2);
+  font: 700 var(--fs-xs) var(--font-sans);
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+}
+.pro-blur-overlay[data-tone="up"] {
+  background: color-mix(in srgb, var(--positive) 55%, transparent);
+}
+.pro-blur-overlay[data-tone="down"] {
+  background: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+.pro-blur.cftc-row-blur {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  padding: var(--s2) var(--s4);
+}
+.pro-blur.treemap-blur {
+  display: flex;
+  width: 100%;
+}
+.pro-blur.treemap-blur .pro-blur-content {
+  width: 100%;
+}
+.pro-blur.treemap-blur .pro-blur-overlay {
+  font-size: var(--fs-lg, 18px);
+}
+.pro-blur.fx-diff-blur {
+  display: inline-flex;
+  max-width: 100%;
+}
+.pro-blur.etf-perf-blur {
+  display: inline-flex;
+  max-width: 100%;
+}
+.pro-blur.adv-corr-blur {
+  display: flex;
+  width: 100%;
+  /* The full matrix can be thousands of px tall (~180 assets) — without a
+     cap, the centered overlay text ends up scrolled far off-screen and is
+     effectively invisible. Bound it like mobile's Container(height: 440). */
+  max-height: 440px;
+}
+.pro-blur.adv-corr-blur .pro-blur-content {
+  width: 100%;
+}
+
 .ui-skeleton {
   background: var(--surface-card);
   border-radius: var(--r-sm);
@@ -76,7 +155,7 @@
   letter-spacing: 0.06em;
 }
 .ui-stat-value {
-  font: 600 var(--fs-xl2) var(--font-sans);
+  font: 600 var(--fs-xl2) var(--font-mono);
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
@@ -86,6 +165,9 @@
 }
 
 .ui-freshness {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
   font: 400 var(--fs-sm) var(--font-sans);
   color: var(--text-faint);
 }
@@ -114,9 +196,92 @@
 .num-down { color: var(--danger); }
 .num-flat { color: var(--text-secondary); }
 
+/* ── Shimmer primitives (shared brand polish, ported from the marketing site) ── */
+
+/* Opt-in gradient surface + ambient glow, for featured panels/cards. */
+.ui-glow-card {
+  position: relative;
+  overflow: visible; /* the ::before glow bleeds outside the box — must not be clipped */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--text-primary) 5%, transparent),
+    color-mix(in srgb, var(--text-primary) 2%, transparent)
+  );
+  backdrop-filter: blur(8px);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+.ui-glow-card::before {
+  content: "";
+  position: absolute;
+  inset: -14%;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse at 50% 20%,
+    color-mix(in srgb, var(--accent) 22%, transparent),
+    transparent 68%
+  );
+  filter: blur(26px);
+  pointer-events: none;
+}
+.ui-glow-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+/* Pulsing live-data dot. */
+.ui-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  animation: ui-live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes ui-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Gradient fill bar (confidence / win-rate / strength meters). */
+.ui-gradient-bar {
+  height: 5px;
+  border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  overflow: hidden;
+}
+.ui-gradient-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-full);
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 40%, white));
+  transition: width 300ms ease;
+}
+.ui-gradient-bar-fill[data-dir="down"] {
+  background: linear-gradient(90deg, var(--danger), color-mix(in srgb, var(--danger) 40%, white));
+}
+
+/* Mount-fade entrance — CSS-only (no scroll observer needed; this app's panels
+   are already in the viewport on mount, unlike a scrolled marketing page). */
+@keyframes ui-enter-anim {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.ui-enter {
+  animation: ui-enter-anim 0.45s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-live-dot { animation: none; }
+  .ui-enter { animation: none; }
+  .ui-glow-card { transition: none; }
+}
+
 /* ── Dashboard metric card ─────────────────────────────────────────────── */
 
 .ui-metric-card {
+  position: relative;
+  overflow: visible;
   background: var(--metric-bg);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
@@ -124,6 +289,29 @@
   display: flex;
   flex-direction: column;
   gap: var(--s2);
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+}
+.ui-metric-card::before {
+  content: "";
+  position: absolute;
+  inset: -14%;
+  z-index: -1;
+  background: radial-gradient(
+    ellipse at 50% 20%,
+    color-mix(in srgb, var(--accent) 14%, transparent),
+    transparent 70%
+  );
+  filter: blur(22px);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+.ui-metric-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+.ui-metric-card:hover::before {
+  opacity: 1;
 }
 .ui-metric-label {
   font: 500 var(--fs-sm) var(--font-sans);
@@ -132,7 +320,7 @@
   letter-spacing: 0.08em;
 }
 .ui-metric-value {
-  font: 700 28px var(--font-sans);
+  font: 700 28px var(--font-mono);
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
@@ -151,7 +339,7 @@
   gap: 3px;
   padding: 2px var(--s3);
   border-radius: var(--r-full);
-  font: 600 var(--fs-sm) var(--font-sans);
+  font: 600 var(--fs-sm) var(--font-mono);
   letter-spacing: 0.02em;
 }
 .ui-delta-badge[data-dir="up"] {

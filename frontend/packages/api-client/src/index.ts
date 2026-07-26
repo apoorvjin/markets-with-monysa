@@ -6,6 +6,7 @@ import {
   BestSetupsResponse,
   BondsResponse,
   BriefingResponse,
+  CentralBankRatesResponse,
   ChartResponse,
   CorrelationResponse,
   CotResponse,
@@ -130,6 +131,7 @@ export function createApiClient(opts: ApiClientOptions) {
     getIndices: () => get("/api/futures/indices", FuturesResponse),
     getCommodities: () => get("/api/futures/commodities", FuturesResponse),
     getForex: () => get("/api/futures/forex", FuturesResponse),
+    getCentralBankRates: () => get("/api/central-bank-rates", CentralBankRatesResponse),
     getChart: (symbol: string, range: ChartRange = "3mo", indicators?: string) =>
       get(
         `/api/chart/${encodeURIComponent(symbol)}${qs({ range, ...(indicators ? { indicators } : {}) })}`,

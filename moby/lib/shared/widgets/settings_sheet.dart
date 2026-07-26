@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../core/restart_widget.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
@@ -33,7 +32,7 @@ class SettingsSheet extends ConsumerWidget {
         title: Text('Switch Chart Provider',
             style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
         content: Text(
-          'Switching to ${next.label} will restart the app. Continue?',
+          'Switch to ${next.label} for chart data?',
           style: AppTypography.md.copyWith(color: c.textSecondary),
         ),
         actions: [
@@ -51,8 +50,15 @@ class SettingsSheet extends ConsumerWidget {
       ),
     );
     if (confirmed != true) return;
+    // Takes effect immediately — ChartProviderNotifier.set() updates Riverpod
+    // state and the currentChartRenderer global (read fresh on every chart
+    // request by ChartRendererInterceptor) synchronously, no restart needed.
     await ref.read(chartProviderProvider.notifier).set(next);
-    if (context.mounted) RestartWidget.restartApp(context);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Chart provider switched to ${next.label}')),
+      );
+    }
   }
 
   @override

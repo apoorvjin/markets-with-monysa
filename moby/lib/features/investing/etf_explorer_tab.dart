@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -7,10 +9,12 @@ import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/models/etf.dart';
 import '../../data/repositories/etf_repository.dart';
+import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_shell_insets.dart';
 import '../../shared/widgets/error_view.dart';
-import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
+import '../../shared/widgets/pro_blur_overlay.dart';
+import '../../shared/widgets/rrg_quadrant_grid.dart';
 import '../../shared/widgets/shimmer_list.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
@@ -76,22 +80,17 @@ class _EtfExplorerTabState extends ConsumerState<EtfExplorerTab> {
               children: [
                 Text('Category:', style: AppTypography.xs.copyWith(color: c.textMuted)),
                 const SizedBox(height: AppSpacing.s2),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: [
-                      for (var i = 0; i < _kCategories.length; i++) ...[
-                        _CategoryChip(
-                          label: _kCategories[i].label,
-                          active: _category == _kCategories[i].id,
-                          onTap: () =>
-                              setState(() => _category = _kCategories[i].id),
-                        ),
-                        if (i < _kCategories.length - 1)
-                          const SizedBox(width: AppSpacing.s2),
-                      ],
-                    ],
-                  ),
+                Wrap(
+                  spacing: AppSpacing.s2,
+                  runSpacing: AppSpacing.s2,
+                  children: [
+                    for (final cat in _kCategories)
+                      _CategoryChip(
+                        label: cat.label,
+                        active: _category == cat.id,
+                        onTap: () => setState(() => _category = cat.id),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: AppSpacing.s3),
                 Text('View:', style: AppTypography.xs.copyWith(color: c.textMuted)),
@@ -107,7 +106,12 @@ class _EtfExplorerTabState extends ConsumerState<EtfExplorerTab> {
                     _CategoryChip(
                       label: 'Rotation',
                       active: _rotationView,
-                      onTap: () => setState(() => _rotationView = true),
+                      // Rotation only covers 4 of 7 categories — reset to
+                      // All so switching views never lands on an empty view.
+                      onTap: () => setState(() {
+                        _rotationView = true;
+                        _category = '';
+                      }),
                     ),
                   ],
                 ),
@@ -159,32 +163,79 @@ class _CategoryChip extends StatelessWidget {
 
 // ── List view ─────────────────────────────────────────────────────────────────
 
-class _ListView extends ConsumerWidget {
+class _ListView extends ConsumerStatefulWidget {
   const _ListView({required this.category});
   final String category;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(_etfListProvider(category));
+  ConsumerState<_ListView> createState() => _ListViewState();
+}
+
+class _ListViewState extends ConsumerState<_ListView> {
+  // Which single ETF (by symbol) gets its full MoM/QoQ/YoY strip revealed
+  // for free users — every other row's strip is blurred as one unit, and
+  // this ETF is moved to the top of the list so it's visible without
+  // scrolling. Picked once per category's data load, not re-randomized on
+  // every rebuild; reset when the category changes.
+  String? _revealedSymbol;
+
+  @override
+  void didUpdateWidget(covariant _ListView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.category != widget.category) {
+      _revealedSymbol = null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(_etfListProvider(widget.category));
 
     return async.when(
       loading: () => const ShimmerList(count: 10, type: ShimmerRowType.signal),
       error: (e, _) => ErrorView(
         message: 'Failed to load ETFs',
-        onRetry: () => ref.invalidate(_etfListProvider(category)),
+        onRetry: () => ref.invalidate(_etfListProvider(widget.category)),
       ),
-      data: (data) => ListView.builder(
-        padding: EdgeInsets.only(bottom: appShellBottomInset(context)),
-        itemCount: data.items.length,
-        itemBuilder: (_, i) => _EtfRow(item: data.items[i]),
-      ),
+      data: (data) {
+        if (data.items.isEmpty) {
+          _revealedSymbol = null;
+        } else if (_revealedSymbol == null ||
+            !data.items.any((e) => e.symbol == _revealedSymbol)) {
+          _revealedSymbol =
+              data.items[Random().nextInt(data.items.length)].symbol;
+        }
+        final isPro = EntitlementService.can('etf_performance_metrics');
+
+        var ordered = data.items;
+        if (!isPro && _revealedSymbol != null) {
+          final idx = data.items.indexWhere((e) => e.symbol == _revealedSymbol);
+          if (idx > 0) {
+            ordered = [
+              data.items[idx],
+              ...data.items.sublist(0, idx),
+              ...data.items.sublist(idx + 1),
+            ];
+          }
+        }
+
+        return ListView.builder(
+          padding: EdgeInsets.only(bottom: appShellBottomInset(context)),
+          itemCount: ordered.length,
+          itemBuilder: (_, i) => _EtfRow(
+            item: ordered[i],
+            revealPerf: isPro || ordered[i].symbol == _revealedSymbol,
+          ),
+        );
+      },
     );
   }
 }
 
 class _EtfRow extends StatelessWidget {
-  const _EtfRow({required this.item});
+  const _EtfRow({required this.item, required this.revealPerf});
   final EtfItem item;
+  final bool revealPerf;
 
   void _openProfile(BuildContext context) {
     showAppBottomSheet(
@@ -233,6 +284,12 @@ class _EtfRow extends StatelessWidget {
                   Text(item.name,
                       style: AppTypography.xs.copyWith(color: c.textMuted),
                       maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 4),
+                  _PerfStrip(
+                      perf1M: item.perf1M,
+                      perf3M: item.perf3M,
+                      perf1Y: item.perf1Y,
+                      revealed: revealPerf),
                 ],
               ),
             ),
@@ -250,14 +307,80 @@ class _EtfRow extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(width: AppSpacing.s3),
-            GestureDetector(
-              onTap: () => _openProfile(context),
-              child: Icon(Icons.info_outline_rounded, size: 16, color: c.textMuted),
+            const SizedBox(width: AppSpacing.s2),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              icon: Icon(Icons.info_outline_rounded, size: 16, color: c.textMuted),
+              onPressed: () => _openProfile(context),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Compact MoM/QoQ/YoY strip — rolling-window returns (trailing 1mo/3mo/1y),
+/// not calendar-quarter-aligned. Only one ETF in the whole list has [revealed]
+/// true (picked by the parent list); every other row's strip is blurred as a
+/// single unit behind the Pro paywall.
+class _PerfStrip extends StatelessWidget {
+  const _PerfStrip({
+    required this.perf1M,
+    required this.perf3M,
+    required this.perf1Y,
+    required this.revealed,
+  });
+  final double? perf1M;
+  final double? perf3M;
+  final double? perf1Y;
+  final bool revealed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final strip = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _PerfChip(label: 'MoM', value: perf1M, c: c),
+        const SizedBox(width: AppSpacing.s3),
+        _PerfChip(label: 'QoQ', value: perf3M, c: c),
+        const SizedBox(width: AppSpacing.s3),
+        _PerfChip(label: 'YoY', value: perf1Y, c: c),
+      ],
+    );
+    if (revealed) return strip;
+
+    final values = [perf1M, perf3M, perf1Y].whereType<double>().toList();
+    final avg = values.isEmpty ? 0.0 : values.reduce((a, b) => a + b) / values.length;
+    return ProBlurOverlay(
+      isPositive: avg >= 0,
+      feature: 'etf_performance_metrics',
+      child: strip,
+    );
+  }
+}
+
+class _PerfChip extends StatelessWidget {
+  const _PerfChip({required this.label, required this.value, required this.c});
+  final String label;
+  final double? value;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    final v = value;
+    final color = v == null ? c.textMuted : (v >= 0 ? c.positive : c.danger);
+    final text = v == null ? '--' : '${v >= 0 ? '+' : ''}${v.toStringAsFixed(1)}%';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('$label ', style: AppTypography.xs.copyWith(color: c.textFaint)),
+        Text(text,
+            style: AppTypography.xs.copyWith(color: color, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 }
@@ -422,19 +545,8 @@ class _RotationView extends ConsumerWidget {
   const _RotationView({required this.category});
   final String category;
 
-  static const _quadrants = ['Leading', 'Improving', 'Weakening', 'Lagging'];
   // Must match ETF_ROTATION_CATEGORIES in server/data/etf_universe.ts.
   static const _rotationEligible = {'sector', 'broad', 'international', 'thematic'};
-
-  Color _quadrantColor(AppPalette c, String q) {
-    switch (q) {
-      case 'Leading':   return Colors.teal.shade400;
-      case 'Improving':  return Colors.blue.shade400;
-      case 'Weakening': return Colors.orange.shade400;
-      case 'Lagging':   return Colors.red.shade400;
-      default: return c.textMuted;
-    }
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -466,59 +578,22 @@ class _RotationView extends ConsumerWidget {
         final filtered = category.isEmpty
             ? data.items
             : data.items.where((i) => i.category == category).toList();
-        final byQuadrant = <String, List<EtfRotationItem>>{
-          for (final q in _quadrants) q: [],
-        };
-        for (final item in filtered) {
-          final q = item.quadrant;
-          if (q != null && byQuadrant.containsKey(q)) byQuadrant[q]!.add(item);
-        }
+        RrgQuadrantItem toItem(EtfRotationItem item) => RrgQuadrantItem(
+              emoji: item.emoji,
+              label: '${item.symbol} · ${item.name}',
+            );
+        List<RrgQuadrantItem> forQuadrant(String q) =>
+            filtered.where((i) => i.quadrant == q).map(toItem).toList();
 
-        return ListView(
+        return SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
               AppSpacing.s5, AppSpacing.s2, AppSpacing.s5, appShellBottomInset(context)),
-          children: [
-            for (final q in _quadrants)
-              if (byQuadrant[q]!.isNotEmpty)
-                GlassCard(
-                  margin: const EdgeInsets.only(bottom: AppSpacing.s3),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 8, height: 8,
-                            decoration: BoxDecoration(
-                                color: _quadrantColor(c, q), shape: BoxShape.circle),
-                          ),
-                          const SizedBox(width: AppSpacing.s2),
-                          Text(q,
-                              style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.s3),
-                      for (final item in byQuadrant[q]!)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Row(
-                            children: [
-                              Text(item.emoji, style: AppTypography.sm),
-                              const SizedBox(width: AppSpacing.s2),
-                              Expanded(
-                                child: Text(item.name,
-                                    style: AppTypography.xs.copyWith(color: c.textSecondary)),
-                              ),
-                              Text(item.symbol,
-                                  style: AppTypography.xs.copyWith(
-                                      color: c.textMuted, fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-          ],
+          child: RrgQuadrantGrid(
+            leading: forQuadrant('Leading'),
+            improving: forQuadrant('Improving'),
+            weakening: forQuadrant('Weakening'),
+            lagging: forQuadrant('Lagging'),
+          ),
         );
       },
     );

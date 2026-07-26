@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shimmer/shimmer.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
@@ -16,6 +17,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
+import '../../shared/widgets/upgrade_sheet.dart';
 import '../exposure/exposure_screen.dart';
 import 'best_setups_card.dart';
 import 'multibaggers_screen.dart';
@@ -31,15 +33,16 @@ import 'etf_explorer_tab.dart';
 // Tracks how many times we've polled while the server cache is still warming.
 // Capped via _maxSectorPolls so a permanently-blocked upstream doesn't trigger
 // indefinite polling.
-final _sectorPollAttemptProvider = StateProvider.family<int, String>((_, __) => 0);
+final _sectorPollAttemptProvider =
+    StateProvider.family<int, String>((_, __) => 0);
 const _maxSectorPolls = 10; // 10 × 30s = 5 min ceiling
 
 final _sectorBestSetupsProvider =
     FutureProvider.autoDispose.family<SectorBestSetupsResponse, String>(
   (ref, version) async {
     ref.keepAlive();
-    final resp =
-        await TradingRepository.instance.fetchSectorBestSetups(version: version);
+    final resp = await TradingRepository.instance
+        .fetchSectorBestSetups(version: version);
 
     if (!resp.cacheWarm) {
       // Server is still computing — schedule a re-fetch in 30s so the UI shows
@@ -73,12 +76,14 @@ final _trumpTransactionsProvider =
   return TradingRepository.instance.fetchTrumpTransactions();
 });
 
-final _quiverLobbyingProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
+final _quiverLobbyingProvider =
+    FutureProvider.autoDispose<QuiverScanResponse>((ref) {
   ref.keepAlive(); // 4h server TTL
   return TradingRepository.instance.fetchQuiverLobbying();
 });
 
-final _quiverInsiderProvider = FutureProvider.autoDispose<QuiverScanResponse>((ref) {
+final _quiverInsiderProvider =
+    FutureProvider.autoDispose<QuiverScanResponse>((ref) {
   ref.keepAlive(); // 2h server TTL
   return TradingRepository.instance.fetchQuiverInsider();
 });
@@ -89,9 +94,8 @@ final _moversProvider =
   return HeatmapRepository.instance.fetchMovers(index: index);
 });
 
-final _institutionalFlowProvider =
-    FutureProvider.autoDispose.family<InstitutionalFlowResult, String>(
-        (ref, type) {
+final _institutionalFlowProvider = FutureProvider.autoDispose
+    .family<InstitutionalFlowResult, String>((ref, type) {
   ref.keepAlive(); // 30m server TTL
   return TradingRepository.instance.fetchInstitutionalFlow(type);
 });
@@ -196,9 +200,7 @@ class _InvestingDashboardTabState
       TradingRepository.instance
           .fetchBestSetups(version: 'v1', type: _type)
           .ignore();
-      TradingRepository.instance
-          .fetchSectorBestSetups(version: 'v1')
-          .ignore();
+      TradingRepository.instance.fetchSectorBestSetups(version: 'v1').ignore();
     });
   }
 
@@ -302,7 +304,8 @@ class _InstitutionalFlowCardState
                     active: _selected == _tabs[i].id,
                     onTap: () => setState(() => _selected = _tabs[i].id),
                   ),
-                  if (i < _tabs.length - 1) const SizedBox(width: AppSpacing.s2),
+                  if (i < _tabs.length - 1)
+                    const SizedBox(width: AppSpacing.s2),
                 ],
               ],
             ),
@@ -374,19 +377,15 @@ class _InstitutionalFlowCardState
         maxChildSize: 0.92,
         builder: (ctx, sc) => ListView(
           controller: sc,
-          padding: EdgeInsets.fromLTRB(
-              AppSpacing.s5,
-              AppSpacing.s5,
-              AppSpacing.s5,
-              AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
+          padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+              AppSpacing.s5, AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
           children: [
             Center(
               child: Container(
                 width: 36,
                 height: 4,
                 decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(2)),
+                    color: c.border, borderRadius: BorderRadius.circular(2)),
               ),
             ),
             const SizedBox(height: AppSpacing.s5),
@@ -396,15 +395,15 @@ class _InstitutionalFlowCardState
               const SizedBox(width: AppSpacing.s2),
               Expanded(
                 child: Text('Institutional Flow',
-                    style: AppTypography.headingMd
-                        .copyWith(color: c.textPrimary)),
+                    style:
+                        AppTypography.headingMd.copyWith(color: c.textPrimary)),
               ),
             ]),
             const SizedBox(height: AppSpacing.s3),
             Text(
               'Detects price, volume, short-interest, and insider-filing patterns consistent with large institutional positioning — often before the move is obvious.',
-              style:
-                  AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
+              style: AppTypography.sm
+                  .copyWith(color: c.textSecondary, height: 1.55),
             ),
             const SizedBox(height: AppSpacing.s5),
             BestSetupsInfoRow(
@@ -501,8 +500,8 @@ class _FlowStockRow extends StatelessWidget {
   List<Widget> _typeBadges() {
     final badges = <Widget>[];
     if (stock.volumeRatio > 0) {
-      badges.add(_miniBadge(
-          '${stock.volumeRatio.toStringAsFixed(1)}× vol', c.accent));
+      badges.add(
+          _miniBadge('${stock.volumeRatio.toStringAsFixed(1)}× vol', c.accent));
     }
     switch (type) {
       case 'vwap':
@@ -663,7 +662,6 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final isPro = EntitlementService.can('treemap_heatmap');
     final async = ref.watch(_moversProvider(_selected));
 
     return Container(
@@ -683,15 +681,13 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
               Expanded(
                 child: Text(
                   'Movers',
-                  style: AppTypography.headingSm
-                      .copyWith(color: c.textPrimary),
+                  style: AppTypography.headingSm.copyWith(color: c.textPrimary),
                 ),
               ),
-              if (isPro)
-                async.whenOrNull(
-                      data: (d) => _SessionBadge(session: d.session, c: c),
-                    ) ??
-                    const SizedBox.shrink(),
+              async.whenOrNull(
+                    data: (d) => _SessionBadge(session: d.session, c: c),
+                  ) ??
+                  const SizedBox.shrink(),
             ],
           ),
           const SizedBox(height: AppSpacing.s2),
@@ -733,47 +729,36 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
             ],
           ),
           const SizedBox(height: AppSpacing.s4),
-          if (!isPro)
-            Container(
+          async.when(
+            loading: () => Container(
               decoration: BoxDecoration(
                 color: c.surfaceCard,
                 borderRadius: BorderRadius.circular(AppRadius.md),
                 border: Border.all(color: c.border),
               ),
-              child: BestSetupsLockedBody(c: c, context: context),
-            )
-          else
-            async.when(
-              loading: () => Container(
-                decoration: BoxDecoration(
-                  color: c.surfaceCard,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  border: Border.all(color: c.border),
-                ),
-                child: BestSetupsLoadingBody(c: c),
-              ),
-              error: (_, __) => Container(
-                padding: const EdgeInsets.all(AppSpacing.s4),
-                decoration: BoxDecoration(
-                  color: c.surfaceCard,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                  border: Border.all(color: c.border),
-                ),
-                child: Text('Unable to load movers',
-                    style:
-                        AppTypography.xs.copyWith(color: c.textMuted)),
-              ),
-              data: (data) => _MoversBody(data: data, filter: _moversFilter, c: c),
+              child: BestSetupsLoadingBody(c: c),
             ),
-          if (isPro)
-            async.whenOrNull(
-                  data: (d) => Padding(
-                    padding: const EdgeInsets.only(top: AppSpacing.s2),
-                    child: FreshnessBar(
-                        lastUpdated: d.lastUpdated.toIso8601String()),
-                  ),
-                ) ??
-                const SizedBox.shrink(),
+            error: (_, __) => Container(
+              padding: const EdgeInsets.all(AppSpacing.s4),
+              decoration: BoxDecoration(
+                color: c.surfaceCard,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: c.border),
+              ),
+              child: Text('Unable to load movers',
+                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+            ),
+            data: (data) =>
+                _MoversBody(data: data, filter: _moversFilter, c: c),
+          ),
+          async.whenOrNull(
+                data: (d) => Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.s2),
+                  child: FreshnessBar(
+                      lastUpdated: d.lastUpdated.toIso8601String()),
+                ),
+              ) ??
+              const SizedBox.shrink(),
         ],
       ),
     );
@@ -822,7 +807,8 @@ String _fmtPrice(double? v) {
 }
 
 class _MoversBody extends StatelessWidget {
-  const _MoversBody({required this.data, required this.filter, required this.c});
+  const _MoversBody(
+      {required this.data, required this.filter, required this.c});
   final MoversData data;
   final String filter; // gainers | losers
   final AppPalette c;
@@ -847,8 +833,12 @@ class _MoversBody extends StatelessWidget {
 
     if (stocks.isEmpty) {
       final empty = switch (data.session) {
-        'pre' => showGainers ? 'No pre-market gainers yet' : 'No pre-market losers yet',
-        'post' => showGainers ? 'No after-hours gainers yet' : 'No after-hours losers yet',
+        'pre' => showGainers
+            ? 'No pre-market gainers yet'
+            : 'No pre-market losers yet',
+        'post' => showGainers
+            ? 'No after-hours gainers yet'
+            : 'No after-hours losers yet',
         _ => showGainers ? 'No gainers yet' : 'No losers yet',
       };
       return Container(
@@ -858,8 +848,8 @@ class _MoversBody extends StatelessWidget {
           borderRadius: BorderRadius.circular(AppRadius.md),
           border: Border.all(color: c.border),
         ),
-        child: Text(empty,
-            style: AppTypography.xs.copyWith(color: c.textMuted)),
+        child:
+            Text(empty, style: AppTypography.xs.copyWith(color: c.textMuted)),
       );
     }
     return Column(
@@ -893,8 +883,8 @@ class _MoversSectionHeader extends StatelessWidget {
     return Row(
       children: [
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 2),
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s3, vertical: 2),
           decoration: BoxDecoration(
             color: color.withAlpha(22),
             borderRadius: BorderRadius.circular(AppRadius.xs),
@@ -903,9 +893,7 @@ class _MoversSectionHeader extends StatelessWidget {
           child: Text(
             label,
             style: AppTypography.xs.copyWith(
-                color: color,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 0.8),
+                color: color, fontWeight: FontWeight.w800, letterSpacing: 0.8),
           ),
         ),
       ],
@@ -931,9 +919,8 @@ class _MoverTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final changeColor = isUp ? c.positive : c.danger;
-    final pctText = pct == null
-        ? '—'
-        : '${isUp ? '+' : ''}${pct!.toStringAsFixed(2)}%';
+    final pctText =
+        pct == null ? '—' : '${isUp ? '+' : ''}${pct!.toStringAsFixed(2)}%';
 
     return GestureDetector(
       onTap: () => context.push(
@@ -954,8 +941,8 @@ class _MoverTile extends StatelessWidget {
               Container(width: 3, color: changeColor),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(
-                      AppSpacing.s3, AppSpacing.s3, AppSpacing.s3, AppSpacing.s3),
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.s3,
+                      AppSpacing.s3, AppSpacing.s3, AppSpacing.s3),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -967,8 +954,7 @@ class _MoverTile extends StatelessWidget {
                                 horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: c.surfaceElevated,
-                              borderRadius:
-                                  BorderRadius.circular(AppRadius.xs),
+                              borderRadius: BorderRadius.circular(AppRadius.xs),
                               border: Border.all(color: c.border),
                             ),
                             child: Text(
@@ -982,8 +968,7 @@ class _MoverTile extends StatelessWidget {
                           ),
                           const SizedBox(width: AppSpacing.s2),
                           Flexible(
-                            child: _SectorChip(
-                                sector: stock.sector, c: c),
+                            child: _SectorChip(sector: stock.sector, c: c),
                           ),
                           const Spacer(),
                           Text(
@@ -1182,7 +1167,6 @@ class _SearchField extends StatelessWidget {
   final String hint;
   final AppPalette c;
 
-
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1202,7 +1186,8 @@ class _SearchField extends StatelessWidget {
           suffixIcon: controller.text.isNotEmpty
               ? GestureDetector(
                   onTap: controller.clear,
-                  child: Icon(Icons.close_rounded, size: 14, color: c.textMuted),
+                  child:
+                      Icon(Icons.close_rounded, size: 14, color: c.textMuted),
                 )
               : null,
           border: InputBorder.none,
@@ -1215,25 +1200,75 @@ class _SearchField extends StatelessWidget {
   }
 }
 
-// ── Congress Trades Skeleton ──────────────────────────────────────────────────
+// ── Presidential Skeleton — mirrors _PresidentialTransactionCard layout ──────
 
-class _CongressTradesSkeleton extends StatelessWidget {
-  const _CongressTradesSkeleton({required this.c});
-  final AppPalette c;
+class _PresidentialSkeleton extends StatelessWidget {
+  const _PresidentialSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: const EdgeInsets.all(AppSpacing.s5),
-      itemCount: 8,
-      itemBuilder: (_, __) => Container(
-        height: 88,
-        margin: const EdgeInsets.only(bottom: AppSpacing.s3),
-        decoration: BoxDecoration(
-          color: c.surfaceCard,
-          borderRadius: BorderRadius.circular(AppRadius.md),
-          border: Border.all(color: c.border),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor =
+        isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE8EAF0);
+    final highlightColor =
+        isDark ? const Color(0xFF2E2E2E) : const Color(0xFFF8F9FC);
+
+    return Shimmer.fromColors(
+      baseColor: baseColor,
+      highlightColor: highlightColor,
+      child: ListView.builder(
+        padding:
+            const EdgeInsets.only(top: AppSpacing.s3, bottom: AppSpacing.s3),
+        itemCount: 6,
+        itemBuilder: (_, __) => GlassCard(
+          margin: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+          padding: const EdgeInsets.all(AppSpacing.s4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: _SkelBox(width: double.infinity, height: 14)),
+                  const SizedBox(width: AppSpacing.s2),
+                  _SkelBox(width: 76, height: 20, radius: AppRadius.full),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s3),
+              Row(
+                children: [
+                  _SkelBox(width: 96, height: 20, radius: AppRadius.full),
+                  const Spacer(),
+                  _SkelBox(width: 70, height: 12),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s2),
+              _SkelBox(width: 130, height: 10),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+}
+
+class _SkelBox extends StatelessWidget {
+  const _SkelBox({required this.width, required this.height, this.radius = 4});
+  final double width;
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: height,
+      decoration: BoxDecoration(
+        // Shimmer renders its own color via fromColors — any non-transparent
+        // color works.
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(radius),
       ),
     );
   }
@@ -1249,7 +1284,20 @@ String _fmtRelative(String iso) {
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
   } catch (_) {
     return '';
@@ -1284,8 +1332,8 @@ class _SectorBestSetupsCard extends ConsumerWidget {
               const SizedBox(width: AppSpacing.s2),
               Expanded(
                 child: Text('Best Setups by Sector',
-                    style: AppTypography.headingSm
-                        .copyWith(color: c.textPrimary)),
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
               ),
               GestureDetector(
                 onTap: () => _showSectorBestSetupsInfo(context),
@@ -1313,8 +1361,7 @@ class _SectorBestSetupsCard extends ConsumerWidget {
                     error: (_, __) => Padding(
                       padding: const EdgeInsets.all(AppSpacing.s4),
                       child: Text('Unable to load sector setups',
-                          style:
-                              AppTypography.xs.copyWith(color: c.textMuted)),
+                          style: AppTypography.xs.copyWith(color: c.textMuted)),
                     ),
                     data: (resp) {
                       if (!resp.cacheWarm) {
@@ -1325,7 +1372,8 @@ class _SectorBestSetupsCard extends ConsumerWidget {
                               Icon(Icons.hourglass_top_rounded,
                                   size: 14, color: c.textMuted),
                               const SizedBox(width: 6),
-                              Text('Computing best setups — refreshing automatically…',
+                              Text(
+                                  'Computing best setups — refreshing automatically…',
                                   style: AppTypography.xs
                                       .copyWith(color: c.textMuted)),
                             ],
@@ -1339,8 +1387,8 @@ class _SectorBestSetupsCard extends ConsumerWidget {
                           padding: const EdgeInsets.all(AppSpacing.s4),
                           child: Text(
                             'No leading or improving sectors with active setups right now.',
-                            style: AppTypography.xs
-                                .copyWith(color: c.textMuted),
+                            style:
+                                AppTypography.xs.copyWith(color: c.textMuted),
                           ),
                         );
                       }
@@ -1350,14 +1398,14 @@ class _SectorBestSetupsCard extends ConsumerWidget {
                           if (hasLeading) ...[
                             _QuadrantHeader(
                                 label: 'LEADING', color: c.positive, c: c),
-                            ...resp.leading.map(
-                                (g) => _SectorGroup(group: g, c: c)),
+                            ...resp.leading
+                                .map((g) => _SectorGroup(group: g, c: c)),
                           ],
                           if (hasImproving) ...[
                             _QuadrantHeader(
                                 label: 'IMPROVING', color: c.warning, c: c),
-                            ...resp.improving.map(
-                                (g) => _SectorGroup(group: g, c: c)),
+                            ...resp.improving
+                                .map((g) => _SectorGroup(group: g, c: c)),
                           ],
                         ],
                       );
@@ -1380,13 +1428,13 @@ class _QuadrantHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding:
-          const EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s4, AppSpacing.s4, AppSpacing.s2),
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.s4, AppSpacing.s4, AppSpacing.s4, AppSpacing.s2),
       child: Row(
         children: [
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: AppSpacing.s3, vertical: 2),
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s3, vertical: 2),
             decoration: BoxDecoration(
               color: color.withAlpha(22),
               borderRadius: BorderRadius.circular(AppRadius.xs),
@@ -1428,8 +1476,8 @@ class _SectorGroup extends StatelessWidget {
               const SizedBox(width: AppSpacing.s2),
               Text(
                 group.sector,
-                style: AppTypography.labelSm
-                    .copyWith(color: c.textPrimary, fontWeight: FontWeight.w700),
+                style: AppTypography.labelSm.copyWith(
+                    color: c.textPrimary, fontWeight: FontWeight.w700),
               ),
               const Spacer(),
               Text(
@@ -1471,8 +1519,8 @@ class _SectorStockRow extends StatelessWidget {
                 children: [
                   Text(
                     entry.name,
-                    style: AppTypography.xs
-                        .copyWith(color: c.textPrimary, fontWeight: FontWeight.w600),
+                    style: AppTypography.xs.copyWith(
+                        color: c.textPrimary, fontWeight: FontWeight.w600),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1495,19 +1543,21 @@ class _SectorStockRow extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      ...List.generate(4, (i) => Padding(
-                            padding: const EdgeInsets.only(right: 2),
-                            child: Container(
-                              width: 5,
-                              height: 5,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: i < entry.signalsActive
-                                    ? c.accent
-                                    : c.border,
-                              ),
-                            ),
-                          )),
+                      ...List.generate(
+                          4,
+                          (i) => Padding(
+                                padding: const EdgeInsets.only(right: 2),
+                                child: Container(
+                                  width: 5,
+                                  height: 5,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: i < entry.signalsActive
+                                        ? c.accent
+                                        : c.border,
+                                  ),
+                                ),
+                              )),
                       if (entry.winRate1m != null) ...[
                         const SizedBox(width: 4),
                         Text(
@@ -1532,8 +1582,8 @@ class _SectorStockRow extends StatelessWidget {
               children: [
                 Text(
                   '\$${entry.price < 1 ? entry.price.toStringAsFixed(4) : entry.price.toStringAsFixed(2)}',
-                  style: AppTypography.xs
-                      .copyWith(color: c.textPrimary, fontWeight: FontWeight.w600),
+                  style: AppTypography.xs.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w600),
                 ),
                 Text(
                   '${isUp ? '+' : ''}${entry.changePercent.toStringAsFixed(2)}%',
@@ -1582,8 +1632,8 @@ void _showSectorBestSetupsInfo(BuildContext context) {
               const SizedBox(width: AppSpacing.s2),
               Expanded(
                 child: Text('Best Setups by Sector',
-                    style: AppTypography.headingMd
-                        .copyWith(color: c.textPrimary)),
+                    style:
+                        AppTypography.headingMd.copyWith(color: c.textPrimary)),
               ),
             ],
           ),
@@ -1600,13 +1650,15 @@ void _showSectorBestSetupsInfo(BuildContext context) {
           BestSetupsInfoRow(
             c: c,
             label: 'Leading',
-            body: 'Sector is outperforming the S&P 500 (RS Ratio > 100) AND gaining relative momentum (RS Momentum > 100). Strongest rotation zone.',
+            body:
+                'Sector is outperforming the S&P 500 (RS Ratio > 100) AND gaining relative momentum (RS Momentum > 100). Strongest rotation zone.',
           ),
           const SizedBox(height: AppSpacing.s4),
           BestSetupsInfoRow(
             c: c,
             label: 'Improving',
-            body: 'Sector is underperforming vs S&P 500 (RS Ratio < 100) but its momentum is rising (RS Momentum > 100). Early-rotation zone — setups here can be early-stage.',
+            body:
+                'Sector is underperforming vs S&P 500 (RS Ratio < 100) but its momentum is rising (RS Momentum > 100). Early-rotation zone — setups here can be early-stage.',
           ),
           const SizedBox(height: AppSpacing.s5),
           Text('Within each sector',
@@ -1615,13 +1667,15 @@ void _showSectorBestSetupsInfo(BuildContext context) {
           BestSetupsInfoRow(
             c: c,
             label: 'Signal dots',
-            body: 'Filled dots = signals active right now (Volume Spike, Heartbeat, Record Quarter, Trend). More dots = stronger confluence.',
+            body:
+                'Filled dots = signals active right now (Volume Spike, Heartbeat, Record Quarter, Trend). More dots = stronger confluence.',
           ),
           const SizedBox(height: AppSpacing.s4),
           BestSetupsInfoRow(
             c: c,
             label: '% 1m',
-            body: 'Historical win rate over 1 month when this many signals were active. Green ≥ 65%, orange 50–64%, red below 50%.',
+            body:
+                'Historical win rate over 1 month when this many signals were active. Green ≥ 65%, orange 50–64%, red below 50%.',
           ),
           const SizedBox(height: AppSpacing.s5),
           Container(
@@ -1692,7 +1746,8 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
             children: [
               Row(
                 children: [
-                  Icon(Icons.account_circle_rounded, size: 16, color: c.warning),
+                  Icon(Icons.account_circle_rounded,
+                      size: 16, color: c.warning),
                   const SizedBox(width: AppSpacing.s2),
                   Text(
                     'Trump Disclosures',
@@ -1712,25 +1767,31 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
               const SizedBox(height: AppSpacing.s2),
               Text(
                 'OGE Form 278-T · Transactions ≥ \$100K · Source: Office of Government Ethics',
-                style: AppTypography.xs.copyWith(color: c.textFaint, height: 1.4),
+                style:
+                    AppTypography.xs.copyWith(color: c.textFaint, height: 1.4),
               ),
               const SizedBox(height: AppSpacing.s1),
               async.whenOrNull(
-                data: (r) {
-                  final ts = r.lastUpdated.isNotEmpty ? _fmtRelative(r.lastUpdated) : null;
-                  if (ts == null) return null;
-                  return Row(
-                    children: [
-                      Icon(Icons.update_rounded, size: 11, color: c.textFaint),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Updated $ts',
-                        style: AppTypography.xs.copyWith(color: c.textFaint, fontSize: 10),
-                      ),
-                    ],
-                  );
-                },
-              ) ?? const SizedBox.shrink(),
+                    data: (r) {
+                      final ts = r.lastUpdated.isNotEmpty
+                          ? _fmtRelative(r.lastUpdated)
+                          : null;
+                      if (ts == null) return null;
+                      return Row(
+                        children: [
+                          Icon(Icons.update_rounded,
+                              size: 11, color: c.textFaint),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Updated $ts',
+                            style: AppTypography.xs
+                                .copyWith(color: c.textFaint, fontSize: 10),
+                          ),
+                        ],
+                      );
+                    },
+                  ) ??
+                  const SizedBox.shrink(),
               const SizedBox(height: AppSpacing.s3),
               _SearchField(
                 controller: _searchCtrl,
@@ -1742,7 +1803,8 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
-                    Text('Type:', style: AppTypography.xs.copyWith(color: c.textMuted)),
+                    Text('Type:',
+                        style: AppTypography.xs.copyWith(color: c.textMuted)),
                     const SizedBox(width: AppSpacing.s2),
                     for (final label in ['All', 'Purchases', 'Sales']) ...[
                       _FilterChip(
@@ -1750,10 +1812,12 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
                         active: _type == label,
                         onTap: () => setState(() => _type = label),
                       ),
-                      if (label != 'Sales') const SizedBox(width: AppSpacing.s2),
+                      if (label != 'Sales')
+                        const SizedBox(width: AppSpacing.s2),
                     ],
                     const SizedBox(width: AppSpacing.s5),
-                    Text('Sort:', style: AppTypography.xs.copyWith(color: c.textMuted)),
+                    Text('Sort:',
+                        style: AppTypography.xs.copyWith(color: c.textMuted)),
                     const SizedBox(width: AppSpacing.s2),
                     _FilterChip(
                       label: 'Date ↓',
@@ -1774,7 +1838,7 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
         ),
         Expanded(
           child: async.when(
-            loading: () => _CongressTradesSkeleton(c: c),
+            loading: () => const _PresidentialSkeleton(),
             error: (_, __) => _PresidentialNoData(
               c: c,
               onRetry: () => ref.invalidate(_trumpTransactionsProvider),
@@ -1786,13 +1850,25 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
                 return _PresidentialLoading(c: c);
               }
 
+              // Newest filing is Pro-gated; every earlier filing stays free.
+              // Computed from the full unfiltered set so the cutoff doesn't
+              // shift when the user searches or re-sorts.
+              final latestFilingDate = resp.transactions.isEmpty
+                  ? null
+                  : resp.transactions
+                      .map((t) => t.filingDate)
+                      .reduce((a, b) => a.compareTo(b) > 0 ? a : b);
+              final isPro =
+                  EntitlementService.can('presidential_latest_filing');
+
               final query = _searchCtrl.text.toLowerCase().trim();
 
               var filtered = resp.transactions.where((t) {
                 if (_type == 'Purchases' && !t.isPurchase) return false;
                 if (_type == 'Sales' && t.type != 'sale') return false;
                 if (query.isNotEmpty) {
-                  if (!t.description.toLowerCase().contains(query)) return false;
+                  if (!t.description.toLowerCase().contains(query))
+                    return false;
                 }
                 return true;
               }).toList();
@@ -1812,18 +1888,40 @@ class _PresidentialTabState extends ConsumerState<_PresidentialTab> {
                 );
               }
 
+              // Collapse the entire gated (newest-filing) batch into a single
+              // compact teaser row instead of one blurred card per record —
+              // that batch alone can be hundreds of rows.
+              final gated = isPro
+                  ? const <OgeTransaction>[]
+                  : filtered
+                      .where((t) => t.filingDate == latestFilingDate)
+                      .toList();
+              final visible = isPro
+                  ? filtered
+                  : filtered
+                      .where((t) => t.filingDate != latestFilingDate)
+                      .toList();
+              final hasTeaser = gated.isNotEmpty;
+
               return RefreshIndicator(
-                onRefresh: () =>
-                    ref.refresh(_trumpTransactionsProvider.future),
+                onRefresh: () => ref.refresh(_trumpTransactionsProvider.future),
                 child: ListView.builder(
                   padding: EdgeInsets.only(
                     top: AppSpacing.s3,
-                    bottom: AppSpacing.s5 +
-                        MediaQuery.of(context).padding.bottom,
+                    bottom:
+                        AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
                   ),
-                  itemCount: filtered.length,
-                  itemBuilder: (_, i) =>
-                      _PresidentialTransactionCard(tx: filtered[i]),
+                  itemCount: visible.length + (hasTeaser ? 1 : 0),
+                  itemBuilder: (_, i) {
+                    if (hasTeaser && i == 0) {
+                      return _PresidentialLatestFilingTeaser(
+                        count: gated.length,
+                        filingDate: latestFilingDate,
+                      );
+                    }
+                    final tx = visible[hasTeaser ? i - 1 : i];
+                    return _PresidentialTransactionCard(tx: tx);
+                  },
                 ),
               );
             },
@@ -1904,8 +2002,7 @@ class _PresidentialTransactionCard extends StatelessWidget {
           Row(
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
                   color: amountColor.withAlpha(20),
                   borderRadius: BorderRadius.circular(AppRadius.full),
@@ -1936,8 +2033,7 @@ class _PresidentialTransactionCard extends StatelessWidget {
                 const SizedBox(width: 4),
                 Text(
                   'Filed ${_fmtDate(tx.filingDate)}',
-                  style:
-                      AppTypography.xs.copyWith(color: c.textFaint),
+                  style: AppTypography.xs.copyWith(color: c.textFaint),
                 ),
                 if (tx.source.isNotEmpty) ...[
                   Text('  ·  ',
@@ -1946,8 +2042,7 @@ class _PresidentialTransactionCard extends StatelessWidget {
                     child: Text(
                       tx.source,
                       style: AppTypography.xs.copyWith(
-                          color: c.textFaint,
-                          fontStyle: FontStyle.italic),
+                          color: c.textFaint, fontStyle: FontStyle.italic),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1964,22 +2059,90 @@ class _PresidentialTransactionCard extends StatelessWidget {
   Color _amountColor(double mid, AppPalette c) {
     if (mid >= 5000000) return c.danger;
     if (mid >= 1000000) return c.warning;
-    if (mid >= 500000)  return c.positive;
+    if (mid >= 500000) return c.positive;
     return c.accent;
   }
 
-  String _fmtDate(String iso) {
-    if (iso.length < 10) return iso;
-    try {
-      final dt = DateTime.parse(iso);
-      const months = [
-        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-      ];
-      return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
-    } catch (_) {
-      return iso;
-    }
+  String _fmtDate(String iso) => _fmtOgeDate(iso);
+}
+
+String _fmtOgeDate(String iso) {
+  if (iso.length < 10) return iso;
+  try {
+    final dt = DateTime.parse(iso);
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  } catch (_) {
+    return iso;
+  }
+}
+
+// ── Presidential Latest-Filing Teaser (compact, replaces N blurred cards) ────
+
+class _PresidentialLatestFilingTeaser extends StatelessWidget {
+  const _PresidentialLatestFilingTeaser({
+    required this.count,
+    required this.filingDate,
+  });
+  final int count;
+  final String? filingDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: () =>
+          UpgradeSheet.show(context, feature: 'presidential_latest_filing'),
+      child: GlassCard(
+        margin: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+        padding: const EdgeInsets.all(AppSpacing.s4),
+        borderColor: c.accent.withAlpha(90),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(9),
+              decoration:
+                  BoxDecoration(color: c.accentDim, shape: BoxShape.circle),
+              child: Icon(Icons.lock_rounded, size: 16, color: c.accent),
+            ),
+            const SizedBox(width: AppSpacing.s3),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '$count latest filing${count == 1 ? '' : 's'}'
+                    '${filingDate != null ? ' · Filed ${_fmtOgeDate(filingDate!)}' : ''}',
+                    style: AppTypography.labelMd.copyWith(
+                        color: c.textPrimary, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Upgrade to Pro to see the newest disclosures',
+                    style: AppTypography.xs.copyWith(color: c.textMuted),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: c.textMuted, size: 20),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -2013,8 +2176,7 @@ class _PresidentialLoading extends StatelessWidget {
             const SizedBox(height: AppSpacing.s2),
             Text(
               'Downloading OGE Form 278-T filings in the background. This takes about a minute on first load.',
-              style: AppTypography.xs
-                  .copyWith(color: c.textMuted, height: 1.5),
+              style: AppTypography.xs.copyWith(color: c.textMuted, height: 1.5),
               textAlign: TextAlign.center,
             ),
           ],
@@ -2056,8 +2218,8 @@ class _PresidentialNoData extends StatelessWidget {
               const SizedBox(height: AppSpacing.s2),
               Text(
                 'OGE Form 278-T transaction data is currently unavailable. The pipeline scrapes disclosures from the Office of Government Ethics.',
-                style: AppTypography.xs.copyWith(
-                    color: c.textMuted, height: 1.5),
+                style:
+                    AppTypography.xs.copyWith(color: c.textMuted, height: 1.5),
                 textAlign: TextAlign.center,
               ),
             ],
@@ -2203,9 +2365,10 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
                               style: AppTypography.sm
                                   .copyWith(color: c.textMuted)),
                           const SizedBox(height: AppSpacing.s2),
-                          Text('Live data is being fetched. Check back shortly.',
-                              style: AppTypography.xs
-                                  .copyWith(color: c.textMuted),
+                          Text(
+                              'Live data is being fetched. Check back shortly.',
+                              style:
+                                  AppTypography.xs.copyWith(color: c.textMuted),
                               textAlign: TextAlign.center),
                         ],
                       ),
@@ -2265,20 +2428,20 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
               ),
             ),
             Text('How Smart Money Works',
-                style: AppTypography.headingSm
-                    .copyWith(color: c.textPrimary)),
+                style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
             const SizedBox(height: AppSpacing.s2),
             Text(
                 'Two data-driven portfolios built from public disclosure data — tracking money flows before markets react.',
-                style: AppTypography.xs
-                    .copyWith(color: c.textMuted, height: 1.6)),
+                style:
+                    AppTypography.xs.copyWith(color: c.textMuted, height: 1.6)),
             const SizedBox(height: AppSpacing.s5),
             _QuiverInfoBlock(
               icon: Icons.trending_up_rounded,
               color: c.warning,
               label: 'S1',
               title: 'Lobbying Growth',
-              rule: 'Top-10 by largest QoQ increase in Senate LDA lobbying spend',
+              rule:
+                  'Top-10 by largest QoQ increase in Senate LDA lobbying spend',
               explanation:
                   'Companies ramping up lobbying signal upcoming regulatory battles, government contracts, or legislative tailwinds. A sharp spending surge often precedes policy moves that benefit that company\'s sector.',
               examples: 'AMZN, META, GOOGL',
@@ -2290,7 +2453,8 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
               color: c.danger,
               label: 'S2',
               title: 'Insider Buys',
-              rule: 'Top-10 by insider Form 4 buy count via SEC EDGAR (90-day window)',
+              rule:
+                  'Top-10 by insider Form 4 buy count via SEC EDGAR (90-day window)',
               explanation:
                   'Corporate insiders (officers, directors, 10%+ holders) must file Form 4 when they trade their own company\'s stock. Clusters of insider purchases are a strong signal of management confidence in near-term prospects.',
               examples: 'PLTR, META, NVDA',
@@ -2326,25 +2490,21 @@ class _QuiverStrategyChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? c.accent.withAlpha(25) : c.surfaceCard,
           borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(
-              color: selected ? c.accent : c.border, width: 1),
+          border: Border.all(color: selected ? c.accent : c.border, width: 1),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon,
-                size: 13, color: selected ? c.accent : c.textMuted),
+            Icon(icon, size: 13, color: selected ? c.accent : c.textMuted),
             const SizedBox(width: 5),
             Text(label,
                 style: AppTypography.xs.copyWith(
                     color: selected ? c.accent : c.textSecondary,
-                    fontWeight:
-                        selected ? FontWeight.w600 : FontWeight.w400)),
+                    fontWeight: selected ? FontWeight.w600 : FontWeight.w400)),
           ],
         ),
       ),
@@ -2365,7 +2525,8 @@ class _QuiverItemRow extends StatelessWidget {
     final changeColor = isUp ? c.accent : c.danger;
 
     return GestureDetector(
-      onTap: () => context.push('/asset/${item.symbol}?name=${Uri.encodeComponent(item.name)}'),
+      onTap: () => context
+          .push('/asset/${item.symbol}?name=${Uri.encodeComponent(item.name)}'),
       child: Padding(
         padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
@@ -2384,8 +2545,8 @@ class _QuiverItemRow extends StatelessWidget {
               width: 3,
               height: 32,
               decoration: BoxDecoration(
-                color: c.accent.withAlpha(
-                    (item.weight * 255).clamp(30, 200).round()),
+                color: c.accent
+                    .withAlpha((item.weight * 255).clamp(30, 200).round()),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -2397,8 +2558,7 @@ class _QuiverItemRow extends StatelessWidget {
                 children: [
                   Text(item.symbol,
                       style: AppTypography.labelMd.copyWith(
-                          color: c.textPrimary,
-                          fontWeight: FontWeight.w700)),
+                          color: c.textPrimary, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 2),
                   Text(item.name,
                       style: AppTypography.xs.copyWith(color: c.textMuted),
@@ -2410,8 +2570,7 @@ class _QuiverItemRow extends StatelessWidget {
             const SizedBox(width: AppSpacing.s3),
             // Badge
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                 color: c.accentDim18,
                 borderRadius: BorderRadius.circular(AppRadius.full),
@@ -2423,16 +2582,15 @@ class _QuiverItemRow extends StatelessWidget {
                       style: AppTypography.xs.copyWith(
                           color: c.accent, fontWeight: FontWeight.w700)),
                   Text(item.badgeLabel,
-                      style: AppTypography.xs.copyWith(
-                          color: c.textMuted, fontSize: 9)),
+                      style: AppTypography.xs
+                          .copyWith(color: c.textMuted, fontSize: 9)),
                 ],
               ),
             ),
             if (item.lobbyingGrowth != null) ...[
               const SizedBox(width: AppSpacing.s2),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: c.warning.withAlpha(20),
                   borderRadius: BorderRadius.circular(AppRadius.full),
@@ -2441,7 +2599,9 @@ class _QuiverItemRow extends StatelessWidget {
                 child: Text(
                   '${item.lobbyingGrowth} lobbying',
                   style: AppTypography.xs.copyWith(
-                      color: c.warning, fontWeight: FontWeight.w700, fontSize: 9),
+                      color: c.warning,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 9),
                 ),
               ),
             ],
@@ -2451,9 +2611,10 @@ class _QuiverItemRow extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Text('\$${item.price!.toStringAsFixed(item.price! >= 100 ? 0 : 2)}',
-                      style: AppTypography.labelSm
-                          .copyWith(color: c.textPrimary)),
+                  Text(
+                      '\$${item.price!.toStringAsFixed(item.price! >= 100 ? 0 : 2)}',
+                      style:
+                          AppTypography.labelSm.copyWith(color: c.textPrimary)),
                   if (item.changePercent != null)
                     Text(
                         '${isUp ? '+' : ''}${item.changePercent!.toStringAsFixed(2)}%',
@@ -2476,75 +2637,83 @@ class _QuiverSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
-      itemCount: 8,
-      separatorBuilder: (_, __) => Divider(height: 1, color: c.border),
-      itemBuilder: (_, __) => Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
-        child: Row(
-          children: [
-            Container(
-                width: 24,
-                height: 12,
-                decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(4))),
-            const SizedBox(width: AppSpacing.s3),
-            Container(
-                width: 3,
-                height: 32,
-                decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(2))),
-            const SizedBox(width: AppSpacing.s3),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final baseColor =
+        isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE8EAF0);
+    final highlightColor =
+        isDark ? const Color(0xFF2E2E2E) : const Color(0xFFF8F9FC);
+
+    return Shimmer.fromColors(
+      baseColor: baseColor,
+      highlightColor: highlightColor,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s3),
+        itemCount: 8,
+        separatorBuilder: (_, __) => Divider(height: 1, color: c.border),
+        itemBuilder: (_, __) => Padding(
+          padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
+          child: Row(
+            children: [
+              Container(
+                  width: 24,
+                  height: 12,
+                  decoration: BoxDecoration(
+                      color: c.border, borderRadius: BorderRadius.circular(4))),
+              const SizedBox(width: AppSpacing.s3),
+              Container(
+                  width: 3,
+                  height: 32,
+                  decoration: BoxDecoration(
+                      color: c.border, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(width: AppSpacing.s3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                        width: 56,
+                        height: 14,
+                        decoration: BoxDecoration(
+                            color: c.border,
+                            borderRadius: BorderRadius.circular(4))),
+                    const SizedBox(height: 4),
+                    Container(
+                        width: 120,
+                        height: 10,
+                        decoration: BoxDecoration(
+                            color: c.border.withAlpha(120),
+                            borderRadius: BorderRadius.circular(4))),
+                  ],
+                ),
+              ),
+              Container(
+                  width: 56,
+                  height: 28,
+                  decoration: BoxDecoration(
+                      color: c.border,
+                      borderRadius: BorderRadius.circular(AppRadius.full))),
+              const SizedBox(width: AppSpacing.s3),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                      width: 56,
-                      height: 14,
+                      width: 48,
+                      height: 12,
                       decoration: BoxDecoration(
                           color: c.border,
                           borderRadius: BorderRadius.circular(4))),
                   const SizedBox(height: 4),
                   Container(
-                      width: 120,
+                      width: 36,
                       height: 10,
                       decoration: BoxDecoration(
                           color: c.border.withAlpha(120),
                           borderRadius: BorderRadius.circular(4))),
                 ],
               ),
-            ),
-            Container(
-                width: 56,
-                height: 28,
-                decoration: BoxDecoration(
-                    color: c.border,
-                    borderRadius: BorderRadius.circular(AppRadius.full))),
-            const SizedBox(width: AppSpacing.s3),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Container(
-                    width: 48,
-                    height: 12,
-                    decoration: BoxDecoration(
-                        color: c.border,
-                        borderRadius: BorderRadius.circular(4))),
-                const SizedBox(height: 4),
-                Container(
-                    width: 36,
-                    height: 10,
-                    decoration: BoxDecoration(
-                        color: c.border.withAlpha(120),
-                        borderRadius: BorderRadius.circular(4))),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -2595,8 +2764,7 @@ class _QuiverInfoBlock extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
                   color: color.withAlpha(25),
                   borderRadius: BorderRadius.circular(AppRadius.full),
@@ -2610,8 +2778,7 @@ class _QuiverInfoBlock extends StatelessWidget {
               ),
               const SizedBox(height: 6),
               Text(title,
-                  style:
-                      AppTypography.labelMd.copyWith(color: c.textPrimary)),
+                  style: AppTypography.labelMd.copyWith(color: c.textPrimary)),
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.all(AppSpacing.s3),

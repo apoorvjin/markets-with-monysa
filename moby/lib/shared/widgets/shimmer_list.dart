@@ -3,7 +3,7 @@ import 'package:shimmer/shimmer.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
 
-enum ShimmerRowType { market, signal }
+enum ShimmerRowType { market, signal, scannerCard }
 
 /// Full-screen shimmer list shown while async data loads.
 /// Replaces the generic CircularProgressIndicator on list screens.
@@ -23,8 +23,10 @@ class ShimmerList extends StatelessWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // Shimmer base/highlight tuned per theme so it reads on both backgrounds.
-    final baseColor = isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE8EAF0);
-    final highlightColor = isDark ? const Color(0xFF2E2E2E) : const Color(0xFFF8F9FC);
+    final baseColor =
+        isDark ? const Color(0xFF1A1A1A) : const Color(0xFFE8EAF0);
+    final highlightColor =
+        isDark ? const Color(0xFF2E2E2E) : const Color(0xFFF8F9FC);
 
     return Shimmer.fromColors(
       baseColor: baseColor,
@@ -32,9 +34,11 @@ class ShimmerList extends StatelessWidget {
       child: ListView.builder(
         physics: const NeverScrollableScrollPhysics(),
         itemCount: count,
-        itemBuilder: (_, __) => type == ShimmerRowType.market
-            ? _MarketRowSkeleton(c: c)
-            : _SignalRowSkeleton(c: c),
+        itemBuilder: (_, __) => switch (type) {
+          ShimmerRowType.market => _MarketRowSkeleton(c: c),
+          ShimmerRowType.signal => _SignalRowSkeleton(c: c),
+          ShimmerRowType.scannerCard => _ScannerCardSkeleton(c: c),
+        },
       ),
     );
   }
@@ -122,6 +126,67 @@ class _SignalRowSkeleton extends StatelessWidget {
               _Box(width: 68, height: 13, radius: 4),
               const SizedBox(height: 5),
               _Box(width: 48, height: 10, radius: 4),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Scanner card skeleton — mirrors _StockCard layout (multibaggers, ─────────
+// ── Power Moves-style scanner cards: symbol chip + name + price + %chip, ────
+// ── then signal pills, then a signal-count/dots row) ─────────────────────────
+
+class _ScannerCardSkeleton extends StatelessWidget {
+  const _ScannerCardSkeleton({required this.c});
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+      padding: const EdgeInsets.all(AppSpacing.s4),
+      decoration: BoxDecoration(
+        color: c.surfaceCard,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _Box(width: 40, height: 18, radius: AppRadius.xs),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                  child: _Box(width: double.infinity, height: 14, radius: 4)),
+              const SizedBox(width: AppSpacing.s2),
+              _Box(width: 50, height: 14, radius: 4),
+              const SizedBox(width: AppSpacing.s2),
+              _Box(width: 40, height: 18, radius: AppRadius.xs),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          Row(
+            children: [
+              _Box(width: 62, height: 22, radius: AppRadius.full),
+              const SizedBox(width: AppSpacing.s2),
+              _Box(width: 84, height: 22, radius: AppRadius.full),
+              const SizedBox(width: AppSpacing.s2),
+              _Box(width: 76, height: 22, radius: AppRadius.full),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          Row(
+            children: [
+              _Box(width: 90, height: 11, radius: 4),
+              const SizedBox(width: AppSpacing.s2),
+              for (var i = 0; i < 3; i++) ...[
+                _Box(width: 8, height: 8, radius: 4),
+                const SizedBox(width: 4),
+              ],
             ],
           ),
         ],

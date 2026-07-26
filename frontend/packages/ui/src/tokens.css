@@ -81,5 +81,7 @@
   --fs-xl2: 18px;
   --fs-xl3: 20px;
   --fs-xl4: 24px;
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Space Grotesk Variable", "Inter Variable", -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
 }
