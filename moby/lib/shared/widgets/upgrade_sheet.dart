@@ -2,7 +2,7 @@ import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
-import 'package:purchases_ui_flutter/purchases_ui_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
@@ -22,34 +22,16 @@ class UpgradeSheet extends StatefulWidget {
       parameters: {'feature': feature},
     ).catchError((_) {});
 
-    // Prefer RevenueCat's remote paywall (dashboard-managed copy/design, no app
-    // release to iterate). The caller has already checked entitlement via
-    // EntitlementService.can(), so present unconditionally — we do NOT use
-    // presentPaywallIfNeeded, which would re-check a hardcoded entitlement id
-    // and contradict the "any active entitlement = Pro" model.
-    if (EntitlementService.isRevenueCatConfigured) {
-      try {
-        final result = await RevenueCatUI.presentPaywall();
-        if (result == PaywallResult.purchased ||
-            result == PaywallResult.restored) {
-          // The customer-info listener registered in main() also fires, but
-          // refresh synchronously so gated UI unlocks the instant we return.
-          final info = await Purchases.getCustomerInfo();
-          EntitlementService.updateFromCustomerInfo(info);
-          if (result == PaywallResult.purchased) {
-            FirebaseAnalytics.instance.logEvent(
-              name: 'plan_upgrade',
-              parameters: {'plan': 'pro', 'feature': feature},
-            ).catchError((_) {});
-          }
-        }
-        return;
-      } catch (_) {
-        // Offering/paywall unavailable — fall through to the built-in sheet.
-      }
-    }
-
-    if (!context.mounted) return;
+    // Always present our own paywall sheet. We deliberately do NOT call
+    // RevenueCatUI.presentPaywall(): with no paywall configured in the
+    // RevenueCat dashboard it renders RevenueCat's auto-generated default
+    // paywall, which shows only a logo/price/Continue — no feature list and no
+    // Terms/Privacy links, which fails App Store Guideline 3.1.2(c). Our custom
+    // sheet ([UpgradeSheet]) states the plan title, length, price, what Pro
+    // includes, and links to Terms of Use + Privacy Policy, and still purchases
+    // through RevenueCat/StoreKit via [_onPurchaseTap]. If a compliant dashboard
+    // paywall is ever built and attached to the current offering, switch back to
+    // presentPaywall() here.
     return showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -207,7 +189,33 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
           ],
           const SizedBox(height: AppSpacing.s6),
           const _TierComparison(),
-          const SizedBox(height: AppSpacing.s6),
+          const SizedBox(height: AppSpacing.s5),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(AppSpacing.s4),
+            decoration: BoxDecoration(
+              color: c.background,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(color: c.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'FinBrio Pro — Monthly',
+                  style: AppTypography.labelMd.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '7-day free trial, then \$${RemoteConfigService.proMonthlyPriceUsd}/month. '
+                  'Renews automatically every month until canceled.',
+                  style: AppTypography.xs.copyWith(color: c.textSecondary),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.s5),
           SizedBox(
             width: double.infinity,
             child: FilledButton(
@@ -254,8 +262,44 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
               ),
             ],
           ),
+          const SizedBox(height: AppSpacing.s2),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const _LegalLink(
+                  label: 'Terms of Use',
+                  url: 'https://www.finbrio.net/terms'),
+              Text('·', style: AppTypography.xs.copyWith(color: c.textMuted)),
+              const _LegalLink(
+                  label: 'Privacy Policy',
+                  url: 'https://www.finbrio.net/privacy'),
+            ],
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _LegalLink extends StatelessWidget {
+  const _LegalLink({required this.label, required this.url});
+
+  final String label;
+  final String url;
+
+  Future<void> _open() async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return TextButton(
+      onPressed: _open,
+      child: Text(label, style: AppTypography.xs.copyWith(color: c.textMuted)),
     );
   }
 }
@@ -272,11 +316,11 @@ class _TierComparison extends StatelessWidget {
           label: 'Free',
           price: '\$0',
           features: [
-            'Live quotes',
-            'S1-S3 signals',
-            '${RemoteConfigService.alertLimitFree} alerts',
-            '3 AI notes/day',
-            'Tariff map',
+            'Live markets & charts',
+            'S1–S3 signals',
+            'Heatmap (1D)',
+            '${RemoteConfigService.alertLimitFree} price alerts',
+            'Tariff & macro dashboards',
           ],
           isHighlighted: false,
           c: c,
@@ -286,12 +330,12 @@ class _TierComparison extends StatelessWidget {
           label: 'Pro',
           price: '\$${RemoteConfigService.proMonthlyPriceUsd}/mo',
           features: const [
-            'All 9 strategies',
-            'Unlimited alerts',
-            'Unlimited AI notes',
+            'All 9 signal strategies',
+            'Unlimited price alerts',
+            'AI analyst notes',
             'AI macro briefing',
-            'Sector heatmap',
-            'API access',
+            'Best Setups scanner',
+            'Extended timeframes',
           ],
           isHighlighted: true,
           c: c,

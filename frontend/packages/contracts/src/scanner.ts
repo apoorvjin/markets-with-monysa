@@ -71,6 +71,12 @@ export const MULTIBAGGER_COUNTRIES = [
   { param: "hongkong", label: "🇭🇰 HK", scannerPath: "hongkong" },
   { param: "china", label: "🇨🇳 China", scannerPath: "china" },
   { param: "euronext", label: "🇪🇺 Euronext", scannerPath: "euronext" },
+  // Wave 3 additions — Yahoo screener coverage confirmed live before building
+  // (mx/kr/tw/za candidates failed the same check and were dropped, not added).
+  { param: "canada", label: "🇨🇦 Canada", scannerPath: "canada" },
+  { param: "australia", label: "🇦🇺 Australia", scannerPath: "australia" },
+  { param: "brazil", label: "🇧🇷 Brazil", scannerPath: "brazil" },
+  { param: "singapore", label: "🇸🇬 Singapore", scannerPath: "singapore" },
 ] as const;
 export type MultibaggerCountry = (typeof MULTIBAGGER_COUNTRIES)[number]["param"];
 
@@ -222,14 +228,28 @@ export const EarningsItem = z
     epsGrowthPct: z.number().nullish(),
     numEstimates: z.string().nullish(),
     time: z.string().nullish(),
+    // Present only on non-US rows served from the Trading Economics snapshot
+    // (?country= queries) — absent on the default sp500/ndx/dji path.
+    country: z.string().nullish(),
+    countryCode: z.string().nullish(),
   })
   .passthrough();
 export type EarningsItem = z.infer<typeof EarningsItem>;
+
+export const EarningsCountry = z.object({ code: z.string(), name: z.string() });
+export type EarningsCountry = z.infer<typeof EarningsCountry>;
 
 export const EarningsResponse = z.object({
   items: z.array(EarningsItem),
   index: z.string().nullish(),
   lastUpdated: z.string().nullish(),
+  // Roster of countries the Trading Economics snapshot covers — always present
+  // (even with the global-earnings toggle off) so a country chip row can
+  // render immediately; per-selection availability is `available` below.
+  countries: z.array(EarningsCountry).nullish(),
+  // Only meaningful when a `?country=` query was made — false means the
+  // "earnings_calendar_global_enabled" Remote Config flag is currently off.
+  available: z.boolean().nullish(),
 });
 export type EarningsResponse = z.infer<typeof EarningsResponse>;
 

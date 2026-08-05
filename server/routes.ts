@@ -12,6 +12,9 @@ import { registerOgeRoutes } from "./routes/oge";
 import { registerEtfRoutes } from "./routes/etf";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerWaitlistRoutes } from "./routes/waitlist";
+import { registerWireRoutes } from "./routes/wire";
+import { registerIntelRoutes } from "./routes/intel";
+import { registerNasdaqRoutes } from "./routes/nasdaq";
 import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -34,6 +37,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerEtfRoutes(app);
   registerAuthRoutes(app);
   registerWaitlistRoutes(app);
+  registerWireRoutes(app);
+  registerIntelRoutes(app);
+  registerNasdaqRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

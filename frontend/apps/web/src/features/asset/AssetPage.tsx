@@ -87,6 +87,24 @@ export function AssetPage(props: { symbol: string; name?: string }) {
     staleTime: 10 * 60_000,
   });
 
+  const pressReleases = useQuery({
+    queryKey: ["nasdaq-press-releases", symbol],
+    queryFn: () => api.getNasdaqPressReleases(symbol),
+    staleTime: 15 * 60_000,
+  });
+
+  const insider = useQuery({
+    queryKey: ["insider-trades", symbol],
+    queryFn: () => api.getInsiderTrades(symbol),
+    staleTime: 6 * 60 * 60_000,
+  });
+
+  const institutional = useQuery({
+    queryKey: ["institutional-holdings", symbol],
+    queryFn: () => api.getInstitutionalHoldings(symbol),
+    staleTime: 24 * 60 * 60_000,
+  });
+
   const backtest = useQuery({
     queryKey: ["backtest", symbol],
     queryFn: () => api.getBacktest(symbol),
@@ -362,6 +380,125 @@ export function AssetPage(props: { symbol: string; name?: string }) {
           ) : null}
         </Card>
       </div>
+
+      {pressReleases.data && pressReleases.data.items.length > 0 && (
+        <Card>
+          <strong>Company Releases</strong>
+          <div className="cell-sub" style={{ marginTop: "2px" }}>
+            Official press releases via Nasdaq
+          </div>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "var(--s3)",
+              marginTop: "var(--s4)",
+            }}
+          >
+            {pressReleases.data.items.slice(0, 10).map((pr, i) => (
+              <a
+                key={i}
+                href={pr.url}
+                target="_blank"
+                rel="noreferrer"
+                style={{ display: "flex", gap: "var(--s3)", alignItems: "baseline" }}
+              >
+                <span className="cell-main" style={{ whiteSpace: "normal" }}>
+                  {pr.title}
+                </span>
+                <span className="cell-sub" style={{ marginLeft: "auto", flexShrink: 0 }}>
+                  {pr.created ?? ""}
+                </span>
+              </a>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {insider.data && insider.data.trades.length > 0 && (
+        <Card>
+          <strong>Insider Activity</strong>
+          <div className="cell-sub" style={{ marginTop: "2px" }}>
+            Recent Form 4 transactions via Nasdaq
+          </div>
+          <div style={{ overflowX: "auto", marginTop: "var(--s4)" }}>
+            <table className="tbl" style={{ marginTop: "var(--s2)" }}>
+              <thead>
+                <tr>
+                  <th>Insider</th>
+                  <th>Relation</th>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th className="num">Shares</th>
+                  <th className="num">Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {insider.data.trades.slice(0, 12).map((t, i) => (
+                  <tr key={i}>
+                    <td>{t.insider}</td>
+                    <td className="cell-sub">{t.relation ?? ""}</td>
+                    <td className="cell-sub">{t.date ?? ""}</td>
+                    <td
+                      className={
+                        (t.type ?? "").toLowerCase().includes("buy")
+                          ? "num-up"
+                          : (t.type ?? "").toLowerCase().includes("sell")
+                            ? "num-down"
+                            : ""
+                      }
+                    >
+                      {t.type ?? ""}
+                    </td>
+                    <td className="num">{t.shares ?? ""}</td>
+                    <td className="num">{t.price ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {institutional.data && institutional.data.holders.length > 0 && (
+        <Card>
+          <strong>Institutional Holders</strong>
+          <div className="cell-sub" style={{ marginTop: "2px" }}>
+            13F filings via Nasdaq
+            {institutional.data.sharesOutstandingPct
+              ? ` · ${institutional.data.sharesOutstandingPct} of shares outstanding`
+              : ""}
+          </div>
+          <div style={{ overflowX: "auto", marginTop: "var(--s4)" }}>
+            <table className="tbl" style={{ marginTop: "var(--s2)" }}>
+              <thead>
+                <tr>
+                  <th>Holder</th>
+                  <th className="num">Shares Held</th>
+                  <th className="num">Change</th>
+                  <th className="num">Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                {institutional.data.holders.slice(0, 12).map((h, i) => (
+                  <tr key={i}>
+                    <td>{h.owner}</td>
+                    <td className="num">{h.sharesHeld ?? ""}</td>
+                    <td
+                      className={
+                        (h.sharesChangePct ?? "").startsWith("-") ? "num num-down" : "num num-up"
+                      }
+                    >
+                      {h.sharesChangePct ?? ""}
+                    </td>
+                    <td className="num">{h.marketValue ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       <Card>
         <strong>News & Sentiment</strong>

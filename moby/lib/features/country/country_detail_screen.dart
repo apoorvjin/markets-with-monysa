@@ -126,28 +126,59 @@ class CountryDetailScreen extends ConsumerWidget {
                     ],
 
                     const SizedBox(height: AppSpacing.s5),
-                    FilledButton.icon(
-                      onPressed: () {
-                        if (canViewStocks) {
-                          context.push(
-                              '/country/$countryCode/stocks?name=${Uri.encodeComponent(country.countryName)}');
-                        } else {
-                          UpgradeSheet.show(context,
-                              feature: 'country_top_stocks');
-                        }
-                      },
-                      icon: Icon(
-                          canViewStocks ? Icons.bar_chart : Icons.lock_rounded),
-                      label: const Text('View Top Listed Stocks'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: c.accent,
-                        foregroundColor: c.background,
-                        minimumSize: const Size(double.infinity, 48),
-                        shape: RoundedRectangleBorder(
+                    if (country.hasStockCoverage)
+                      FilledButton.icon(
+                        onPressed: () {
+                          if (canViewStocks) {
+                            context.push(
+                                '/country/$countryCode/stocks?name=${Uri.encodeComponent(country.countryName)}');
+                          } else {
+                            UpgradeSheet.show(context,
+                                feature: 'country_top_stocks');
+                          }
+                        },
+                        icon: Icon(canViewStocks
+                            ? Icons.bar_chart
+                            : Icons.lock_rounded),
+                        label: const Text('View Top Listed Stocks'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: c.accent,
+                          foregroundColor: c.background,
+                          minimumSize: const Size(double.infinity, 48),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(AppRadius.md),
+                          ),
+                        ),
+                      )
+                    else
+                      // Wave 4 correctness fix: this country isn't in
+                      // COUNTRY_EXCHANGE_MAP — /api/stocks/:countryCode would
+                      // always come back empty, so don't render a button that
+                      // looks live but silently fails when tapped.
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            vertical: AppSpacing.s4,
+                            horizontal: AppSpacing.s4),
+                        decoration: BoxDecoration(
+                          color: c.surfaceCard,
                           borderRadius: BorderRadius.circular(AppRadius.md),
+                          border: Border.all(color: c.border),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.info_outline_rounded,
+                                size: 18, color: c.textMuted),
+                            const SizedBox(width: AppSpacing.s2),
+                            Text(
+                              'Stock data not available for this market',
+                              style: AppTypography.md
+                                  .copyWith(color: c.textMuted),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
                     SizedBox(
                         height: AppSpacing.s5 +
                             MediaQuery.of(context).padding.bottom +

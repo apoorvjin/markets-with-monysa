@@ -22,7 +22,11 @@ import {
   HeatmapResponse,
   InstitutionalFlowResponse,
   MoversResponse,
+  DividendsResponse,
+  InsiderTradesResponse,
+  InstitutionalHoldingsResponse,
   MULTIBAGGER_COUNTRIES,
+  NasdaqPressReleasesResponse,
   NewsResponse,
   OgeResponse,
   QuiverResponse,
@@ -36,9 +40,18 @@ import {
   TradingSignal,
   TreemapResponse,
   UsaDebtResponse,
+  DebtComparisonResponse,
   VolatilityAssetsResponse,
   VixTermStructureResponse,
+  WireBreakingResponse,
+  WireDesksResponse,
+  WireItemsResponse,
+  IntelQuakesResponse,
+  IntelMarketsResponse,
+  IntelMaritimeResponse,
+  IntelAirspaceResponse,
   YieldCurveHistoryResponse,
+  type WireDesk,
   type ChartRange,
   type EtfCategory,
   type InstitutionalFlowType,
@@ -182,12 +195,20 @@ export function createApiClient(opts: ApiClientOptions) {
       ),
     getRegimeSummary: () =>
       get("/api/trading/regime-summary", RegimeSummaryResponse),
-    getEarningsCalendar: (days = 15) =>
-      get(`/api/trading/earnings-calendar${qs({ days })}`, EarningsResponse),
+    getEarningsCalendar: (days = 15, country?: string) =>
+      get(`/api/trading/earnings-calendar${qs({ days, country })}`, EarningsResponse),
     getBacktest: (symbol: string) =>
       get(`/api/trading/backtest/${encodeURIComponent(symbol)}`, BacktestResponse),
     getNews: (symbol: string) =>
       get(`/api/trading/news/${encodeURIComponent(symbol)}`, NewsResponse),
+    getNasdaqPressReleases: (symbol: string) =>
+      get(`/api/nasdaq/press-releases/${encodeURIComponent(symbol)}`, NasdaqPressReleasesResponse),
+    getInsiderTrades: (symbol: string) =>
+      get(`/api/nasdaq/insider-trades/${encodeURIComponent(symbol)}`, InsiderTradesResponse),
+    getInstitutionalHoldings: (symbol: string) =>
+      get(`/api/nasdaq/institutional-holdings/${encodeURIComponent(symbol)}`, InstitutionalHoldingsResponse),
+    getDividendsCalendar: (date: string) =>
+      get(`/api/nasdaq/dividends${qs({ date })}`, DividendsResponse),
     search: (q: string) => get(`/api/search${qs({ q })}`, SearchResponse),
     getCorrelation: () => get("/api/trading/correlation", CorrelationResponse),
     getAdvCorrelation: (window: "1m" | "3m" | "6m" | "1y" = "3m") =>
@@ -213,6 +234,7 @@ export function createApiClient(opts: ApiClientOptions) {
     getYieldCurveHistory: () =>
       get("/api/economy/yield-curve-history", YieldCurveHistoryResponse),
     getUsaDebt: () => get("/api/usa-debt", UsaDebtResponse),
+    getDebtComparison: () => get("/api/economy/debt-comparison", DebtComparisonResponse),
     /** params mirror mobile: vix, vixBand, goldPct1M, oilPct1M, dxyPct1M… */
     postBriefing: (params: Record<string, unknown>) =>
       post("/api/volatility/briefing", params, BriefingResponse),
@@ -228,6 +250,18 @@ export function createApiClient(opts: ApiClientOptions) {
     getEtfProfile: (symbol: string) =>
       get(`/api/etf/${encodeURIComponent(symbol)}/profile`, EtfProfileResponse),
     getEtfRotation: () => get("/api/etf/rotation", EtfRotationResponse),
+
+    // ── Wire (News/OSINT & gov-feed terminal) ───────────────────────────
+    getWireDesks: () => get("/api/wire/desks", WireDesksResponse),
+    getWireItems: (desk: WireDesk, limit?: number) =>
+      get(`/api/wire/items${qs({ desk, limit })}`, WireItemsResponse),
+    getWireBreaking: () => get("/api/wire/breaking", WireBreakingResponse),
+
+    // ── Wire → Intelligence (keyless hazards/maritime/aviation) ─────────
+    getIntelQuakes: () => get("/api/intel/quakes", IntelQuakesResponse),
+    getIntelMarkets: () => get("/api/intel/markets", IntelMarketsResponse),
+    getIntelMaritime: () => get("/api/intel/maritime", IntelMaritimeResponse),
+    getIntelAirspace: () => get("/api/intel/airspace", IntelAirspaceResponse),
   };
 }
 

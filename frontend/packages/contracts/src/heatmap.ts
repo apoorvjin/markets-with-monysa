@@ -18,6 +18,9 @@ export const TreemapStock = z
     preMarketChangePercent: z.number().nullish(),
     postMarketPrice: z.number().nullish(),
     postMarketChangePercent: z.number().nullish(),
+    /** Overnight (Blue Ocean) session, vs regular close; only during 8pm–4am ET */
+    overnightPrice: z.number().nullish(),
+    overnightChangePercent: z.number().nullish(),
     nativeCurrency: z.string().nullish(),
     /** FX-normalised USD cap; null when the FX fetch failed */
     marketCapUsd: z.number().nullish(),
@@ -54,6 +57,15 @@ export const TREEMAP_INDICES = [
   { param: "nikkei225", label: "Nikkei 225" },
   { param: "hsi", label: "Hang Seng" },
   { param: "nifty50", label: "Nifty 50" },
+  // Wave 2 additions — see server/data/index_constituents.ts for sourcing notes.
+  { param: "tsx60", label: "🇨🇦 TSX 60" },
+  { param: "asx50", label: "🇦🇺 ASX 50" },
+  { param: "ibovespa", label: "🇧🇷 Ibovespa" },
+  { param: "ipc", label: "🇲🇽 IPC Mexico" },
+  { param: "kospi200", label: "🇰🇷 KOSPI" },
+  { param: "taiex", label: "🇹🇼 TAIEX" },
+  { param: "jsetop40", label: "🇿🇦 JSE Top 40" },
+  { param: "sti", label: "🇸🇬 STI" },
 ] as const;
 export type TreemapIndexParam = (typeof TREEMAP_INDICES)[number]["param"];
 

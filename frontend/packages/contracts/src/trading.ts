@@ -13,6 +13,9 @@ export const QuoteItem = z
     updatedAt: z.string().nullish(),
     preMarketPrice: z.number().nullish(),
     preMarketChangePercent: z.number().nullish(),
+    // "spot" = real spot feed (commodities Yahoo only serves as futures); "futures" = a =F
+    // contract; null = index/crypto/forex (no tag). Drives the Trading-tab Spot/Futures chip.
+    priceType: z.enum(["spot", "futures"]).nullish(),
   })
   .passthrough();
 export type QuoteItem = z.infer<typeof QuoteItem>;
@@ -47,6 +50,8 @@ export const TradingSignal = z
     vwapDeviation: z.number().nullable().nullish(),
     vixAtSignal: z.number().nullable().nullish(),
     dynamicThreshold: z.number().nullable().nullish(),
+    // Whether entry/SL/TP were computed on spot vs futures — see QuoteItem.priceType.
+    priceType: z.enum(["spot", "futures"]).nullish(),
   })
   .passthrough();
 export type TradingSignal = z.infer<typeof TradingSignal>;
@@ -69,6 +74,97 @@ export const NewsResponse = z.object({
   aggregateSentiment: z.number().nullish(),
 });
 export type NewsResponse = z.infer<typeof NewsResponse>;
+
+/** Official company press releases from Nasdaq (unofficial keyless endpoint). */
+export const NasdaqPressRelease = z
+  .object({
+    title: z.string(),
+    url: z.string(),
+    publisher: z.string().nullish(),
+    /** Coarse date string as Nasdaq gives it, e.g. "Aug 4, 2026". */
+    created: z.string().nullish(),
+    ago: z.string().nullish(),
+    description: z.string().nullish(),
+  })
+  .passthrough();
+export type NasdaqPressRelease = z.infer<typeof NasdaqPressRelease>;
+
+export const NasdaqPressReleasesResponse = z.object({
+  symbol: z.string().nullish(),
+  items: z.array(NasdaqPressRelease),
+  lastUpdated: z.string().nullish(),
+});
+export type NasdaqPressReleasesResponse = z.infer<typeof NasdaqPressReleasesResponse>;
+
+/** Insider (Form 4) transaction from Nasdaq. All fields are display strings. */
+export const InsiderTrade = z
+  .object({
+    insider: z.string(),
+    relation: z.string().nullish(),
+    date: z.string().nullish(),
+    type: z.string().nullish(),
+    ownType: z.string().nullish(),
+    shares: z.string().nullish(),
+    price: z.string().nullish(),
+    sharesHeld: z.string().nullish(),
+    url: z.string().nullish(),
+  })
+  .passthrough();
+export type InsiderTrade = z.infer<typeof InsiderTrade>;
+
+export const InsiderTradesResponse = z.object({
+  symbol: z.string().nullish(),
+  numberOfTrades: z.string().nullish(),
+  numberOfSharesTraded: z.string().nullish(),
+  trades: z.array(InsiderTrade),
+  lastUpdated: z.string().nullish(),
+});
+export type InsiderTradesResponse = z.infer<typeof InsiderTradesResponse>;
+
+/** Institutional (13F) holder from Nasdaq. */
+export const InstitutionalHolder = z
+  .object({
+    owner: z.string(),
+    date: z.string().nullish(),
+    sharesHeld: z.string().nullish(),
+    sharesChange: z.string().nullish(),
+    sharesChangePct: z.string().nullish(),
+    marketValue: z.string().nullish(),
+    url: z.string().nullish(),
+  })
+  .passthrough();
+export type InstitutionalHolder = z.infer<typeof InstitutionalHolder>;
+
+export const InstitutionalHoldingsResponse = z.object({
+  symbol: z.string().nullish(),
+  sharesOutstandingPct: z.string().nullish(),
+  totalHoldingsValue: z.string().nullish(),
+  holders: z.array(InstitutionalHolder),
+  lastUpdated: z.string().nullish(),
+});
+export type InstitutionalHoldingsResponse = z.infer<typeof InstitutionalHoldingsResponse>;
+
+/** One row of Nasdaq's dividend calendar. */
+export const DividendRow = z
+  .object({
+    symbol: z.string(),
+    companyName: z.string().nullish(),
+    exDate: z.string().nullish(),
+    paymentDate: z.string().nullish(),
+    recordDate: z.string().nullish(),
+    rate: z.string().nullish(),
+    annualDividend: z.string().nullish(),
+    announcementDate: z.string().nullish(),
+  })
+  .passthrough();
+export type DividendRow = z.infer<typeof DividendRow>;
+
+export const DividendsResponse = z.object({
+  date: z.string().nullish(),
+  rows: z.array(DividendRow),
+  lastUpdated: z.string().nullish(),
+});
+export type DividendsResponse = z.infer<typeof DividendsResponse>;
 
 export const SearchResult = z
   .object({

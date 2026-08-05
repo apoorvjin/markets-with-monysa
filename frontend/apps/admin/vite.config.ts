@@ -1,12 +1,11 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// In dev (npm run admin:dev): base defaults to "/" so the app loads at localhost:5175/.
-// In prod build (npm run admin:build): VITE_ADMIN_BASE=/admin/ is injected by the build
-// script so assets are prefixed correctly when served from Express at /admin/*.
+// This app is never served by the Express API — it's a standalone local tool
+// (see admin.sh) that talks to production over its own API base URL, so
+// there's no alternate mount path to account for here.
 export default defineConfig({
   plugins: [react()],
-  base: process.env.VITE_ADMIN_BASE ?? "/",
   server: {
     port: 5175,
   },

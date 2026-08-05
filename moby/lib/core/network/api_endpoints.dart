@@ -27,6 +27,14 @@ abstract final class ApiEndpoints {
   }
   static String tradingNews(String symbol) =>
       '$baseUrl/api/trading/news/$symbol';
+  static String nasdaqPressReleases(String symbol) =>
+      '$baseUrl/api/nasdaq/press-releases/$symbol';
+  static String nasdaqInsiderTrades(String symbol) =>
+      '$baseUrl/api/nasdaq/insider-trades/$symbol';
+  static String nasdaqInstitutionalHoldings(String symbol) =>
+      '$baseUrl/api/nasdaq/institutional-holdings/$symbol';
+  static String nasdaqDividends(String date) =>
+      '$baseUrl/api/nasdaq/dividends?date=$date';
   static String tradingAnalystNote(String symbol) =>
       '$baseUrl/api/trading/analyst-note/$symbol';
   static String tradingFundamentals(String symbol) =>
@@ -45,6 +53,15 @@ abstract final class ApiEndpoints {
   static String get tenXV2ChinaStocks    => '$baseUrl/api/trading/scanner/10x-v2/china';
   static String get tenXEuronextStocks   => '$baseUrl/api/trading/scanner/10x/euronext';
   static String get tenXV2EuronextStocks => '$baseUrl/api/trading/scanner/10x-v2/euronext';
+  // Wave 3 additions — Yahoo screener coverage confirmed live before building.
+  static String get tenXCanadaStocks     => '$baseUrl/api/trading/scanner/10x/canada';
+  static String get tenXV2CanadaStocks   => '$baseUrl/api/trading/scanner/10x-v2/canada';
+  static String get tenXAustraliaStocks  => '$baseUrl/api/trading/scanner/10x/australia';
+  static String get tenXV2AustraliaStocks => '$baseUrl/api/trading/scanner/10x-v2/australia';
+  static String get tenXBrazilStocks     => '$baseUrl/api/trading/scanner/10x/brazil';
+  static String get tenXV2BrazilStocks   => '$baseUrl/api/trading/scanner/10x-v2/brazil';
+  static String get tenXSingaporeStocks  => '$baseUrl/api/trading/scanner/10x/singapore';
+  static String get tenXV2SingaporeStocks => '$baseUrl/api/trading/scanner/10x-v2/singapore';
   static String get tenXV2Assets => '$baseUrl/api/trading/scanner/10x-v2/assets';
   static String get tenXV3Assets => '$baseUrl/api/trading/scanner/10x-v3/assets';
   static String get tenXV3CommoditiesAssets => '$baseUrl/api/trading/scanner/10x-v3/commodities';
@@ -70,6 +87,7 @@ abstract final class ApiEndpoints {
   static String get vixTermStructure => '$baseUrl/api/volatility/vix-term-structure';
 
   static String get usaDebt => '$baseUrl/api/usa-debt';
+  static String get debtComparison => '$baseUrl/api/economy/debt-comparison';
 
   static String get stockSearch => '$baseUrl/api/search';
 
@@ -93,8 +111,10 @@ abstract final class ApiEndpoints {
 
   static String get regimeSummary    => '$baseUrl/api/trading/regime-summary';
   static String get earningsCalendar => '$baseUrl/api/trading/earnings-calendar?days=15';
-  static String earningsCalendarDays(int days) =>
-      '$baseUrl/api/trading/earnings-calendar?days=$days';
+  static String earningsCalendarDays(int days, {String? country}) {
+    final base = '$baseUrl/api/trading/earnings-calendar?days=$days';
+    return country == null ? base : '$base&country=${Uri.encodeComponent(country)}';
+  }
   static String get correlation      => '$baseUrl/api/trading/correlation';
   static String advCorrelation({String window = '3m'}) =>
       '$baseUrl/api/trading/correlation/advanced?window=$window';

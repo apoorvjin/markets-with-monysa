@@ -14,6 +14,9 @@ class TreemapStock {
   final double? preMarketChangePercent;
   final double? postMarketPrice;
   final double? postMarketChangePercent;
+  // Overnight (Blue Ocean) session — only during 8pm–4am ET; change is vs close.
+  final double? overnightPrice;
+  final double? overnightChangePercent;
   // FX normalisation (US-005)
   final String nativeCurrency;  // "USD" | "GBP" | "JPY" | "HKD" | "INR"
   final double? marketCapUsd;   // null only when non-USD + FX fetch failed
@@ -41,6 +44,8 @@ class TreemapStock {
     this.preMarketChangePercent,
     this.postMarketPrice,
     this.postMarketChangePercent,
+    this.overnightPrice,
+    this.overnightChangePercent,
     this.nativeCurrency = 'USD',
     this.marketCapUsd,
     this.fxRateUsed,
@@ -67,6 +72,8 @@ class TreemapStock {
       preMarketChangePercent: n(json['preMarketChangePercent']),
       postMarketPrice: n(json['postMarketPrice']),
       postMarketChangePercent: n(json['postMarketChangePercent']),
+      overnightPrice: n(json['overnightPrice']),
+      overnightChangePercent: n(json['overnightChangePercent']),
       nativeCurrency: json['nativeCurrency'] as String? ?? 'USD',
       marketCapUsd: n(json['marketCapUsd']),
       fxRateUsed: n(json['fxRateUsed']),

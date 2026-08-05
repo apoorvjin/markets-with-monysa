@@ -3,6 +3,13 @@ import { AdminLeaderSchema, AdminOkSchema } from "@monysa/contracts";
 import { z } from "zod";
 
 const BroadcastResultSchema = AdminOkSchema.extend({ sent: z.number().optional(), failed: z.number().optional() });
+const EarningsRefreshResultSchema = AdminOkSchema.extend({
+  scrapeOutput: z.string().optional(),
+  convertOutput: z.string().optional(),
+  step: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+});
 import { useState } from "react";
 import { adminApi } from "../lib/api";
 import { queryClient } from "../lib/query";
@@ -24,6 +31,7 @@ const CACHE_TARGETS: { key: CacheTarget; label: string }[] = [
 export function OpsPage() {
   const [bustResult, setBustResult] = useState<Record<string, string>>({});
   const [ogeResult, setOgeResult] = useState<string | null>(null);
+  const [earningsRefreshResult, setEarningsRefreshResult] = useState<string | null>(null);
   const [broadcastTitle, setBroadcastTitle] = useState("");
   const [broadcastBody, setBroadcastBody] = useState("");
   const [broadcastUids, setBroadcastUids] = useState("");
@@ -51,6 +59,12 @@ export function OpsPage() {
     mutationFn: () => adminApi.post("/api/admin/oge/refresh", {}, AdminOkSchema),
     onSuccess: () => setOgeResult(`OGE pipeline triggered at ${new Date().toLocaleTimeString()}`),
     onError: (e) => setOgeResult(`Error: ${String(e)}`),
+  });
+
+  const earningsRefreshMutation = useMutation({
+    mutationFn: () => adminApi.post("/api/admin/earnings/refresh-snapshot", {}, EarningsRefreshResultSchema),
+    onSuccess: (data) => setEarningsRefreshResult(data.scrapeOutput ? `${data.scrapeOutput}\n${data.convertOutput ?? ""}` : "Refreshed."),
+    onError: (e) => setEarningsRefreshResult(`Error: ${String(e)}`),
   });
 
   const broadcastMutation = useMutation({
@@ -147,6 +161,35 @@ export function OpsPage() {
               {ogeMutation.isPending ? "Triggering…" : "Re-run Pipeline"}
             </button>
             {ogeResult && <div className="success-msg">{ogeResult}</div>}
+          </div>
+        </div>
+
+        {/* Global Earnings Snapshot */}
+        <div className="section">
+          <div className="section-header">Global Earnings Snapshot</div>
+          <div className="section-body">
+            <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Runs the local scrape + convert scripts and overwrites server/data/te_earnings_snapshot.json,
+              then busts the running server's cache so it picks up the new file immediately.
+              <strong> Local dev only</strong> — this endpoint 403s on the deployed Fly server by design,
+              so the actual request to Trading Economics always stays a one-off act on whoever's
+              machine is running this admin panel, never something the deployed server does on its own.
+            </p>
+            <button
+              className="btn btn-primary"
+              disabled={earningsRefreshMutation.isPending}
+              onClick={() => { setEarningsRefreshResult(null); earningsRefreshMutation.mutate(); }}
+            >
+              {earningsRefreshMutation.isPending ? "Refreshing…" : "Refresh Snapshot"}
+            </button>
+            {earningsRefreshResult && (
+              <pre
+                className={earningsRefreshMutation.isError ? "error-msg" : "success-msg"}
+                style={{ whiteSpace: "pre-wrap", fontSize: 12, marginTop: "var(--s2)" }}
+              >
+                {earningsRefreshResult}
+              </pre>
+            )}
           </div>
         </div>
 

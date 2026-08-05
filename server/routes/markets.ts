@@ -5,7 +5,10 @@ import { findPivots } from "../lib/pivots";
 import { computeIndicators } from "../lib/indicators";
 import type { OHLCVCandle } from "../providers/types";
 
-const COUNTRY_EXCHANGE_MAP: Record<string, { exchanges: string[]; region: string; suffix: string }> = {
+// Exported (not just used internally by /api/stocks/:countryCode below) so
+// /api/tariffs (economy.ts) can flag hasStockCoverage per country without
+// duplicating this list — see Wave 4's Country Detail correctness fix.
+export const COUNTRY_EXCHANGE_MAP: Record<string, { exchanges: string[]; region: string; suffix: string }> = {
   CN: { exchanges: ["SSE", "SZSE"], region: "China", suffix: ".SS" },
   KH: { exchanges: ["CSX"], region: "Cambodia", suffix: ".KH" },
   VN: { exchanges: ["HOSE", "HNX"], region: "Vietnam", suffix: ".VN" },

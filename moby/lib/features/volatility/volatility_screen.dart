@@ -185,7 +185,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
             Tab(text: 'Adv Correlation'),
             Tab(text: 'Economic Calendar'),
             Tab(text: 'Crisis'),
-            Tab(text: 'Debt'),
+            Tab(text: 'US Debt'),
           ],
         ),
       ),
@@ -599,6 +599,31 @@ final _eventsProvider =
   );
 });
 
+typedef _DivResult = ({String date, List<DividendRow> rows});
+
+/// Upcoming ex-dividends for the next business day (Nasdaq). Supplementary —
+/// swallows errors to [] so the calendar tab is never blocked by it.
+final _dividendsProvider = FutureProvider.autoDispose<_DivResult>((ref) async {
+  ref.keepAlive();
+  var day = DateTime.now().add(const Duration(days: 1));
+  while (day.weekday == DateTime.saturday || day.weekday == DateTime.sunday) {
+    day = day.add(const Duration(days: 1));
+  }
+  final date = '${day.year.toString().padLeft(4, '0')}-'
+      '${day.month.toString().padLeft(2, '0')}-'
+      '${day.day.toString().padLeft(2, '0')}';
+  try {
+    final data = await ApiClient.instance.get(ApiEndpoints.nasdaqDividends(date))
+        as Map<String, dynamic>;
+    final rows = (data['rows'] as List? ?? [])
+        .map((e) => DividendRow.fromJson(e as Map<String, dynamic>))
+        .toList();
+    return (date: date, rows: rows);
+  } catch (_) {
+    return (date: date, rows: <DividendRow>[]);
+  }
+});
+
 Color _categoryColor(String category, AppPalette c) {
   switch (category) {
     case 'Fed':
@@ -619,6 +644,83 @@ const _kMonthNames = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
+class _ExDividendsCard extends StatelessWidget {
+  const _ExDividendsCard({required this.result});
+  final _DivResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final rows = result.rows;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.surfaceCard,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+                AppSpacing.s4, AppSpacing.s4, AppSpacing.s4, AppSpacing.s2),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Ex-Dividends',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                Text('Going ex-dividend ${result.date} · Nasdaq',
+                    style: AppTypography.xs.copyWith(color: c.textFaint)),
+              ],
+            ),
+          ),
+          for (var i = 0; i < rows.length && i < 25; i++)
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: c.border.withAlpha(120)),
+                ),
+              ),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 64,
+                    child: Text(rows[i].symbol,
+                        style: AppTypography.labelMd.copyWith(
+                            color: c.accent, fontWeight: FontWeight.w700)),
+                  ),
+                  Expanded(
+                    child: Text(rows[i].companyName,
+                        style:
+                            AppTypography.xs.copyWith(color: c.textSecondary),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  const SizedBox(width: AppSpacing.s3),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text('\$${rows[i].rate}',
+                          style: AppTypography.labelSm
+                              .copyWith(color: c.textPrimary)),
+                      if (rows[i].paymentDate.isNotEmpty)
+                        Text('pay ${rows[i].paymentDate}',
+                            style:
+                                AppTypography.xs.copyWith(color: c.textMuted)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MacroCalendarTab extends ConsumerWidget {
   const _MacroCalendarTab();
 
@@ -626,6 +728,7 @@ class _MacroCalendarTab extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
     final eventsAsync = ref.watch(_eventsProvider);
+    final dividends = ref.watch(_dividendsProvider).valueOrNull;
 
     Widget fallback() => MaxWidthLayout(
           child: ListView(
@@ -688,6 +791,10 @@ class _MacroCalendarTab extends ConsumerWidget {
                       ],
                     ),
                     const SizedBox(height: AppSpacing.s4),
+                    if (dividends != null && dividends.rows.isNotEmpty) ...[
+                      _ExDividendsCard(result: dividends),
+                      const SizedBox(height: AppSpacing.s4),
+                    ],
                     ...months.map((month) {
                       final parts = month.split('-');
                       final label =

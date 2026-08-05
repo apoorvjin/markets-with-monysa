@@ -1,98 +1,62 @@
 #!/usr/bin/env bash
-# Starts the admin frontend (port 5175) and the backend (port 5001) in parallel.
-# If the backend is already running on :5001, it is reused and not restarted.
-# Logs are colour-coded: [API] in cyan, [ADMIN] in red.
-# Press Ctrl+C to stop processes started by this script.
+# Starts the admin/ops portal frontend (port 5175). It always talks directly
+# to the production Fly API (https://monysa-api.fly.dev) — see
+# frontend/apps/admin/src/lib/api.ts — so no local backend is started here.
+# Login requires the ADMIN_SECRET configured on the deployed Fly app
+# (`fly secrets set ADMIN_SECRET=...`), not anything in a local .env.
+# Any existing process on the port is killed first, then it's launched fresh.
+# Press Ctrl+C to stop.
 
 set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-CYAN='\033[0;36m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
-GREEN='\033[0;32m'
 BOLD='\033[1m'
 RESET='\033[0m'
 
-# ── Prefixed log streaming ─────────────────────────────────────────────────────
-
-prefix_output() {
-  local label="$1" color="$2"
-  while IFS= read -r line; do
-    printf "${color}[%s]${RESET} %s\n" "$label" "$line"
-  done
-}
-
 # ── Cleanup on exit ────────────────────────────────────────────────────────────
 
-API_PID=""
 ADMIN_PID=""
 
 cleanup() {
   echo ""
   echo "Stopping…"
-  [ -n "$API_PID" ]   && kill "$API_PID"   2>/dev/null
   [ -n "$ADMIN_PID" ] && kill "$ADMIN_PID" 2>/dev/null
-  [ -n "$API_PID" ]   && wait "$API_PID"   2>/dev/null
   [ -n "$ADMIN_PID" ] && wait "$ADMIN_PID" 2>/dev/null
   exit 0
 }
 trap cleanup INT TERM
 
-# ── Check ADMIN_SECRET ─────────────────────────────────────────────────────────
+# ── Free port 5175 ─────────────────────────────────────────────────────────────
 
-ENV_FILE="$ROOT/.env"
-ADMIN_SECRET_SET=false
+kill_port() {
+  local port="$1"
+  local pids
+  pids="$(lsof -ti:"$port" 2>/dev/null)" || true
+  if [ -n "$pids" ]; then
+    echo -e "${YELLOW}⚠  Port $port is in use — killing existing process(es).${RESET}"
+    kill $pids 2>/dev/null || true
+    sleep 1
+    pids="$(lsof -ti:"$port" 2>/dev/null)" || true
+    [ -n "$pids" ] && { kill -9 $pids 2>/dev/null || true; }
+  fi
+  return 0
+}
 
-if [ -f "$ENV_FILE" ] && grep -q "^ADMIN_SECRET=" "$ENV_FILE" 2>/dev/null; then
-  SECRET_VAL="$(grep "^ADMIN_SECRET=" "$ENV_FILE" | cut -d= -f2- | tr -d '[:space:]')"
-  [ -n "$SECRET_VAL" ] && ADMIN_SECRET_SET=true
-fi
-
-if [ "$ADMIN_SECRET_SET" = false ]; then
-  echo -e "${YELLOW}⚠  ADMIN_SECRET is not set in .env${RESET}"
-  echo -e "   Add it to enable admin login:"
-  echo -e "   ${BOLD}echo 'ADMIN_SECRET=your-secret-here' >> .env${RESET}"
-  echo ""
-fi
-
-# ── Check port 5175 ───────────────────────────────────────────────────────────
-
-if lsof -ti:5175 &>/dev/null; then
-  echo -e "${YELLOW}⚠  Port 5175 is already in use.${RESET}"
-  echo -e "   Run ${BOLD}lsof -ti:5175 | xargs kill${RESET} to free it, then retry."
-  echo ""
-  exit 1
-fi
-
-# ── Start API server (skip if already running) ────────────────────────────────
-
-API_REUSED=false
-
-if lsof -ti:5001 &>/dev/null; then
-  echo -e "${GREEN}✓  API already running on :5001 — reusing it.${RESET}"
-  API_REUSED=true
-else
-  (cd "$ROOT" && npm run server:dev 2>&1) | prefix_output "API  " "$CYAN" &
-  API_PID=$!
-fi
+kill_port 5175
 
 # ── Start admin Vite dev server ───────────────────────────────────────────────
 
-(cd "$ROOT/frontend" && pnpm --filter @monysa/admin dev -- --strictPort 2>&1) | prefix_output "ADMIN" "$RED" &
+(cd "$ROOT/frontend" && pnpm --filter @monysa/admin dev -- --strictPort) &
 ADMIN_PID=$!
 
-# ── Print URLs ────────────────────────────────────────────────────────────────
+# ── Print URL ──────────────────────────────────────────────────────────────────
 
 echo ""
 echo -e "${BOLD}  Monysa Admin${RESET}"
-if [ "$API_REUSED" = true ]; then
-  echo -e "  API    → ${CYAN}http://localhost:5001${RESET}  ${GREEN}(reused)${RESET}"
-else
-  echo -e "  API    → ${CYAN}http://localhost:5001${RESET}"
-fi
-echo -e "  Admin  → ${RED}http://localhost:5175${RESET}"
+echo -e "  Admin → ${RED}http://localhost:5175${RESET}  (talks to production: https://monysa-api.fly.dev)"
 echo -e "  Press ${BOLD}Ctrl+C${RESET} to stop."
 echo ""
 
@@ -101,9 +65,4 @@ if command -v open &>/dev/null; then
   (sleep 2 && open "http://localhost:5175") &
 fi
 
-# Wait only on PIDs we own.
-if [ "$API_REUSED" = true ]; then
-  wait "$ADMIN_PID"
-else
-  wait "$API_PID" "$ADMIN_PID"
-fi
+wait "$ADMIN_PID"

@@ -1,5 +1,7 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
@@ -265,15 +267,53 @@ class _AuthScreenState extends State<AuthScreen> {
                 ),
               ),
               const SizedBox(height: AppSpacing.s7),
-              Text(
-                'By continuing you agree to our Terms of Service\nand Privacy Policy.',
-                style: AppTypography.xs.copyWith(color: c.textMuted),
-                textAlign: TextAlign.center,
-              ),
+              _LegalNoticeText(c: c),
               const SizedBox(height: AppSpacing.s5),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _LegalNoticeText extends StatelessWidget {
+  const _LegalNoticeText({required this.c});
+
+  final AppPalette c;
+
+  Future<void> _open(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final linkStyle = AppTypography.xs.copyWith(color: c.accent);
+    final baseStyle = AppTypography.xs.copyWith(color: c.textMuted);
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        style: baseStyle,
+        children: [
+          const TextSpan(text: 'By continuing you agree to our '),
+          TextSpan(
+            text: 'Terms of Use',
+            style: linkStyle,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _open('https://www.finbrio.net/terms'),
+          ),
+          const TextSpan(text: ' and '),
+          TextSpan(
+            text: 'Privacy Policy',
+            style: linkStyle,
+            recognizer: TapGestureRecognizer()
+              ..onTap = () => _open('https://www.finbrio.net/privacy'),
+          ),
+          const TextSpan(text: '.'),
+        ],
       ),
     );
   }

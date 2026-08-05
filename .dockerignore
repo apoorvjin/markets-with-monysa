@@ -1,7 +1,16 @@
 node_modules/
+# data-source-kit ships its .ts source (imported by the Wire route via tsx); its
+# dev-only node_modules (typescript/tsx/@types) and build output aren't needed at
+# runtime — nested node_modules isn't caught by the top-level rule above.
+data-source-kit/node_modules/
+data-source-kit/dist/
 moby/
 .expo/
 server_dist/
 build/
 .git/
 *.md
+# The admin/ops portal must never ship inside the Fly API image — it's a
+# local-only tool that talks directly to production (see admin.sh). This is
+# a defense-in-depth backstop for the removed server/index.ts static mount.
+frontend/apps/admin/dist/

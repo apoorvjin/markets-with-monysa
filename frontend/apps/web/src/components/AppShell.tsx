@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { getTheme, toggleTheme, type Theme } from "../lib/theme";
 import { CommandPalette } from "./CommandPalette";
 import { MarketStatus } from "./MarketStatus";
+import { useWireAlertRuntime, WireAlertBanner, WireAlertBell } from "./WireAlerts";
 
 const NAV = [
   {
@@ -59,6 +60,21 @@ const NAV = [
       </svg>
     ),
   },
+  {
+    to: "/wire",
+    label: "Wire",
+    icon: (
+      <svg className="nav-link-icon" viewBox="0 0 16 16" fill="none" aria-hidden>
+        <circle cx="3.5" cy="12.5" r="1.5" fill="currentColor" />
+        <path
+          d="M2 8.5A5.5 5.5 0 0 1 7.5 14M2 4.5A9.5 9.5 0 0 1 11.5 14"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    ),
+  },
 ] as const;
 
 export function AppShell() {
@@ -66,6 +82,9 @@ export function AppShell() {
   const [theme, setThemeState] = useState<Theme>(() => getTheme());
   const mainRef = useRef<HTMLElement>(null);
   const progressBarRef = useRef<HTMLSpanElement>(null);
+
+  // Poll the breaking feed app-wide and drive the in-app alert banner.
+  useWireAlertRuntime();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -129,6 +148,7 @@ export function AppShell() {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <WireAlertBell />
           <button
             type="button"
             className="kbd-hint"
@@ -151,6 +171,7 @@ export function AppShell() {
         </div>
       </aside>
       <main className="main" id="main-content" ref={mainRef}>
+        <WireAlertBanner />
         <Outlet />
       </main>
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />

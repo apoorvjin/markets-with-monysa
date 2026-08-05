@@ -50,6 +50,22 @@ final _multibaggersProvider = FutureProvider.autoDispose
         return v2
             ? TradingRepository.instance.fetchTenXV2EuronextStocks()
             : TradingRepository.instance.fetchTenXEuronextStocks();
+      case 'canada':
+        return v2
+            ? TradingRepository.instance.fetchTenXV2CanadaStocks()
+            : TradingRepository.instance.fetchTenXCanadaStocks();
+      case 'australia':
+        return v2
+            ? TradingRepository.instance.fetchTenXV2AustraliaStocks()
+            : TradingRepository.instance.fetchTenXAustraliaStocks();
+      case 'brazil':
+        return v2
+            ? TradingRepository.instance.fetchTenXV2BrazilStocks()
+            : TradingRepository.instance.fetchTenXBrazilStocks();
+      case 'singapore':
+        return v2
+            ? TradingRepository.instance.fetchTenXV2SingaporeStocks()
+            : TradingRepository.instance.fetchTenXSingaporeStocks();
       default:
         return v2
             ? TradingRepository.instance.fetchTenXV2IndiaStocks()
@@ -83,6 +99,10 @@ const _foreignSuffixes = [
   '.HK', // hongkong
   '.SS', '.SZ', // china
   '.PA', '.AS', '.BR', '.MI', '.OL', '.LS', '.DE', '.F', // euronext (+ DE)
+  '.TO', // canada
+  '.AX', // australia
+  '.SA', // brazil
+  '.SI', // singapore
 ];
 const _foreignExchanges = {
   'NSI', 'BSE', // india
@@ -91,6 +111,10 @@ const _foreignExchanges = {
   'HKG', // hongkong
   'SHH', 'SHZ', // china
   'EPA', 'AMS', 'BRU', 'MIL', 'OSL', 'GER', 'FRA', // euronext (+ DE)
+  'TOR', // canada — confirmed live via /api/search (Shopify → SHOP.TO / TOR)
+  'ASX', // australia — confirmed live (BHP.AX / ASX)
+  'SAO', // brazil — confirmed live (PETR4.SA / SAO)
+  'SES', // singapore — confirmed live (D05.SI / SES)
 };
 
 bool _isStockForCountry(StockSearchResult r, String country) {
@@ -119,6 +143,14 @@ bool _isStockForCountry(StockSearchResult r, String country) {
           sym.endsWith('.DE') || sym.endsWith('.F') ||
           exc == 'EPA' || exc == 'AMS' || exc == 'BRU' ||
           exc == 'MIL' || exc == 'OSL' || exc == 'GER' || exc == 'FRA';
+    case 'canada':
+      return sym.endsWith('.TO') || exc == 'TOR';
+    case 'australia':
+      return sym.endsWith('.AX') || exc == 'ASX';
+    case 'brazil':
+      return sym.endsWith('.SA') || exc == 'SAO';
+    case 'singapore':
+      return sym.endsWith('.SI') || exc == 'SES';
     case 'us':
     default:
       // Class suffixes like .A/.B are fine — only reject symbols/exchanges
@@ -136,6 +168,10 @@ String _countryLabel(String country) => const {
   'hongkong': 'Hong Kong',
   'china': 'China',
   'euronext': 'Euronext',
+  'canada': 'Canada',
+  'australia': 'Australia',
+  'brazil': 'Brazil',
+  'singapore': 'Singapore',
 }[country] ?? 'Unknown';
 
 // ── Standalone screen (route: /trading/multibaggers) ─────────────────────────
@@ -605,6 +641,26 @@ class _ControlRow extends StatelessWidget {
                 label: '🇪🇺 Euronext',
                 active: country == 'euronext',
                 onTap: () => onCountry('euronext'),
+              ),
+              AppChip(
+                label: '🇨🇦 Canada',
+                active: country == 'canada',
+                onTap: () => onCountry('canada'),
+              ),
+              AppChip(
+                label: '🇦🇺 Australia',
+                active: country == 'australia',
+                onTap: () => onCountry('australia'),
+              ),
+              AppChip(
+                label: '🇧🇷 Brazil',
+                active: country == 'brazil',
+                onTap: () => onCountry('brazil'),
+              ),
+              AppChip(
+                label: '🇸🇬 Singapore',
+                active: country == 'singapore',
+                onTap: () => onCountry('singapore'),
               ),
             ],
           ),

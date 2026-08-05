@@ -127,7 +127,11 @@ class _SectorTreemapState extends State<SectorTreemap> {
                 child: GestureDetector(
                   onTapUp: (details) =>
                       _showTooltipAt(tile.stock, details.globalPosition),
-                  child: _StockTile(stock: tile.stock, rect: tile.rect),
+                  child: _StockTile(
+                    stock: tile.stock,
+                    rect: tile.rect,
+                    marketState: widget.marketState,
+                  ),
                 ),
               ),
             // Sector boundary outlines — drawn on top of tiles in the screen
@@ -161,6 +165,31 @@ Color colorForChange(double pct) {
     final t = (-pct / 3.0).clamp(0.0, 1.0);
     return Color.lerp(const Color(0xFF5C2026), const Color(0xFF8A1A1A), t)!;
   }
+}
+
+// Live pre/post-market change (vs the regular close) for the active session,
+// or null outside extended hours. Matches _MarketStatusPill's session mapping.
+double? sessionDeltaPct(String? marketState, TreemapStock s) {
+  switch (marketState) {
+    case 'OVERNIGHT':
+      return s.overnightChangePercent;
+    case 'PRE':
+    case 'PREPRE':
+      return s.preMarketChangePercent;
+    case 'POST':
+    case 'POSTPOST':
+      return s.postMarketChangePercent;
+    default:
+      return null;
+  }
+}
+
+// Regular-session %change, with the live pre/post delta appended in brackets
+// during extended hours, e.g. "+2.93% (+0.08%)".
+String _tilePctLabel(TreemapStock s, String? marketState) {
+  final base = _fmtPct(s.changePercent);
+  final delta = sessionDeltaPct(marketState, s);
+  return delta == null ? base : '$base (${_fmtPct(delta)})';
 }
 
 // ── Layout types ──────────────────────────────────────────────────────────────
@@ -357,7 +386,8 @@ class _SectorHeader extends StatelessWidget {
 class _StockTile extends StatelessWidget {
   final TreemapStock stock;
   final Rect rect;
-  const _StockTile({required this.stock, required this.rect});
+  final String? marketState;
+  const _StockTile({required this.stock, required this.rect, this.marketState});
 
   @override
   Widget build(BuildContext context) {
@@ -397,7 +427,7 @@ class _StockTile extends StatelessWidget {
                   ),
                   if (showChange)
                     Text(
-                      _fmtPct(stock.changePercent),
+                      _tilePctLabel(stock, marketState),
                       maxLines: 1,
                       style: TextStyle(
                         fontSize: 11,
@@ -433,9 +463,13 @@ class _TooltipCard extends StatelessWidget {
         stock.fiftyTwoWeekHigh != null && stock.fiftyTwoWeekLow != null;
     final hasSparkline =
         stock.sparkline != null && stock.sparkline!.length >= 2;
+    final sessionOvernight = marketState == 'OVERNIGHT';
     final sessionPost = marketState == 'POST' || marketState == 'POSTPOST';
     final sessionPre = marketState == 'PRE';
-    final hasExtended = (sessionPost &&
+    final hasExtended = (sessionOvernight &&
+            stock.overnightPrice != null &&
+            stock.overnightChangePercent != null) ||
+        (sessionPost &&
             stock.postMarketPrice != null &&
             stock.postMarketChangePercent != null) ||
         (sessionPre &&
@@ -676,12 +710,24 @@ class _TooltipCard extends StatelessWidget {
   }
 
   Widget _extendedRow(AppPalette c) {
+    final isOvernight = marketState == 'OVERNIGHT';
     final isPost = marketState == 'POST' || marketState == 'POSTPOST';
-    final price = isPost ? stock.postMarketPrice! : stock.preMarketPrice!;
-    final pct = isPost
-        ? (stock.postMarketChangePercent ?? 0)
-        : (stock.preMarketChangePercent ?? 0);
-    final label = isPost ? 'After-hours' : 'Pre-market';
+    final double price;
+    final double pct;
+    final String label;
+    if (isOvernight) {
+      price = stock.overnightPrice!;
+      pct = stock.overnightChangePercent ?? 0;
+      label = 'Overnight';
+    } else if (isPost) {
+      price = stock.postMarketPrice!;
+      pct = stock.postMarketChangePercent ?? 0;
+      label = 'After-hours';
+    } else {
+      price = stock.preMarketPrice!;
+      pct = stock.preMarketChangePercent ?? 0;
+      label = 'Pre-market';
+    }
     final up = pct >= 0;
     return Row(
       children: [

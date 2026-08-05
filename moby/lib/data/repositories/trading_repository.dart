@@ -249,6 +249,39 @@ class TradingRepository {
     return NewsResult(articles: articles, aggregateSentiment: agg);
   }
 
+  /// Official company press releases via Nasdaq. Degrades to [] on failure —
+  /// the endpoint itself never 500s, so the News tab stays intact.
+  Future<List<NasdaqPressRelease>> fetchNasdaqPressReleases(String symbol) async {
+    final data = await ApiClient.instance.get(ApiEndpoints.nasdaqPressReleases(symbol));
+    return (data['items'] as List? ?? [])
+        .map((e) => NasdaqPressRelease.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Per-symbol insider (Form 4) transactions via Nasdaq. Degrades to [].
+  Future<List<InsiderTrade>> fetchInsiderTrades(String symbol) async {
+    final data = await ApiClient.instance.get(ApiEndpoints.nasdaqInsiderTrades(symbol));
+    return (data['trades'] as List? ?? [])
+        .map((e) => InsiderTrade.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Per-symbol institutional (13F) holders via Nasdaq. Degrades to [].
+  Future<List<InstitutionalHolder>> fetchInstitutionalHoldings(String symbol) async {
+    final data = await ApiClient.instance.get(ApiEndpoints.nasdaqInstitutionalHoldings(symbol));
+    return (data['holders'] as List? ?? [])
+        .map((e) => InstitutionalHolder.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Nasdaq dividend calendar for a given date (YYYY-MM-DD). Degrades to [].
+  Future<List<DividendRow>> fetchDividends(String date) async {
+    final data = await ApiClient.instance.get(ApiEndpoints.nasdaqDividends(date));
+    return (data['rows'] as List? ?? [])
+        .map((e) => DividendRow.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
   // Sentinel returned when the server rejects due to plan limits.
   // The UI checks for this value to show the upgrade sheet instead of an error.
   static const planLimitSentinel = '__plan_limit__';
@@ -317,6 +350,30 @@ class TradingRepository {
 
   Future<List<TenXScanResult>> fetchTenXV2EuronextStocks() =>
       _cachedFetch('euronext-v2', ApiEndpoints.tenXV2EuronextStocks);
+
+  Future<List<TenXScanResult>> fetchTenXCanadaStocks() =>
+      _cachedFetch('canada-v1', ApiEndpoints.tenXCanadaStocks);
+
+  Future<List<TenXScanResult>> fetchTenXV2CanadaStocks() =>
+      _cachedFetch('canada-v2', ApiEndpoints.tenXV2CanadaStocks);
+
+  Future<List<TenXScanResult>> fetchTenXAustraliaStocks() =>
+      _cachedFetch('australia-v1', ApiEndpoints.tenXAustraliaStocks);
+
+  Future<List<TenXScanResult>> fetchTenXV2AustraliaStocks() =>
+      _cachedFetch('australia-v2', ApiEndpoints.tenXV2AustraliaStocks);
+
+  Future<List<TenXScanResult>> fetchTenXBrazilStocks() =>
+      _cachedFetch('brazil-v1', ApiEndpoints.tenXBrazilStocks);
+
+  Future<List<TenXScanResult>> fetchTenXV2BrazilStocks() =>
+      _cachedFetch('brazil-v2', ApiEndpoints.tenXV2BrazilStocks);
+
+  Future<List<TenXScanResult>> fetchTenXSingaporeStocks() =>
+      _cachedFetch('singapore-v1', ApiEndpoints.tenXSingaporeStocks);
+
+  Future<List<TenXScanResult>> fetchTenXV2SingaporeStocks() =>
+      _cachedFetch('singapore-v2', ApiEndpoints.tenXV2SingaporeStocks);
 
   Future<List<TenXScanResult>> fetchTenXV3Assets() =>
       _cachedFetch('assets-v3', ApiEndpoints.tenXV3Assets);

@@ -13,12 +13,35 @@ import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/shimmer_list.dart';
 
+// Same regional-indicator-symbol conversion as TariffsData's `flag` getter
+// (data/sources/tariffs_data.dart) — mirrored here since that one is bound
+// to a different model's field, not exposed as a standalone utility.
+String _flagEmoji(String countryCode) {
+  if (countryCode.length != 2) return '';
+  const base = 0x1F1E6 - 0x41;
+  return String.fromCharCode(base + countryCode.codeUnitAt(0)) +
+      String.fromCharCode(base + countryCode.codeUnitAt(1));
+}
+
+typedef _EarningsScope = ({int days, String? country});
+typedef _EarningsResult = ({
+  List<Map<String, dynamic>> items,
+  List<Map<String, dynamic>> countries,
+  bool available,
+});
+
 final _earningsCalendarProvider = FutureProvider.autoDispose
-    .family<List<Map<String, dynamic>>, int>((ref, days) async {
+    .family<_EarningsResult, _EarningsScope>((ref, scope) async {
   ref.keepAlive(); // calendar data changes daily, fine for a session
-  final data = await ApiClient.instance.get(ApiEndpoints.earningsCalendarDays(days))
-      as Map<String, dynamic>;
-  return (data['items'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+  final data = await ApiClient.instance.get(
+    ApiEndpoints.earningsCalendarDays(scope.days, country: scope.country),
+  ) as Map<String, dynamic>;
+  return (
+    items: (data['items'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+    countries: (data['countries'] as List?)?.cast<Map<String, dynamic>>() ?? [],
+    // Absent (null) on the default US path, where it's always effectively true.
+    available: data['available'] as bool? ?? true,
+  );
 });
 
 class EarningsCalendarTab extends ConsumerStatefulWidget {
@@ -34,6 +57,10 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
   String _query = '';
   bool _megaOnly = false;
   String? _sector;
+  // null = default US (sp500) path, unchanged; a country code switches to the
+  // Trading Economics snapshot path, gated server-side by a Remote Config toggle.
+  String? _country;
+  String? _countryDisplayName; // set alongside _country when a chip is tapped
   final _searchCtrl = TextEditingController();
 
   @override
@@ -45,30 +72,40 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final async = ref.watch(_earningsCalendarProvider(_days));
+    final scope = (days: _days, country: _country);
+    final async = ref.watch(_earningsCalendarProvider(scope));
 
-    // Sectors present in the window drive the filter chips.
+    final result = async.asData?.value;
+    // Sectors present in the window drive the filter chips (empty for
+    // country-scoped rows — sector isn't available from the TE snapshot).
     final sectors = <String>{
-      for (final e in (async.asData?.value ?? const <Map<String, dynamic>>[]))
+      for (final e in (result?.items ?? const <Map<String, dynamic>>[]))
         if ((e['sector'] as String? ?? '').isNotEmpty) e['sector'] as String,
     }.toList()
       ..sort();
+    final countries = result?.countries ?? const <Map<String, dynamic>>[];
 
     return MaxWidthLayout(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _buildScopeBar(c, sectors),
+          _buildScopeBar(c, sectors, countries),
           Expanded(
             child: async.when(
               loading: () =>
                   const ShimmerList(count: 8, type: ShimmerRowType.signal),
               error: (e, _) => ErrorView(
                 message: 'Failed to load earnings calendar',
-                onRetry: () =>
-                    ref.invalidate(_earningsCalendarProvider(_days)),
+                onRetry: () => ref.invalidate(_earningsCalendarProvider(scope)),
               ),
-              data: (items) => _buildBody(context, c, items),
+              data: (result) => result.available
+                  ? _buildBody(context, c, result.items)
+                  : const EmptyView(
+                      icon: Icons.public_off_outlined,
+                      title: 'Not available yet',
+                      body:
+                          'Global earnings data isn\'t available yet for this country.',
+                    ),
             ),
           ),
         ],
@@ -76,13 +113,44 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
     );
   }
 
-  Widget _buildScopeBar(AppPalette c, List<String> sectors) {
+  Widget _buildScopeBar(
+      AppPalette c, List<String> sectors, List<Map<String, dynamic>> countries) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(
           AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Wrap(
+            spacing: AppSpacing.s2,
+            runSpacing: AppSpacing.s2,
+            children: [
+              AppChip(
+                label: '🇺🇸 US',
+                active: _country == null,
+                onTap: () => setState(() {
+                  _country = null;
+                  _countryDisplayName = null;
+                }),
+                textStyle: AppTypography.labelSm,
+                animated: true,
+              ),
+              for (final cty in countries)
+                AppChip(
+                  label:
+                      '${_flagEmoji(cty['code'] as String? ?? '')} ${cty['name'] as String? ?? cty['code'] as String? ?? ''}'
+                          .trim(),
+                  active: _country == cty['code'],
+                  onTap: () => setState(() {
+                    _country = cty['code'] as String?;
+                    _countryDisplayName = cty['name'] as String?;
+                  }),
+                  textStyle: AppTypography.labelSm,
+                  animated: true,
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s2),
           Wrap(
             spacing: AppSpacing.s2,
             runSpacing: AppSpacing.s2,
@@ -174,11 +242,12 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
   Widget _buildBody(
       BuildContext context, AppPalette c, List<Map<String, dynamic>> items) {
     if (items.isEmpty) {
-      return const EmptyView(
+      return EmptyView(
         icon: Icons.event_outlined,
         title: 'No upcoming earnings',
-        body:
-            'No S&P 500 earnings reports are scheduled for this window. Try a longer range or check back closer to end of quarter.',
+        body: _country == null
+            ? 'No S&P 500 earnings reports are scheduled for this window. Try a longer range or check back closer to end of quarter.'
+            : 'No earnings reports are scheduled for this window. Try a longer range.',
       );
     }
 
@@ -265,7 +334,8 @@ class _EarningsCalendarTabState extends ConsumerState<EarningsCalendarTab> {
         busiestDate = date;
       }
     });
-    final base = '$count companies reporting · S&P 500';
+    final scopeLabel = _country == null ? 'S&P 500' : (_countryDisplayName ?? _country!);
+    final base = '$count companies reporting · $scopeLabel';
     if (busiestDate == null || grouped.length < 2) return base;
     return '$base · Busiest ${_formatDateLabel(busiestDate!)} ($busiestN)';
   }
@@ -434,7 +504,7 @@ class _EarningsRow extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(AppRadius.md),
           onTap: () => context.push(
-              '/asset/$symbol?name=${Uri.encodeComponent(name)}'),
+              '/asset/${Uri.encodeComponent(symbol)}?name=${Uri.encodeComponent(name)}'),
           child: Row(
             children: [
               Container(

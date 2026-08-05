@@ -11,6 +11,8 @@ export interface TreemapDatum {
   group?: string;
   /** draws a gold ring — "strong 30-min buying volume" (US-002) */
   buySignal?: boolean;
+  /** live pre/post-market delta (vs regular close), shown in brackets */
+  extraChange?: number | null;
 }
 
 interface Rect {
@@ -263,7 +265,10 @@ export function CanvasTreemap(props: {
             ctx.fillStyle = "rgba(255,255,255,0.75)";
             ctx.font = `500 ${fontSize * 0.78}px Inter, sans-serif`;
             const sign = p.datum.change > 0 ? "+" : "";
-            ctx.fillText(`${sign}${p.datum.change.toFixed(2)}%`, cx, cy + fontSize * 0.65, p.w - 4);
+            const extra = p.datum.extraChange;
+            const extraStr =
+              extra != null ? ` (${extra > 0 ? "+" : ""}${extra.toFixed(2)}%)` : "";
+            ctx.fillText(`${sign}${p.datum.change.toFixed(2)}%${extraStr}`, cx, cy + fontSize * 0.65, p.w - 4);
           }
         }
       }
@@ -390,6 +395,13 @@ export function CanvasTreemap(props: {
           <div className={hovered.change >= 0 ? "num-up" : "num-down"}>
             {hovered.change > 0 ? "+" : ""}
             {hovered.change.toFixed(2)}%
+            {hovered.extraChange != null && (
+              <span style={{ color: "var(--text-secondary)" }}>
+                {" "}
+                ({hovered.extraChange > 0 ? "+" : ""}
+                {hovered.extraChange.toFixed(2)}%)
+              </span>
+            )}
           </div>
         </div>
       )}

@@ -6,3 +6,5 @@ export * from "./heatmap";
 export * from "./scanner";
 export * from "./admin";
 export * from "./etf";
+export * from "./wire";
+export * from "./intel";

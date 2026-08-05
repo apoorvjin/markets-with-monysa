@@ -13,17 +13,21 @@
 import { Router, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { Redis } from "@upstash/redis";
+import { readFile } from "fs/promises";
+import { resolve } from "path";
 import { adminFirestore } from "./lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { z } from "zod";
 import pLimit from "p-limit";
 import { yahooProvider } from "./providers";
+import { fetchSpotDaily, twelveDataConfigured, type SpotDaily } from "./providers/twelvedata";
 import { devicePlanMap, getDevicePlan, isPro } from "./plan-enforcement";
 import { fetchSp500Constituents, fetchYahooQuoteSummary, fetchYahooQuoteSummaryBatch } from "./routes/heatmap";
 import { INDEX_SYMBOLS } from "./data/index_constituents";
 import { fetchInsiderClusters, KNOWN_NAMES } from "./routes/quiver";
 import { fetchBatch } from "./routes/shared";
 import { isLeader } from "./lib/leader";
+import { getRemoteConfigFlag } from "./lib/remote-config-flags";
 import {
   CORRELATION_FIXED_ASSETS,
   CORRELATION_STOCK_POOLS,
@@ -212,8 +216,58 @@ interface PriceEntry {
 // Bounded to TRADING_ASSETS.length (39 symbols) — no eviction needed.
 export const latestPrices = new Map<string, PriceEntry>();
 
+// ─── Spot Overlay (Twelve Data) ──────────────────────────────────────────────
+// Yahoo only serves these commodities as FUTURES (front-month, priced above spot by
+// the cost of carry). The Trading tab should show/trade on SPOT, so we overlay a real
+// spot feed keyed by the SAME Yahoo symbol. Markets tab (/api/futures/*) is untouched.
+// Verified 2026-08: on the free Twelve Data plan, only XAU/USD (gold) is accessible;
+// XAG/USD (silver), WTI/USD (oil) and HG1 (copper) require the Grow/Venture paid plan.
+// Gold is the headline case (futures ran ~50 above spot). Enable the rest by uncommenting
+// once on a paid plan (and confirm Brent's real symbol — "BRENT/USD" was rejected).
+const SPOT_OVERLAY: Record<string, string> = {
+  "GC=F": "XAU/USD",   // Gold — free plan ✓
+  // "SI=F": "XAG/USD",   // Silver — paid plan
+  // "CL=F": "WTI/USD",   // Crude Oil (WTI) — paid plan
+  // "HG=F": "HG1",       // Copper — paid plan
+};
+
+// Live spot price per Yahoo symbol (populated by pollSpotPrices; empty without a TD key).
+const spotPrices = new Map<string, { price: number; change: number; changePercent: number; updatedAt: number }>();
+// Cached daily spot candles per Yahoo symbol — reused for 1d signal indicators so the
+// signal is computed on spot (not futures) history for these assets.
+const spotDailyCandles = new Map<string, OHLCV[]>();
+
+/** True when this symbol currently has a live spot price to serve instead of futures. */
+function hasSpot(symbol: string): boolean {
+  return spotPrices.has(symbol);
+}
+
+/** What kind of price we're serving for a symbol — drives the UI "Spot"/"Futures" tag. */
+function priceTypeFor(symbol: string): "spot" | "futures" | null {
+  if (hasSpot(symbol)) return "spot";
+  if (symbol.endsWith("=F")) return "futures";
+  return null; // indices / crypto / forex — no tag
+}
+
 let _lastPollAt: number | null = null;
 let _finnhubConnected = false;
+
+// Global (non-US) earnings snapshot — module-level so it can be busted from
+// outside createTradingRouter() (see routes/admin.ts's refresh-snapshot
+// endpoint), same pattern as economy.ts's bustTariffsCache. Loaded lazily,
+// cached indefinitely until busted — see server/data/te_earnings_snapshot.json.
+export type GlobalEarningsItem = {
+  symbol: string; teSymbol: string; name: string; sector: string;
+  earningsDate: string; marketCap: number | null; marketCapFormatted: string | null;
+  epsForecast: string | null; time: string; country: string; countryCode: string;
+};
+export type GlobalEarningsSnapshot = {
+  generatedAt: string;
+  countries: { code: string; name: string }[];
+  items: GlobalEarningsItem[];
+};
+let _globalEarningsSnapshot: GlobalEarningsSnapshot | null = null;
+export function bustGlobalEarningsSnapshotCache() { _globalEarningsSnapshot = null; }
 
 export function getHealthStatus() {
   return {
@@ -492,6 +546,54 @@ setInterval(() => {
   if (_skipNextPoll) { _skipNextPoll = false; return; }
   pollAllPrices().catch(() => {});
 }, 20_000);
+
+// ─── Spot Poll Loop (Twelve Data) ─────────────────────────────────────────────
+// One time_series?interval=1day call per overlay symbol → spot price + daily candles.
+// 5 symbols every 10 min ≈ 690 credits/day, safely inside the 800/day free tier.
+// Leader-only on multi-machine Fly so followers don't duplicate (and burn) the quota.
+const SPOT_POLL_MS = 10 * 60_000;
+
+async function pollSpotPrices() {
+  if (!twelveDataConfigured || !isLeader()) return;
+  for (const [yahooSym, tdSym] of Object.entries(SPOT_OVERLAY)) {
+    let daily: SpotDaily | null = null;
+    try {
+      daily = await fetchSpotDaily(tdSym);
+    } catch {
+      daily = null;
+    }
+    if (!daily) continue; // keep last-known spot on a transient failure; never fabricate
+    spotPrices.set(yahooSym, {
+      price: daily.price,
+      change: daily.change,
+      changePercent: daily.changePercent,
+      updatedAt: Date.now(),
+    });
+    spotDailyCandles.set(yahooSym, daily.candles);
+  }
+}
+
+if (twelveDataConfigured) {
+  pollSpotPrices().catch(() => {});
+  setInterval(() => { pollSpotPrices().catch(() => {}); }, SPOT_POLL_MS);
+}
+
+// Self-healing safety net: kick a background spot refresh when spot data is missing or
+// older than one poll interval. Coalesced (one poll at a time). This makes the feed
+// recover on the first request even if the boot-time interval was ever dropped — e.g.
+// tsx-watch hot-reloads in dev that don't re-run module side-effects. On a healthy
+// server the interval keeps data < SPOT_POLL_MS old, so this never fires.
+let _spotPollInFlight: Promise<void> | null = null;
+function ensureSpotFresh() {
+  if (!twelveDataConfigured || !isLeader() || _spotPollInFlight) return;
+  const values = [...spotPrices.values()];
+  const stale = values.length === 0 ||
+    values.every(s => Date.now() - s.updatedAt > SPOT_POLL_MS);
+  if (!stale) return;
+  _spotPollInFlight = pollSpotPrices()
+    .catch(() => {})
+    .finally(() => { _spotPollInFlight = null; });
+}
 
 // ─── Optional Finnhub WebSocket for Crypto ───────────────────────────────────
 
@@ -943,6 +1045,7 @@ export interface SignalResult {
   vwapDeviation?: number | null;
   vixAtSignal?: number | null;
   dynamicThreshold?: number | null;
+  priceType?: "spot" | "futures" | null;
 }
 
 const signalCache = new Map<string, { data: SignalResult; ts: number }>();
@@ -3025,11 +3128,20 @@ async function generateSignal(
   const cached = signalCache.get(cacheKey);
   if (!bypassCache && cached && Date.now() - cached.ts < SIGNAL_TTL) return cached.data;
 
-  const candles = await fetchHistory(symbol, tf);
+  // For spot-overlay symbols on the daily timeframe, compute on real SPOT candles (not
+  // Yahoo futures) so the signal is internally consistent with the spot entry price.
+  // Other timeframes lack a pre-fetched spot series → fall back to the futures candles.
+  const spotCandles = tf === "1d" ? spotDailyCandles.get(symbol) : undefined;
+  const candles = spotCandles && spotCandles.length >= 30
+    ? spotCandles
+    : await fetchHistory(symbol, tf);
   if (candles.length < 30) return null;
 
   const ind = calculateIndicators(candles);
-  const currentPrice = latestPrices.get(symbol)?.price ?? candles[candles.length - 1].close;
+  // Prefer the live spot price for overlay symbols; fall back to futures, then last close.
+  const currentPrice = spotPrices.get(symbol)?.price
+    ?? latestPrices.get(symbol)?.price
+    ?? candles[candles.length - 1].close;
   const atrPct = ind.atr ? (ind.atr / currentPrice) * 100 : 2;
 
   let score: number;
@@ -3176,6 +3288,7 @@ async function generateSignal(
     ...(isApexMeta ? { quality: apexQuality, apexRegime, positionRiskPct: apexPositionRisk, htfAlignment: apexHtfAlignment, tradeable: apexTradeable } : {}),
     vixAtSignal: vixNow,
     ...(strategy === "5" || strategy === "14" ? { dynamicThreshold: Math.round(s5threshold * 1000) / 1000 } : {}),
+    priceType: priceTypeFor(symbol),
   };
 
   signalCache.set(cacheKey, { data: result, ts: Date.now() });
@@ -3878,6 +3991,18 @@ setInterval(() => {
   if (_euronextScreenerCache && now - _euronextScreenerCache.ts > SCREENER_TTL) _euronextScreenerCache = null;
   if (_euronextScanCache && now - _euronextScanCache.ts > STOCK_SCAN_TTL) _euronextScanCache = null;
   if (_euronextV2ScanCache && now - _euronextV2ScanCache.ts > STOCK_SCAN_TTL) _euronextV2ScanCache = null;
+  if (_caScreenerCache && now - _caScreenerCache.ts > SCREENER_TTL) _caScreenerCache = null;
+  if (_caScanCache && now - _caScanCache.ts > STOCK_SCAN_TTL) _caScanCache = null;
+  if (_caV2ScanCache && now - _caV2ScanCache.ts > STOCK_SCAN_TTL) _caV2ScanCache = null;
+  if (_auScreenerCache && now - _auScreenerCache.ts > SCREENER_TTL) _auScreenerCache = null;
+  if (_auScanCache && now - _auScanCache.ts > STOCK_SCAN_TTL) _auScanCache = null;
+  if (_auV2ScanCache && now - _auV2ScanCache.ts > STOCK_SCAN_TTL) _auV2ScanCache = null;
+  if (_brScreenerCache && now - _brScreenerCache.ts > SCREENER_TTL) _brScreenerCache = null;
+  if (_brScanCache && now - _brScanCache.ts > STOCK_SCAN_TTL) _brScanCache = null;
+  if (_brV2ScanCache && now - _brV2ScanCache.ts > STOCK_SCAN_TTL) _brV2ScanCache = null;
+  if (_sgScreenerCache && now - _sgScreenerCache.ts > SCREENER_TTL) _sgScreenerCache = null;
+  if (_sgScanCache && now - _sgScanCache.ts > STOCK_SCAN_TTL) _sgScanCache = null;
+  if (_sgV2ScanCache && now - _sgV2ScanCache.ts > STOCK_SCAN_TTL) _sgV2ScanCache = null;
   for (const [k, v] of _instFlowCache) if (now - v.ts > INST_FLOW_TTL) _instFlowCache.delete(k);
 }, 10 * 60_000);
 
@@ -4185,6 +4310,26 @@ let _cnV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null
 let _euronextScreenerCache: { stocks: ScreenerQuote[]; ts: number } | null = null;
 let _euronextScanCache:     { data: TenXScanResponse; ts: number } | null = null;
 let _euronextV2ScanCache:   { data: TenXScanResponse; ts: number } | null = null;
+
+// Wave 3 additions — Canada/Australia/Brazil/Singapore. Confirmed live before
+// building these (validation spike): Yahoo's predefined screener catalog has
+// most_actives_{cc}/day_gainers_{cc} for these 4 but NOT for mx/kr/tw/za,
+// which return no result at all — those 4 were dropped, not built.
+let _caScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _caScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _caV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
+
+let _auScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _auScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _auV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
+
+let _brScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _brScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _brV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
+
+let _sgScreenerCache:       { stocks: ScreenerQuote[]; ts: number } | null = null;
+let _sgScanCache:           { data: TenXScanResponse; ts: number } | null = null;
+let _sgV2ScanCache:         { data: TenXScanResponse; ts: number } | null = null;
 
 const _instFlowCache = new Map<string, { data: InstFlowResponse; ts: number }>();
 const INST_FLOW_TTL = 30 * 60_000;
@@ -5827,6 +5972,290 @@ async function runEuronextStockScannerV2(): Promise<TenXScanResponse> {
   return data;
 }
 
+// ─── Canada (Wave 3) ────────────────────────────────────────────────────────
+
+async function fetchCanadaStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_caScreenerCache && Date.now() - _caScreenerCache.ts < SCREENER_TTL) {
+    return _caScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=en-CA&region=CA&count=100&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_ca${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers_ca${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _caScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runCanadaStockScanner(): Promise<TenXScanResponse> {
+  if (_caScanCache && Date.now() - _caScanCache.ts < STOCK_SCAN_TTL) return _caScanCache.data;
+  const universe = await fetchCanadaStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Canada"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _caScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runCanadaStockScannerV2(): Promise<TenXScanResponse> {
+  if (_caV2ScanCache && Date.now() - _caV2ScanCache.ts < STOCK_SCAN_TTL) return _caV2ScanCache.data;
+  const universe = await fetchCanadaStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Canada"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _caV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Australia (Wave 3) ─────────────────────────────────────────────────────
+
+async function fetchAustraliaStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_auScreenerCache && Date.now() - _auScreenerCache.ts < SCREENER_TTL) {
+    return _auScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=en-AU&region=AU&count=100&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_au${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers_au${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _auScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runAustraliaStockScanner(): Promise<TenXScanResponse> {
+  if (_auScanCache && Date.now() - _auScanCache.ts < STOCK_SCAN_TTL) return _auScanCache.data;
+  const universe = await fetchAustraliaStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Australia"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _auScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runAustraliaStockScannerV2(): Promise<TenXScanResponse> {
+  if (_auV2ScanCache && Date.now() - _auV2ScanCache.ts < STOCK_SCAN_TTL) return _auV2ScanCache.data;
+  const universe = await fetchAustraliaStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Australia"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _auV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Brazil (Wave 3) ────────────────────────────────────────────────────────
+
+async function fetchBrazilStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_brScreenerCache && Date.now() - _brScreenerCache.ts < SCREENER_TTL) {
+    return _brScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=pt-BR&region=BR&count=100&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_br${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers_br${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _brScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runBrazilStockScanner(): Promise<TenXScanResponse> {
+  if (_brScanCache && Date.now() - _brScanCache.ts < STOCK_SCAN_TTL) return _brScanCache.data;
+  const universe = await fetchBrazilStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Brazil"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _brScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runBrazilStockScannerV2(): Promise<TenXScanResponse> {
+  if (_brV2ScanCache && Date.now() - _brV2ScanCache.ts < STOCK_SCAN_TTL) return _brV2ScanCache.data;
+  const universe = await fetchBrazilStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Brazil"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _brV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+// ─── Singapore (Wave 3) ─────────────────────────────────────────────────────
+
+async function fetchSingaporeStockUniverse(): Promise<ScreenerQuote[]> {
+  if (_sgScreenerCache && Date.now() - _sgScreenerCache.ts < SCREENER_TTL) {
+    return _sgScreenerCache.stocks;
+  }
+  try {
+    const base = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved";
+    const params = "&formatted=false&lang=en-SG&region=SG&count=100&start=0";
+    const [activeRes, gainersRes] = await Promise.allSettled([
+      yfFetch<ScreenerResponse>(`${base}?scrIds=most_actives_sg${params}`),
+      yfFetch<ScreenerResponse>(`${base}?scrIds=day_gainers_sg${params}`),
+    ]);
+
+    const extract = (res: PromiseSettledResult<ScreenerResponse>): ScreenerQuote[] =>
+      res.status === "fulfilled"
+        ? (res.value?.finance?.result?.[0]?.quotes ?? [])
+        : [];
+
+    const combined = [...extract(activeRes), ...extract(gainersRes)];
+
+    const seen = new Set<string>();
+    const stocks: ScreenerQuote[] = [];
+    for (const q of combined) {
+      if (seen.has(q.symbol)) continue;
+      seen.add(q.symbol);
+      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 0;
+      if (q.quoteType === "EQUITY" && q.regularMarketPrice >= 1 && avgVol >= 100_000) {
+        stocks.push(q);
+      }
+    }
+
+    _sgScreenerCache = { stocks, ts: Date.now() };
+    return stocks;
+  } catch {
+    return [];
+  }
+}
+
+async function runSingaporeStockScanner(): Promise<TenXScanResponse> {
+  if (_sgScanCache && Date.now() - _sgScanCache.ts < STOCK_SCAN_TTL) return _sgScanCache.data;
+  const universe = await fetchSingaporeStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStock(q, "Singapore"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _sgScanCache = { data, ts: Date.now() };
+  return data;
+}
+
+async function runSingaporeStockScannerV2(): Promise<TenXScanResponse> {
+  if (_sgV2ScanCache && Date.now() - _sgV2ScanCache.ts < STOCK_SCAN_TTL) return _sgV2ScanCache.data;
+  const universe = await fetchSingaporeStockUniverse();
+  const raw = await runWithConcurrency<ScreenerQuote, TenXScanEntry>(
+    universe,
+    (q) => scanScreenerStockV2(q, "Singapore"),
+    5,
+  );
+  const assets = raw
+    .filter((r): r is TenXScanEntry => r !== null && r.signalsActive > 0)
+    .sort((a, b) => b.signalsActive - a.signalsActive || b.volumeRatio - a.volumeRatio);
+  const data: TenXScanResponse = { assets, lastUpdated: new Date().toISOString(), cacheTtlSeconds: STOCK_SCAN_TTL / 1000 };
+  _sgV2ScanCache = { data, ts: Date.now() };
+  return data;
+}
+
 async function runAssetScannerV2(): Promise<TenXScanResponse> {
   if (_tenXV2Cache && Date.now() - _tenXV2Cache.ts < TENX_TTL) return _tenXV2Cache.data;
   const raw = await runWithConcurrency<TradingAsset, TenXScanEntry>(TRADING_ASSETS, scanAssetV2, 5);
@@ -6630,20 +7059,26 @@ export function createTradingRouter(): Router {
   router.get("/quotes", (_req: Request, res: Response) => {
     // 15s edge cache absorbs concurrent device polls (Trading Dashboard auto-refreshes every 30s).
     res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+    ensureSpotFresh(); // background top-up if the spot feed is empty/stale (non-blocking)
     const quotes = TRADING_ASSETS.map(asset => {
+      const spot = spotPrices.get(asset.symbol);
       const p = latestPrices.get(asset.symbol);
+      // Prefer the real spot price for overlay symbols; fall back to the Yahoo futures feed.
       return {
         symbol: asset.symbol,
         name: asset.name,
         category: asset.category,
         flag: asset.flag,
         currency: asset.currency,
-        price: p?.price ?? null,
-        change: p?.change ?? null,
-        changePercent: p?.changePercent ?? null,
-        updatedAt: p ? new Date(p.updatedAt).toISOString() : null,
-        preMarketPrice: p?.preMarketPrice ?? null,
-        preMarketChangePercent: p?.preMarketChangePercent ?? null,
+        price: spot?.price ?? p?.price ?? null,
+        change: spot?.change ?? p?.change ?? null,
+        changePercent: spot?.changePercent ?? p?.changePercent ?? null,
+        updatedAt: spot ? new Date(spot.updatedAt).toISOString()
+                 : p ? new Date(p.updatedAt).toISOString() : null,
+        // Pre-market only applies to the equity-style futures feed, not the 24h spot feed.
+        preMarketPrice: spot ? null : (p?.preMarketPrice ?? null),
+        preMarketChangePercent: spot ? null : (p?.preMarketChangePercent ?? null),
+        priceType: priceTypeFor(asset.symbol),
       };
     });
     res.json({ quotes, timestamp: new Date().toISOString() });
@@ -7156,6 +7591,98 @@ export function createTradingRouter(): Router {
       return res.json(result);
     } catch (err) {
       console.error("[10X v2 Euronext Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/canada  — Wave 3, confirmed live before building
+  router.get("/scanner/10x/canada", async (_req: Request, res: Response) => {
+    try {
+      const result = await runCanadaStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Canada Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  router.get("/scanner/10x-v2/canada", async (_req: Request, res: Response) => {
+    try {
+      const result = await runCanadaStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Canada Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/australia  — Wave 3, confirmed live before building
+  router.get("/scanner/10x/australia", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAustraliaStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Australia Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  router.get("/scanner/10x-v2/australia", async (_req: Request, res: Response) => {
+    try {
+      const result = await runAustraliaStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Australia Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/brazil  — Wave 3, confirmed live before building
+  router.get("/scanner/10x/brazil", async (_req: Request, res: Response) => {
+    try {
+      const result = await runBrazilStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Brazil Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  router.get("/scanner/10x-v2/brazil", async (_req: Request, res: Response) => {
+    try {
+      const result = await runBrazilStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Brazil Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  // GET /api/trading/scanner/10x/singapore  — Wave 3, confirmed live before building
+  router.get("/scanner/10x/singapore", async (_req: Request, res: Response) => {
+    try {
+      const result = await runSingaporeStockScanner();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X Singapore Scanner]", err);
+      return res.status(503).json({ error: "Scanner temporarily unavailable" });
+    }
+  });
+
+  router.get("/scanner/10x-v2/singapore", async (_req: Request, res: Response) => {
+    try {
+      const result = await runSingaporeStockScannerV2();
+      res.setHeader("Cache-Control", "public, max-age=1800");
+      return res.json(result);
+    } catch (err) {
+      console.error("[10X v2 Singapore Scanner]", err);
       return res.status(503).json({ error: "Scanner temporarily unavailable" });
     }
   });
@@ -7674,13 +8201,81 @@ export function createTradingRouter(): Router {
     }
   }
 
+  // Global (non-US) earnings — served from a manually-curated static snapshot,
+  // never fetched live by this server. See scripts/te_earnings_scrape.sh +
+  // scripts/te_earnings_to_snapshot.py for the local refresh ritual (same
+  // "manually curated, occasionally redeployed" shape as tariffs.json).
+  // Gated behind the "earnings_calendar_global_enabled" Remote Config flag
+  // (fails closed — off unless explicitly turned on in the admin panel).
+  // Types + cache variable are module-level — see bustGlobalEarningsSnapshotCache above.
+  async function loadGlobalEarningsSnapshot(): Promise<GlobalEarningsSnapshot | null> {
+    if (_globalEarningsSnapshot) return _globalEarningsSnapshot;
+    try {
+      const filePath = resolve("server/data/te_earnings_snapshot.json");
+      const raw = await readFile(filePath, "utf-8");
+      _globalEarningsSnapshot = JSON.parse(raw) as GlobalEarningsSnapshot;
+      return _globalEarningsSnapshot;
+    } catch (err) {
+      console.error("[EarningsCalendar] Failed to load te_earnings_snapshot.json:", err);
+      return null;
+    }
+  }
+
+  async function handleGlobalEarningsCalendar(req: Request, res: Response, countryCode: string, days: number) {
+    const enabled = await getRemoteConfigFlag("earnings_calendar_global_enabled");
+    if (!enabled) {
+      // Empty countries — not just empty items — so the client's chip row collapses to
+      // just "US" while the feature is off, rather than showing dead chips that always
+      // say "not available" when tapped.
+      return res.json({ items: [], countries: [], available: false, index: countryCode, source: "disabled", universeSize: 0, lastUpdated: new Date().toISOString() });
+    }
+    const snapshot = await loadGlobalEarningsSnapshot();
+    if (!snapshot) {
+      return res.status(503).json({ error: "Global earnings snapshot unavailable" });
+    }
+
+    const now = Date.now();
+    const cutoff = now + days * 24 * 60 * 60 * 1000;
+    const items = snapshot.items.filter((i) => {
+      const t = new Date(`${i.earningsDate}T00:00:00Z`).getTime();
+      return i.countryCode === countryCode.toUpperCase() && !Number.isNaN(t) && t >= now && t <= cutoff;
+    });
+    items.sort((a, b) =>
+      a.earningsDate.localeCompare(b.earningsDate) || (b.marketCap ?? 0) - (a.marketCap ?? 0));
+
+    return res.json({
+      items,
+      countries: snapshot.countries,
+      available: true,
+      index: countryCode,
+      source: "trading-economics-snapshot",
+      universeSize: items.length,
+      lastUpdated: snapshot.generatedAt,
+    });
+  }
+
   router.get("/earnings-calendar", async (req: Request, res: Response) => {
     const days = Math.min(parseInt((req.query.days as string) ?? "15", 10), 30);
+    const countryParam = req.query.country as string | undefined;
+    if (countryParam) {
+      return handleGlobalEarningsCalendar(req, res, countryParam, days);
+    }
+
     const indexParam = ((req.query.index as string) ?? "sp500").toLowerCase();
     const index = EARNINGS_INDICES.has(indexParam) ? indexParam : "sp500";
     const cacheKey = `earnings-${index}-${days}`;
+
+    // Computed fresh on every request (governed only by the flag's own 60s cache), never
+    // folded into the 6h `_earningsCache` entry below — otherwise flipping the Remote Config
+    // toggle wouldn't show/hide the country chip row on this default tab for up to 6h.
+    const globalEnabled = await getRemoteConfigFlag("earnings_calendar_global_enabled");
+    const globalSnapshot = globalEnabled ? await loadGlobalEarningsSnapshot() : null;
+    const countries = globalSnapshot?.countries ?? [];
+
     const cached = _earningsCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < EARNINGS_TTL) return res.json(cached.data);
+    if (cached && Date.now() - cached.ts < EARNINGS_TTL) {
+      return res.json({ ...(cached.data as object), countries });
+    }
 
     const now = Date.now();
     const cutoff = now + days * 24 * 60 * 60 * 1000;
@@ -7705,11 +8300,13 @@ export function createTradingRouter(): Router {
     // Sort by date, then by market cap (largest first) within each day.
     results.sort((a, b) =>
       a.earningsDate.localeCompare(b.earningsDate) || (b.marketCap ?? 0) - (a.marketCap ?? 0));
-    const data = { items: results, index, source, universeSize, lastUpdated: new Date().toISOString() };
+    // Cache the sp500/ndx/dji items only — `countries` is computed fresh above and merged
+    // in separately, so it stays correct even when this branch serves from cache.
+    const cacheData = { items: results, index, source, universeSize, lastUpdated: new Date().toISOString() };
     // Don't cache an empty result for the full 6h — it's almost always a transient source
     // failure. Cache only real data; empties fall through and retry on the next request.
-    if (results.length > 0) _earningsCache.set(cacheKey, { data, ts: Date.now() });
-    return res.json(data);
+    if (results.length > 0) _earningsCache.set(cacheKey, { data: cacheData, ts: Date.now() });
+    return res.json({ ...cacheData, countries });
   });
 
   // GET /api/trading/regime-summary

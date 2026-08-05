@@ -196,6 +196,8 @@ GET /api/volatility/assets    → { items: [...], vix: { price, ... } }
 GET /api/trading/backtest/:s  → { strategies: { "1": { winRate, totalReturn, maxDrawdown, sharpe, trades, tradeLog }, "2": ..., "3": ... } }
                                   ^^^^ nested under 'strategies', field is 'sharpe' not 'sharpeRatio', 'trades' not 'totalTrades'
 GET /api/trading/signals/:s   → TradingSignal object  (strategy query param: "1"–"9"; S9 = Silver Liquidity Sweep, SI=F only)
+                                  Carries priceType: "spot"|"futures"|null. For SPOT_OVERLAY symbols (gold today)
+                                  the entry + SL/TP + 1d candles are computed on the real spot feed, not futures.
 GET /api/trading/news/:s      → articles array  (field is 'url', NOT 'link')
 GET /api/search               → { results: [{ symbol, name, exchange, type }] }
 GET /api/bonds                → { us3m, us5y, us10y, us30y, spread3m10y, curveStatus, lastUpdated }
@@ -210,6 +212,10 @@ GET /api/tariffs              → { countries: [CountryTariff], dataAsOf: "April
                                   Data file: server/data/tariffs.json — update and bump TARIFFS_DATA_AS_OF in economy.ts to refresh without an app release
 GET /api/trading/quotes       → { quotes: [...], timestamp }
                                   ^^^^ key is 'quotes', NOT 'items'
+                                  Each quote has priceType: "spot"|"futures"|null. SPOT_OVERLAY symbols (gold today)
+                                  serve the Twelve Data spot price (polled 10m, leader-only) instead of the Yahoo
+                                  futures price; pre-market fields are null for spot. Falls back to futures when the
+                                  spot feed is empty (no key / follower / transient fail). Markets tab is untouched.
 GET /api/heatmap              → { regions: [tile], assetClasses: [tile], lastUpdated }
                                   ^^^^ NOT 'tiles' — tile = { name, emoji, changePercent, perf1W…perf5Y }
 GET /api/heatmap/movers       → { index, session, marketState, gainers: [TreemapStock], losers: [TreemapStock], lastUpdated }
@@ -288,6 +294,12 @@ AI_INTEGRATIONS_OPENAI_API_KEY     optional — GPT-4o-mini AI market briefings 
 AI_INTEGRATIONS_OPENAI_BASE_URL    optional — custom OpenAI-compatible base URL (defaults to api.openai.com)
 ANTHROPIC_API_KEY                  optional — Claude Haiku for AI analyst notes + AI tariff exposure analysis
 ALPHA_VANTAGE_API_KEY              optional — Alpha Vantage for fundamentals/historical data fallback
+TWELVE_DATA_API_KEY                optional — Twelve Data. (1) EPS history (fetchTwelveDataEarnings).
+                                              (2) SPOT price overlay for the Trading tab: commodities Yahoo only
+                                              serves as FUTURES (=F, priced above spot by cost of carry) get a real
+                                              spot feed keyed by the SAME Yahoo symbol. Free plan = gold (XAU/USD)
+                                              only; silver/oil/copper need the Grow/Venture paid plan (see
+                                              SPOT_OVERLAY in trading.ts). Absent → all commodities stay futures.
 APP_SIGNING_SECRET                 optional — enables HMAC request signing; absent = dev mode (all devices unrestricted)
 REVENUECAT_WEBHOOK_SECRET          optional — Bearer token for RevenueCat billing webhook
 FMP_API_KEY                        optional — Financial Modeling Prep free-tier key for congress trading data
@@ -519,7 +531,7 @@ REDIRECTS (app_router.dart handles these automatically):
 
 ## Web Frontend (frontend/)
 
-pnpm monorepo (pnpm 9 — Node 20 can't run pnpm 11) for the browser client. Same Express API as mobile; **plan enforcement intentionally absent on web for now** — all features open.
+pnpm monorepo (pnpm 9 — Node 20 can't run pnpm 11) for the browser client. Same Express API as mobile; **real plan enforcement (auth/session/purchase) is intentionally absent on web for now** — there's no sign-up/sign-in, so every visitor is treated as free tier by default. 10 spots mirror mobile's Pro gates as permanent, visual-only `ProBlur` teasers (never unlock — see below); all other content is free/open, same as before.
 
 ```
 frontend/
@@ -529,8 +541,15 @@ frontend/
                         # Plain GETs, no custom headers → no CORS preflight; browser handles ETag/304.
   packages/ui           # tokens.css = 1:1 port of AppPalette (dark+light via [data-theme]) + primitives + formatters.
                         # ProBlur(children, positive) — visual-only "Upgrade to Pro" teaser (blur + green/red tint via
-                        # color-mix), mirrors mobile's ProBlurOverlay. Web has no purchase flow, so this never unlocks —
-                        # used for Markets Heatmap 1W/1M/YTD, Forex rate-comparison label, CFTC partial reveal.
+                        # color-mix), mirrors mobile's ProBlurOverlay. Web has no purchase flow, so this never unlocks.
+                        # 10 gated spots as of 2026-07: Markets Heatmap 1W/1M/YTD, Forex rate-comparison label, CFTC
+                        # partial reveal, ETF perf strip, Correlation matrix, Presidential latest filing (all pre-existing),
+                        # plus Best Setups (Investing→Dashboard + Trading→Dashboard, shared BestSetupsCard), Sector Best
+                        # Setups, Signals S4–S9/enhanced strategies (Trading→Signals — chips stay clickable, result table
+                        # blurs), AI Macro Briefing (Macro→Dashboard — click shows a blurred static teaser, does NOT call
+                        # the paid /api/volatility/briefing endpoint, so a locked feature never burns AI spend). Trading→
+                        # Alerts caps free tier at 3 alerts (hardcoded, mirrors RemoteConfigService.alertLimitFree's
+                        # default of '3') with an inline message instead of a ProBlur — it's an action limit, not content.
   packages/charts       # lightweight-charts v4 candlesticks, canvas Sparkline, squarified CanvasTreemap
   apps/web              # Vite + React 19 SPA — TanStack Router (code-based routes), TanStack Query, cmdk ⌘K palette.
                         # Deployed to Vercel at https://app.finbrio.net via `./deploy_web.sh` (repo root).
@@ -549,7 +568,20 @@ frontend/
 - **Routes** (mirror mobile tab structure): `/markets` (Heatmap/Indices/Commodities/Forex/CFTC), `/trading` (Instruments/Dashboard/Power Moves/Signals S1–S9/Alerts — watchlist+alerts in localStorage), `/investing` (Exposure/Dashboard/Multibaggers/Presidential/Smart $/Earnings Calendar/ETFs — Congress/House Trades removed 2026-07), `/macro` (Dashboard w/ regime+gauges+heatmaps+yield graph+RRG quadrants+AI briefing / Crisis / Debt / Calendar / Correlation), `/asset/$symbol?name=`.
 - **Parity rule**: the Flutter screens are the spec. When mobile gains/changes a tab, filter, or strategy, port it here in the same change (and vice versa) — and verify against the running screens, not this file alone.
 - **Data-display parity (hard requirement)**: web and mobile must show *identical data*, not just identical UI structure. That includes field-picking logic — e.g. session-aware prices (`pre` → `preMarketPrice`/`preMarketChangePercent`, `post` → `postMarketPrice`/`postMarketChangePercent`, fallback to `price`/`changePercent`), filter sets, sort orders, and null fallbacks. When changing what one client displays, port the same logic to the other in the same change. Regression example: web MoversCard once showed last-close prices during pre-market because it ignored the session fields mobile already used — a critical bug for a financial app.
-- **Prod CORS**: `ALLOWED_ORIGINS` on the API (Fly secret, comma-separated, additive — never drop an existing entry) must include both `https://www.finbrio.net` (marketing site) and `https://app.finbrio.net` (this SPA); `server/index.ts` already supports it. Custom headers `X-Device-ID`/`X-Signature` are in the CORS allow-list. CORS is a browser-only mechanism — it has no effect on the Flutter/TestFlight app's Dio requests, so changing this list never touches mobile.
+- **Prod CORS**: `ALLOWED_ORIGINS` on the API (Fly secret, comma-separated, additive — never drop an existing entry) must include both `https://www.finbrio.net` (marketing site) and `https://app.finbrio.net` (this SPA); `server/index.ts` already supports it. Custom headers `X-Device-ID`/`X-Signature` are in the CORS allow-list. CORS is a browser-only mechanism — it has no effect on the Flutter/TestFlight app's Dio requests, so changing this list never touches mobile. Separately, `http://localhost:5175` (the admin/ops portal's fixed dev port) is hardcoded into `setupCors` as `ADMIN_PORTAL_ORIGIN` and let through even when `isProd` is true — this is what lets the admin portal (which always targets production, see "Admin / Ops Portal" below) actually complete its `fetch()` calls instead of failing CORS preflight with a bare 403. Don't "clean up" this exception into the general `isLocaldev` catch-all (that one stays prod-disabled on purpose) or fold it into `ALLOWED_ORIGINS` — it's intentionally a separate, narrowly-scoped allowance for exactly one known local origin.
+
+---
+
+## Admin / Ops Portal (frontend/apps/admin)
+
+Separate Vite/React app for production ops — users, subscriptions, remote config, cache busting, FCM broadcast, AI usage, and the "market buzz" social-post review queue. **Internal tool, not part of the product** — not linked from any user-facing surface.
+
+- **Run**: `./admin.sh` (repo root) — starts only the Vite dev server on `:5175` and opens it in the browser. There is no local backend involved: the portal always talks directly to production.
+- **API target defaults to production unconditionally** (not dev-vs-build-mode like the web app): `frontend/apps/admin/src/lib/api.ts`'s `BASE_URL` falls back to `https://monysa-api.fly.dev` whenever `VITE_API_BASE_URL` is unset. Deliberate — this portal is the gateway for real production actions (broadcast push to real devices, bust the live server's caches, edit real RevenueCat/Firestore-backed subscriptions), so accidentally pointing it at local dev would give a false read of leader status/cache state/logs instead of the real thing. Override only for deliberate local-API testing: `VITE_API_BASE_URL=http://localhost:5001 pnpm --filter @monysa/admin dev`.
+- **Auth**: single `ADMIN_SECRET` Bearer token (`server/lib/admin-auth.ts`'s `authMiddleware`), entered on `/login`, stored in `localStorage`. Must match the `ADMIN_SECRET` Fly secret on the deployed app — a local `.env` value is irrelevant since there's no local backend in the loop.
+- **MUST NEVER be served by the production Express server.** `server/index.ts` has no `/admin` static mount — one existed before and was removed deliberately, because it served `frontend/apps/admin/dist` whenever that folder happened to be present, which would expose this Bearer-token-gated, no-rate-limit ops surface at a guessable path on the public production domain. `frontend/apps/admin/dist/` is also excluded via `.dockerignore` as a second layer of defense, so a stray local build can't leak into the Fly image even if the serving code were ever reintroduced. **Do not re-add `/admin` static serving to `server/index.ts`, and do not remove the `.dockerignore` entry.** If the admin UI ever needs a real URL, deploy it as its own separate app (like `apps/web`/`apps/site` on Vercel) — never bundled into the API's own Docker image.
+- Pages: Dashboard, Users, Subscriptions, Alerts, Remote Config, Ops (cache busting, OGE pipeline refresh, global earnings snapshot refresh — local-dev-only, 403s on Fly by design), Performance, Social Buzz (review queue for the market-buzz auto-posting pipeline — see `server/lib/social-buzz/`).
+- **Performance → API Latency runs `fly logs` from inside the production container itself**: `/api/admin/logs/metrics` (`server/routes/admin.ts`) `spawn()`s the `fly` binary (using the `FLY_API_TOKEN` secret already on this app) to fetch the app's own recent logs and parse `[TIMING]` lines out of them. This is why the `Dockerfile` installs `flyctl` (as both `fly` and `flyctl` on `PATH`) even though nothing else in the app needs a CLI — don't remove that install step as unused/dead weight. `FLY_APP_NAME` doesn't need to be a secret; Fly auto-injects it on every Machine.
 
 ---
 
@@ -588,9 +620,7 @@ if (!EntitlementService.can('signals_advanced')) {
 | `signals_advanced` | Pro+ |
 | `analyst_notes_unlimited` | Pro+ |
 | `alerts_unlimited` | Pro+ |
-| `push_notifications` | Pro+ |
 | `exposure_ai` | Pro+ (guards `/api/exposure/analysis` — AI analysis endpoint; the Flutter Exposure tab now calls `/api/tariffs` instead and is free) |
-| `api_access` | Pro+ |
 | `best_setups` | Pro+ |
 | `backtest_filter` | Pro+ |
 | `treemap_heatmap` | Pro+ (unrelated to the Heatmap **tab** — only gates the Profile dev-simulator now; the Investing → Dashboard Movers card is fully free (2026-07), do not re-gate it. Do not confuse with `heatmap_extended_timeframes` below) |
@@ -724,7 +754,7 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | "This will restart the app" confirmation dialogs | assuming the dialog's copy describes what actually happens | Profile → Chart Provider used to show this and call `RestartWidget.restartApp()` on confirm, but `ChartProviderNotifier.set()` already applies the change synchronously (Riverpod `state = p` + the `currentChartRenderer` global, read fresh per-request by `ChartRendererInterceptor`) — the restart call was a no-op left over from an earlier, non-reactive implementation, so tapping "Yes" visibly did nothing. Fixed by dropping the restart call and the false claim (now: "Switch to X for chart data?" + a SnackBar). Before wiring `RestartWidget.restartApp()` into a new confirmation flow, verify the underlying state change genuinely isn't already reactive — most Riverpod/global-var settings in this app already are. |
 | `ProBlurOverlay`/`ProBlur` "Upgrade to Pro" text in a narrow blurred area | using the default label unconditionally | The full phrase clips illegibly ("grade to P...") when the blurred content is a single small inline value (e.g. one metric chip, not a whole row/strip). Both widgets take an optional `label` override (mobile: `label:`, web: `label=`) — pass a short one (`'Pro'`) for that case; the default full phrase is fine once the blurred area spans a whole row or multi-metric strip (e.g. ETF perf strip, CFTC, Presidential, Heatmap). |
 | `ProBlurOverlay`/`ProBlur` wrapping a very tall/unbounded block (web) | no `max-height` on the blur wrapper | The overlay text is centered via `position:absolute;inset:0` relative to the *entire* blurred content's height. For something short this is fine, but for e.g. a ~180×180 correlation matrix (thousands of px tall, no internal scroll), the "Upgrade to Pro" text ends up centered far below the viewport — invisible without scrolling deep into blurred content. Cap the wrapper's height (`.adv-corr-blur`'s `max-height: 440px` mirrors mobile's `Container(height: 440)`) so the overlay text stays within the visible preview. Always sanity-check a new `ProBlur` usage against genuinely large datasets, not just the first few rows. |
-| Web plan enforcement | assuming web has zero gating anywhere (per the general "plan enforcement intentionally absent on web" rule) | Still true for real feature access — but 3 narrow spots (Heatmap 1W/1M/YTD, Forex rate-comparison label, CFTC partial reveal) render a **visual-only teaser** (blurred + "Upgrade to Pro", via `ProBlur` in `@monysa/ui`) that never unlocks, since there is no purchase flow on web. Don't build a real checkout for these — they're intentionally always-locked, mirroring mobile's Pro-only look without mobile's actual paywall. The Investing Dashboard Movers card is fully free on both platforms — do not add a teaser there. |
+| Web plan enforcement | assuming web has zero gating anywhere (per the general "plan enforcement intentionally absent on web" rule) | Still true for real auth/session/purchase — web has no sign-up/sign-in, so it can't know a real user's plan. But since every visitor should therefore default to **free tier**, 10 spots render a **visual-only teaser** (blurred + "Upgrade to Pro", via `ProBlur` in `@monysa/ui`) that never unlocks: Heatmap 1W/1M/YTD, Forex rate-comparison label, CFTC partial reveal, ETF perf strip, Correlation matrix, Presidential latest filing, Best Setups (both Dashboard tabs), Sector Best Setups, Signals S4–S9/enhanced strategies, AI Macro Briefing. Trading→Alerts additionally caps free-tier adds at 3 (inline message, not a blur — it's an action limit). Don't build a real checkout for any of these — they're intentionally always-locked, mirroring mobile's Pro-only look without mobile's actual paywall. The Investing Dashboard Movers card is fully free on both platforms — do not add a teaser there. |
 | Treemap tile sizing | `marketCap` (native currency) | Use `effectiveMarketCap` (= `marketCapUsd ?? marketCap`). All tiles are FX-normalised to USD when `marketCapUsd` is present — cross-index comparison is meaningful. |
 | Adding a new screen inside AppShell | content extends behind glass bottom nav pill (clipped) | AppShell uses `extendBody: true` with a 58 px glass pill. **Always import `shared/widgets/app_shell_insets.dart`** — use `appShellBottomInset(context)` for any scroll/list bottom padding and `showAppBottomSheet()` instead of `showModalBottomSheet` for any modal (handles iOS notch + nav pill + drag-to-dismiss height in one call). Never hand-roll `MediaQuery.padding.bottom + nav heights` — it regressed three times before this helper existed |
 | Yahoo `/v7/finance/quote` for batched US-equity marketCap | gated behind Unauthorized | Yahoo blocks v7 on cloud IPs. Use `/v10/finance/quoteSummary?modules=price,assetProfile` with crumb auth (fc.yahoo.com cookie → /v1/test/getcrumb) — `server/routes/heatmap.ts` already handles refresh + concurrency |

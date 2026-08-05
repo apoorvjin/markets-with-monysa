@@ -9,4 +9,9 @@ class DebtRepository {
     final data = await ApiClient.instance.get(ApiEndpoints.usaDebt);
     return data as Map<String, dynamic>;
   }
+
+  Future<Map<String, dynamic>> fetchDebtComparison() async {
+    final data = await ApiClient.instance.get(ApiEndpoints.debtComparison);
+    return data as Map<String, dynamic>;
+  }
 }

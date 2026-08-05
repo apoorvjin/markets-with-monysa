@@ -10,6 +10,7 @@ import { InvestingPage } from "./features/investing/InvestingPage";
 import { MacroPage } from "./features/macro/MacroPage";
 import { MarketsPage } from "./features/markets/MarketsPage";
 import { TradingPage } from "./features/trading/TradingPage";
+import { WirePage } from "./features/wire/WirePage";
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -45,6 +46,12 @@ const macroRoute = createRoute({
   component: MacroPage,
 });
 
+const wireRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/wire",
+  component: WirePage,
+});
+
 const assetRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/asset/$symbol",
@@ -66,6 +73,7 @@ const routeTree = rootRoute.addChildren([
   tradingRoute,
   investingRoute,
   macroRoute,
+  wireRoute,
   assetRoute,
 ]);
 

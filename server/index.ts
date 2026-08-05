@@ -23,6 +23,13 @@ declare module "http" {
   }
 }
 
+// Fixed dev port of frontend/apps/admin (see its vite.config.ts) — the ops
+// portal always targets production (see CLAUDE.md's "Admin / Ops Portal"),
+// so its origin must be let through CORS even when isProd is true. This is
+// the one deliberate exception to "no localhost in prod" below — scoped to
+// exactly this origin, not the general localhost/ngrok catch-all.
+const ADMIN_PORTAL_ORIGIN = "http://localhost:5175";
+
 function setupCors(app: express.Application) {
   // FLY_REGION is auto-injected by Fly.io only when running on an actual Fly machine —
   // unlike FLY_APP_NAME which can be set locally. Use it as the reliable prod signal.
@@ -44,13 +51,13 @@ function setupCors(app: express.Application) {
         origin?.includes(".ngrok-free.app") ||
         origin?.includes(".ngrok.app"));
 
-    const isAllowed = origin && (allowedOrigins.has(origin) || isLocaldev);
+    const isAllowed = origin && (allowedOrigins.has(origin) || isLocaldev || origin === ADMIN_PORTAL_ORIGIN);
 
     if (isAllowed) {
       res.header("Access-Control-Allow-Origin", origin);
       res.header(
         "Access-Control-Allow-Methods",
-        "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+        "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
       );
       res.header(
         "Access-Control-Allow-Headers",
@@ -408,16 +415,10 @@ function setupErrorHandler(app: express.Application) {
   // Static assets referenced by absolute URL from outside the app (e.g. email templates).
   app.use("/static", express.static(join(process.cwd(), "server/public")));
 
-  // Serve the compiled admin frontend at /admin/* when dist is present.
-  // Must register before the web SPA catch-all below.
-  const adminDist = join(process.cwd(), "frontend/apps/admin/dist");
-  if (existsSync(adminDist)) {
-    app.use("/admin", express.static(adminDist));
-    app.get(/^\/admin(\/.*)?$/, (_req: Request, res: Response) => {
-      res.sendFile(join(adminDist, "index.html"));
-    });
-    log(`✓ Serving admin frontend from ${adminDist}`);
-  }
+  // The admin/ops portal is never served from this process — it's a separate
+  // local-only tool (./admin.sh) that talks directly to the production Fly
+  // API from the operator's machine. Do not add an /admin static mount here;
+  // see CLAUDE.md's "Ops Portal" section for why.
 
   // Serve the compiled web frontend when dist/ is present.
   // API routes above always take priority. The SPA catch-all must come last.

@@ -65,13 +65,27 @@ sed -i '' "s/^version:.*/version: ${NEW_VERSION}+${BUILD_NUMBER}/" "$PUBSPEC"
 echo -e "  ${GREEN}✓ Building ${BOLD}${NEW_VERSION} (${BUILD_NUMBER})${NC}"
 echo ""
 
-# RevenueCat iOS key (optional — skip to build without in-app purchases)
-echo -e "  ${BOLD}RevenueCat iOS Key${NC} (press Enter to skip):"
+# RevenueCat iOS key — falls back to REVENUECAT_IOS_KEY in .env when left blank.
+ENV_RC_KEY=""
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  ENV_RC_KEY=$(grep '^REVENUECAT_IOS_KEY=' "$SCRIPT_DIR/.env" | head -1 | cut -d'=' -f2- | tr -d '"'"'"' \r')
+fi
+
+if [ -n "$ENV_RC_KEY" ]; then
+  echo -e "  ${BOLD}RevenueCat iOS Key${NC} (press Enter to use .env: ${CYAN}${ENV_RC_KEY:0:9}…${NC}):"
+else
+  echo -e "  ${BOLD}RevenueCat iOS Key${NC} (press Enter to skip):"
+fi
 echo -e -n "  > "
 read -r RC_KEY
 
+# Blank input → use the .env value (if any).
+if [ -z "$RC_KEY" ]; then
+  RC_KEY="$ENV_RC_KEY"
+fi
+
 if [ -n "$RC_KEY" ]; then
-  echo -e "  ${GREEN}✓ RevenueCat key provided${NC}"
+  echo -e "  ${GREEN}✓ RevenueCat key provided (${RC_KEY:0:9}…)${NC}"
 else
   echo -e "  ${YELLOW}⚠  No RevenueCat key — in-app purchases will be unavailable${NC}"
 fi

@@ -4,3 +4,6 @@
 
 expo-env.d.ts
 # @end expo-cli.env
+
+# Local scraper output (downloaded HTML + generated CSVs) — not for version control
+scripts/out/

@@ -100,10 +100,7 @@ const routeTree = rootRoute.addChildren([
   socialBuzzRoute,
 ]);
 
-// BASE_URL is set by Vite from the `base` option.
-// Dev: "/" → basepath "/"   Prod build (VITE_ADMIN_BASE=/admin/): "/admin/" → basepath "/admin"
-const basepath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "") || "/";
-export const router = createRouter({ routeTree, basepath });
+export const router = createRouter({ routeTree });
 
 declare module "@tanstack/react-router" {
   interface Register {

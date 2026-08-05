@@ -32,6 +32,10 @@
  *
  * OGE pipeline:
  *   POST  /api/admin/oge/refresh
+ *
+ * Global earnings snapshot (local dev only — see routes/admin.ts's
+ * refresh-snapshot handler for why this refuses to run on Fly):
+ *   POST  /api/admin/earnings/refresh-snapshot
  */
 
 import type { Express } from "express";
@@ -44,6 +48,7 @@ import { bustBriefingCache, bustFearGreedCache } from "./volatility";
 import { bustCache as bustOgeCache } from "./oge";
 import { bustHeatmapCache, bustTreemapCache } from "./heatmap";
 import { bustMarketQuotesCache } from "./markets";
+import { bustGlobalEarningsSnapshotCache } from "../trading";
 import { normaliseRoute } from "../lib/route-normalizer";
 import { pagesFor } from "../lib/page-api-map";
 import { authMiddleware } from "../lib/admin-auth";
@@ -452,6 +457,69 @@ export function registerAdminRoutes(app: Express): void {
     await bustOgeCache();
     console.log("[admin] OGE cache busted via admin — pipeline will re-run on next GET");
     return res.json({ ok: true });
+  });
+
+  // ── Global Earnings Snapshot Refresh (local dev ONLY) ────────────────────
+  //
+  // Runs scripts/te_earnings_scrape.sh + scripts/te_earnings_to_snapshot.py,
+  // then busts the running server's in-memory cache so it picks up the
+  // refreshed server/data/te_earnings_snapshot.json without a restart.
+  //
+  // Deliberately refuses to run when FLY_REGION/NODE_ENV=production is set —
+  // see Plan 3 in ~/.claude/plans/the-app-is-a-wiggly-conway.md: the whole
+  // point of the manual-snapshot design is that the actual scrape request to
+  // Trading Economics stays a one-off act on whoever's machine runs this,
+  // never something the deployed server does on its own. This guard is the
+  // enforcement of that decision, not just a suggestion — it blocks the
+  // action regardless of which client calls it (misconfigured local admin
+  // panel pointed at prod, or a direct curl with the admin secret).
+  function runScript(cmd: string, args: string[], timeoutMs: number): Promise<{ code: number | null; stdout: string; stderr: string }> {
+    return new Promise((resolvePromise) => {
+      const child = spawn(cmd, args, { cwd: process.cwd() });
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      let settled = false;
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        resolvePromise({ code, stdout: stdout.join(""), stderr: stderr.join("") });
+      };
+      child.stdout.on("data", (c: Buffer) => stdout.push(c.toString()));
+      child.stderr.on("data", (c: Buffer) => stderr.push(c.toString()));
+      child.on("close", finish);
+      child.on("error", (e) => { stderr.push(String(e)); finish(-1); });
+      setTimeout(() => { child.kill(); finish(-1); }, timeoutMs);
+    });
+  }
+
+  app.post("/api/admin/earnings/refresh-snapshot", authMiddleware, async (_req, res) => {
+    const isProd = !!process.env.FLY_REGION || process.env.NODE_ENV === "production";
+    if (isProd) {
+      return res.status(403).json({
+        error: "This action only runs in local dev. The manual-snapshot design means the deployed " +
+          "server never scrapes Trading Economics itself — run this from a local admin panel instead.",
+      });
+    }
+
+    const scrape = await runScript("bash", ["scripts/te_earnings_scrape.sh"], 60_000);
+    if (scrape.code !== 0) {
+      console.error("[admin] earnings refresh — scrape step failed:", scrape.stderr);
+      return res.status(500).json({ ok: false, step: "scrape", stdout: scrape.stdout, stderr: scrape.stderr });
+    }
+
+    const convert = await runScript(
+      "python3",
+      ["scripts/te_earnings_to_snapshot.py", "scripts/out/te_earnings_raw.csv", "--out", "server/data/te_earnings_snapshot.json"],
+      30_000,
+    );
+    if (convert.code !== 0) {
+      console.error("[admin] earnings refresh — convert step failed:", convert.stderr);
+      return res.status(500).json({ ok: false, step: "convert", stdout: scrape.stdout, stderr: convert.stderr });
+    }
+
+    bustGlobalEarningsSnapshotCache();
+    console.log("[admin] Global earnings snapshot refreshed + cache busted");
+    return res.json({ ok: true, scrapeOutput: scrape.stdout.trim(), convertOutput: convert.stdout.trim() });
   });
 
   // ── AI Call Usage per Device/User ────────────────────────────────────────

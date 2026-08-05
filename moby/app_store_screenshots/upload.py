@@ -29,11 +29,17 @@ def die(msg, r):
     print(f"FATAL {msg}: {r.status_code} {r.text[:600]}"); sys.exit(1)
 
 # 1. editable version
-r = requests.get(f"{BASE}/apps/{APP_ID}/appStoreVersions",
-                 params={"filter[appStoreState]": "PREPARE_FOR_SUBMISSION", "limit": 1}, headers=hdr())
-if r.status_code != 200 or not r.json()["data"]:
+EDITABLE_STATES = {
+    "PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED",
+    "METADATA_REJECTED", "INVALID_BINARY", "WAITING_FOR_EXPORT_COMPLIANCE",
+}
+r = requests.get(f"{BASE}/apps/{APP_ID}/appStoreVersions", params={"limit": 20}, headers=hdr())
+if r.status_code != 200:
+    die("list versions", r)
+editable = [d for d in r.json()["data"] if d["attributes"]["appStoreState"] in EDITABLE_STATES]
+if not editable:
     die("no editable version", r)
-ver_id = r.json()["data"][0]["id"]
+ver_id = editable[0]["id"]
 print("version:", ver_id, r.json()["data"][0]["attributes"]["versionString"])
 
 # 2. en-US localization

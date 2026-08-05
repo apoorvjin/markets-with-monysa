@@ -8,12 +8,15 @@ import {
   fmtPct,
   fmtPrice,
   FreshnessBar,
+  ProBlur,
   SkeletonList,
 } from "@monysa/ui";
 import { api } from "../lib/api";
 
 /** Best Setups (scanner backtest win-rate filter) — mirrors
-    best_setups_card.dart. cacheWarm:false → keep polling every 30s. */
+    best_setups_card.dart. cacheWarm:false → keep polling every 30s.
+    Pro-gated on mobile (`best_setups`); web has no auth/purchase flow, so
+    this renders as a permanent blurred teaser for every visitor. */
 export function BestSetupsCard() {
   const [version, setVersion] = useState<"v1" | "v2">("v1");
 
@@ -40,7 +43,7 @@ export function BestSetupsCard() {
           Computing setups on the server — this refreshes automatically.
         </div>
       ) : (
-        <>
+        <ProBlur positive={(data.setups[0]?.avgReturn3m ?? 0) >= 0} className="best-setups-blur">
           <div className="tbl-wrap" style={{ marginTop: "var(--s3)" }}>
             <table className="tbl">
               <thead>
@@ -80,7 +83,7 @@ export function BestSetupsCard() {
             </table>
           </div>
           <FreshnessBar lastUpdated={data.lastUpdated} />
-        </>
+        </ProBlur>
       )}
     </Card>
   );

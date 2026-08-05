@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/network/api_client.dart';
 import '../../core/network/api_endpoints.dart';
 import '../../core/theme/app_palette.dart';
@@ -91,6 +92,30 @@ final _newsProvider = FutureProvider.autoDispose
   (ref, symbol) {
     ref.keepAlive();
     return TradingRepository.instance.fetchNews(symbol);
+  },
+);
+
+final _pressReleasesProvider = FutureProvider.autoDispose
+    .family<List<NasdaqPressRelease>, String>(
+  (ref, symbol) {
+    ref.keepAlive();
+    return TradingRepository.instance.fetchNasdaqPressReleases(symbol);
+  },
+);
+
+final _insiderProvider = FutureProvider.autoDispose
+    .family<List<InsiderTrade>, String>(
+  (ref, symbol) {
+    ref.keepAlive();
+    return TradingRepository.instance.fetchInsiderTrades(symbol);
+  },
+);
+
+final _institutionalProvider = FutureProvider.autoDispose
+    .family<List<InstitutionalHolder>, String>(
+  (ref, symbol) {
+    ref.keepAlive();
+    return TradingRepository.instance.fetchInstitutionalHoldings(symbol);
   },
 );
 
@@ -863,6 +888,27 @@ class _SignalContentState extends ConsumerState<_SignalContent> {
                         color: color, fontWeight: FontWeight.w700),
                   ),
                   const Spacer(),
+                  if (signal.priceType != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                        border: Border.all(
+                          color: (signal.priceType == 'spot' ? c.accent : c.textFaint)
+                              .withAlpha(signal.priceType == 'spot' ? 140 : 90),
+                        ),
+                      ),
+                      child: Text(
+                        signal.priceType == 'spot' ? 'SPOT' : 'FUT',
+                        style: AppTypography.xs.copyWith(
+                          color: signal.priceType == 'spot' ? c.accent : c.textFaint,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.s2),
+                  ],
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
@@ -1542,6 +1588,11 @@ class _IndicatorsTab extends ConsumerWidget {
     final args = (symbol: symbol, tf: timeframe, strategy: strategy.serverParam);
     final async = ref.watch(_signalProvider(args));
     final fundamentalsAsync = ref.watch(_fundamentalsProvider(symbol));
+    // Supplementary Nasdaq data — never blocks the indicators; empty on failure.
+    final insider = ref.watch(_insiderProvider(symbol)).valueOrNull ??
+        const <InsiderTrade>[];
+    final institutional = ref.watch(_institutionalProvider(symbol)).valueOrNull ??
+        const <InstitutionalHolder>[];
 
     return async.when(
       loading: () => Center(
@@ -1590,6 +1641,14 @@ class _IndicatorsTab extends ConsumerWidget {
             if (epsApplicable && epsHistory.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.s4),
               _EpsSection(epsHistory: epsHistory),
+            ],
+            if (insider.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.s4),
+              _InsiderSection(trades: insider),
+            ],
+            if (institutional.isNotEmpty) ...[
+              const SizedBox(height: AppSpacing.s4),
+              _InstitutionalSection(holders: institutional),
             ],
           ],
         );
@@ -1765,6 +1824,161 @@ class _IndRow {
   final String label;
   final double? value;
   final String Function(double?) interpret;
+}
+
+/// Reused card shell for the Nasdaq insider/institutional sections — mirrors
+/// _IndicatorGroup's uppercase-label + bordered-card look.
+class _NasdaqSection extends StatelessWidget {
+  const _NasdaqSection({required this.title, required this.subtitle, required this.children});
+  final String title;
+  final String subtitle;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title.toUpperCase(),
+            style: AppTypography.labelSm.copyWith(color: c.textMuted, letterSpacing: 1.2)),
+        Text(subtitle, style: AppTypography.xs.copyWith(color: c.textFaint)),
+        const SizedBox(height: AppSpacing.s2),
+        Container(
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: c.border),
+          ),
+          child: Column(children: children),
+        ),
+      ],
+    );
+  }
+}
+
+class _InsiderSection extends StatelessWidget {
+  const _InsiderSection({required this.trades});
+  final List<InsiderTrade> trades;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return _NasdaqSection(
+      title: 'Insider Activity',
+      subtitle: 'Recent Form 4 transactions · Nasdaq',
+      children: [
+        for (var i = 0; i < trades.length && i < 12; i++)
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                    color: i < trades.length - 1 && i < 11
+                        ? c.border
+                        : Colors.transparent),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(trades[i].insider,
+                          style: AppTypography.labelMd
+                              .copyWith(color: c.textPrimary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis),
+                      Text('${trades[i].relation} · ${trades[i].date}',
+                          style: AppTypography.xs.copyWith(color: c.textMuted)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.s3),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      trades[i].type,
+                      style: AppTypography.xs.copyWith(
+                        color: trades[i].type.toLowerCase().contains('buy')
+                            ? c.positive
+                            : trades[i].type.toLowerCase().contains('sell')
+                                ? c.danger
+                                : c.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text('${trades[i].shares} @ ${trades[i].price}',
+                        style: AppTypography.xs.copyWith(color: c.textMuted)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _InstitutionalSection extends StatelessWidget {
+  const _InstitutionalSection({required this.holders});
+  final List<InstitutionalHolder> holders;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return _NasdaqSection(
+      title: 'Institutional Holders',
+      subtitle: '13F filings · Nasdaq',
+      children: [
+        for (var i = 0; i < holders.length && i < 12; i++)
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                    color: i < holders.length - 1 && i < 11
+                        ? c.border
+                        : Colors.transparent),
+              ),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(holders[i].owner,
+                      style:
+                          AppTypography.labelMd.copyWith(color: c.textPrimary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: AppSpacing.s3),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(holders[i].sharesHeld,
+                        style: AppTypography.xs
+                            .copyWith(color: c.textSecondary)),
+                    Text(
+                      holders[i].sharesChangePct,
+                      style: AppTypography.xs.copyWith(
+                        color: holders[i].sharesChangePct.startsWith('-')
+                            ? c.danger
+                            : c.positive,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }
 
 class _IndicatorRow extends StatelessWidget {
@@ -3098,6 +3312,11 @@ class _NewsTab extends ConsumerWidget {
     final c = context.colors;
     final async = ref.watch(_newsProvider(symbol));
 
+    // Official company PRs (Nasdaq) — supplementary; degrades to [] silently so
+    // the News tab never depends on the unofficial source.
+    final prs = ref.watch(_pressReleasesProvider(symbol)).valueOrNull ??
+        const <NasdaqPressRelease>[];
+
     return async.when(
       loading: () => Center(child: CircularProgressIndicator(color: c.accent)),
       error: (_, __) => const ErrorView(message: 'News unavailable'),
@@ -3109,18 +3328,102 @@ class _NewsTab extends ConsumerWidget {
             c: c,
           ),
           Expanded(
-            child: ListView.builder(
+            child: ListView(
               padding: EdgeInsets.fromLTRB(
                 AppSpacing.s5,
                 AppSpacing.s3,
                 AppSpacing.s5,
                 AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
               ),
-              itemCount: result.articles.length,
-              itemBuilder: (ctx, i) => _NewsCard(article: result.articles[i]),
+              children: [
+                if (prs.isNotEmpty) ...[
+                  _NewsSectionLabel(
+                    title: 'Company Releases',
+                    subtitle: 'Official press releases via Nasdaq',
+                    c: c,
+                  ),
+                  ...prs.take(10).map((pr) => _PressReleaseCard(pr: pr)),
+                  const SizedBox(height: AppSpacing.s5),
+                  _NewsSectionLabel(title: 'News & Sentiment', c: c),
+                ],
+                ...result.articles.map((a) => _NewsCard(article: a)),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _NewsSectionLabel extends StatelessWidget {
+  const _NewsSectionLabel({required this.title, required this.c, this.subtitle});
+  final String title;
+  final String? subtitle;
+  final AppPalette c;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+          if (subtitle != null)
+            Text(subtitle!,
+                style: AppTypography.xs.copyWith(color: c.textMuted)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PressReleaseCard extends StatelessWidget {
+  const _PressReleaseCard({required this.pr});
+  final NasdaqPressRelease pr;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return GestureDetector(
+      onTap: pr.url.isEmpty
+          ? null
+          : () => launchUrl(Uri.parse(pr.url),
+              mode: LaunchMode.externalApplication),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: AppSpacing.s3),
+        padding: const EdgeInsets.all(AppSpacing.s4),
+        decoration: BoxDecoration(
+          color: c.surfaceCard,
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          border: Border.all(color: c.accent.withAlpha(40)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.campaign_rounded, size: 14, color: c.accent),
+                const SizedBox(width: 6),
+                Text('PRESS RELEASE',
+                    style: AppTypography.xs.copyWith(
+                        color: c.accent,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4)),
+                const Spacer(),
+                if (pr.created.isNotEmpty)
+                  Text(pr.created,
+                      style: AppTypography.xs.copyWith(color: c.textMuted)),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.s2),
+            Text(pr.title,
+                style: AppTypography.labelMd
+                    .copyWith(color: c.textPrimary, height: 1.4)),
+          ],
+        ),
       ),
     );
   }

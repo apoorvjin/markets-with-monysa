@@ -31,6 +31,15 @@ const _kIndices = <_IndexOption>[
   _IndexOption('nikkei225', '🇯🇵 Nikkei 225'),
   _IndexOption('hsi', '🇭🇰 Hang Seng'),
   _IndexOption('nifty50', '🇮🇳 Nifty 50'),
+  // Wave 2 additions — see server/data/index_constituents.ts for sourcing notes.
+  _IndexOption('tsx60', '🇨🇦 TSX 60'),
+  _IndexOption('asx50', '🇦🇺 ASX 50'),
+  _IndexOption('ibovespa', '🇧🇷 Ibovespa'),
+  _IndexOption('ipc', '🇲🇽 IPC Mexico'),
+  _IndexOption('kospi200', '🇰🇷 KOSPI'),
+  _IndexOption('taiex', '🇹🇼 TAIEX'),
+  _IndexOption('jsetop40', '🇿🇦 JSE Top 40'),
+  _IndexOption('sti', '🇸🇬 STI'),
 ];
 
 const _kTimeframes = <(String, String)>[
@@ -534,8 +543,10 @@ class _MarketStatusPill extends StatelessWidget {
           border: const Color(0x3322C55E),
           pulse: true,
         );
+      // Only 'PRE' is the live 4:00–9:30am pre-market session. 'PREPRE' (the
+      // overnight ~midnight–4am window) has no trading — it falls through to
+      // 'Closed' below, same as 'POSTPOST'.
       case 'PRE':
-      case 'PREPRE':
         return (
           label: 'Market Status: Pre-market',
           dot: const Color(0xFFF59E0B),
@@ -543,13 +554,25 @@ class _MarketStatusPill extends StatelessWidget {
           border: const Color(0x33F59E0B),
           pulse: true,
         );
+      // Only 'POST' is the live 4:00–8:00pm after-hours session. 'POSTPOST'
+      // (~8pm–midnight) has no trading → 'Closed'.
       case 'POST':
-      case 'POSTPOST':
         return (
           label: 'Market Status: After-hours',
           dot: const Color(0xFF60A5FA),
           bg: const Color(0x1F60A5FA),
           border: const Color(0x3360A5FA),
+          pulse: true,
+        );
+      // Server-synthesised: the 8pm–4am ET Blue Ocean overnight session, only
+      // when live overnight prices are present (US indices). Non-US/weekends
+      // stay POSTPOST/PREPRE → 'Closed' below.
+      case 'OVERNIGHT':
+        return (
+          label: 'Market Status: Overnight',
+          dot: const Color(0xFF818CF8),
+          bg: const Color(0x1F818CF8),
+          border: const Color(0x33818CF8),
           pulse: true,
         );
       default:

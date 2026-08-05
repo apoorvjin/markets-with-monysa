@@ -29,6 +29,10 @@ export const CountryTariff = z
     lastUpdated: z.string().nullish(),
     /** 0-100 weighted exposure score: headline rate + sector breadth + USD exposure. */
     impactScore: z.number().nullish(),
+    /** False for the ~30 tariff-list countries with no Yahoo-resolvable exchange in
+     * COUNTRY_EXCHANGE_MAP — clients should hide/disable "View Top Listed Stocks"
+     * rather than navigate to a screen that will always come back empty. */
+    hasStockCoverage: z.boolean().nullish(),
   })
   .passthrough();
 export type CountryTariff = z.infer<typeof CountryTariff>;

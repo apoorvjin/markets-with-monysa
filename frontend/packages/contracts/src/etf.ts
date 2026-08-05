@@ -8,6 +8,7 @@ export const EtfCategory = z.enum([
   "commodity",
   "thematic",
   "leveraged",
+  "global_sector",
 ]);
 export type EtfCategory = z.infer<typeof EtfCategory>;
 

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fetchYahooPrice, fetchRangeData } from "./shared";
 import { yahooProvider } from "../providers";
+import { COUNTRY_EXCHANGE_MAP } from "./markets";
 import {
   getTariffOverlay,
   maybeRefreshTariffs,
@@ -39,6 +40,53 @@ async function fetchWorldBank(code: string, indicator: string): Promise<number |
     return null;
   }
 }
+
+// Same World Bank fetch as fetchWorldBank, but also returns which year the
+// value is from — needed for the debt comparison panel below so it can be
+// labeled "as of <year>" rather than implying a live figure. Kept as a
+// separate function rather than changing fetchWorldBank's return shape,
+// since that would require touching its 4 existing call sites for a value
+// only this new panel needs.
+async function fetchWorldBankWithYear(code: string, indicator: string): Promise<{ value: number; year: string } | null> {
+  try {
+    const url = `https://api.worldbank.org/v2/country/${code}/indicator/${indicator}?format=json&mrv=3&per_page=3`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const json: unknown = await res.json();
+    if (!Array.isArray(json) || !Array.isArray(json[1])) return null;
+    const records = json[1] as { value: number | null; date: string }[];
+    const found = records.find((r) => r.value != null);
+    return found ? { value: found.value as number, year: found.date } : null;
+  } catch {
+    return null;
+  }
+}
+
+// G20+ basket for the Global Debt Comparison panel (Wave 1d) — World Bank
+// 2-letter country codes + display names.
+const DEBT_COMPARISON_COUNTRIES: { code: string; name: string }[] = [
+  { code: "US", name: "United States" },
+  { code: "JP", name: "Japan" },
+  { code: "CN", name: "China" },
+  { code: "DE", name: "Germany" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "FR", name: "France" },
+  { code: "IN", name: "India" },
+  { code: "IT", name: "Italy" },
+  { code: "BR", name: "Brazil" },
+  { code: "CA", name: "Canada" },
+  { code: "KR", name: "South Korea" },
+  { code: "AU", name: "Australia" },
+  { code: "MX", name: "Mexico" },
+  { code: "ZA", name: "South Africa" },
+  { code: "ID", name: "Indonesia" },
+  { code: "TR", name: "Turkey" },
+  { code: "SA", name: "Saudi Arabia" },
+  { code: "RU", name: "Russia" },
+  { code: "AR", name: "Argentina" },
+];
+const DEBT_COMPARISON_CACHE_DURATION = 24 * 60 * 60 * 1000; // annual-frequency data — 24h is plenty
+let debtComparisonCache: { data: unknown; timestamp: number } | null = null;
 
 async function fetchRestCountries(code: string): Promise<{ population: number | null; area: number | null } | null> {
   try {
@@ -623,6 +671,38 @@ export function registerEconomyRoutes(app: Express): void {
     }
   });
 
+  // GET /api/economy/debt-comparison — Debt-to-GDP for a G20+ basket (Wave 1d).
+  // Beside, not instead of, /api/usa-debt's own debt clock — annual-frequency
+  // World Bank data (GC.DOD.TOTL.GD.ZS), not real-time, labeled with the
+  // actual year returned rather than implying a live figure.
+  app.get("/api/economy/debt-comparison", async (_req, res) => {
+    try {
+      res.set("Cache-Control", "public, max-age=43200, stale-while-revalidate=86400"); // 12h / 24h SWR
+      if (debtComparisonCache && Date.now() - debtComparisonCache.timestamp < DEBT_COMPARISON_CACHE_DURATION) {
+        return res.json(debtComparisonCache.data);
+      }
+
+      const results = await Promise.all(
+        DEBT_COMPARISON_COUNTRIES.map(async (c) => {
+          const wb = await fetchWorldBankWithYear(c.code, "GC.DOD.TOTL.GD.ZS");
+          return {
+            code: c.code,
+            name: c.name,
+            debtToGdpPct: wb ? +wb.value.toFixed(1) : null,
+            year: wb?.year ?? null,
+          };
+        }),
+      );
+
+      const data = { countries: results, lastUpdated: new Date().toISOString() };
+      debtComparisonCache = { data, timestamp: Date.now() };
+      res.json(data);
+    } catch (error) {
+      console.error("Error fetching debt comparison data:", error);
+      res.status(500).json({ error: "Failed to fetch debt comparison data" });
+    }
+  });
+
   app.get("/api/country-data/:code", async (req, res) => {
     const code = (req.params.code as string).toUpperCase();
     if (!code) return res.status(400).json({ error: "Invalid code" });
@@ -814,7 +894,15 @@ export function registerEconomyRoutes(app: Express): void {
       const raw = await readFile(filePath, "utf-8");
       const baseline: TariffCountryRaw[] = JSON.parse(raw);
       const merged = mergeTariffOverlay(baseline, overlay);
-      const scored = merged.map((c) => ({ ...c, impactScore: computeTariffImpactScore(c) }));
+      // Wave 4: lets clients hide/disable "View Top Listed Stocks" for the ~30 tariff-list
+      // countries with no real Yahoo-resolvable exchange, instead of navigating to an
+      // empty screen. Computed from the same map /api/stocks/:countryCode itself checks —
+      // never a second, driftable copy of the country list.
+      const scored = merged.map((c) => ({
+        ...c,
+        impactScore: computeTariffImpactScore(c),
+        hasStockCoverage: c.countryCode in COUNTRY_EXCHANGE_MAP,
+      }));
 
       const hasOverlay = !!overlay && Object.keys(overlay.countries).length > 0;
       const result = {

@@ -2,8 +2,12 @@ import { type ZodTypeAny, type z } from "zod";
 import { ApiMetricsResponseSchema, AiUsageResponseSchema } from "@monysa/contracts";
 import { clearToken, getToken } from "./auth";
 
+// The admin/ops portal is the gateway for production ops work, so it always
+// targets the deployed Fly API by default — never a local dev server, and
+// never same-origin (it's never served from that origin — see admin.sh).
+// Override with VITE_API_BASE_URL only for deliberate local-API testing.
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)
-  ?? (import.meta.env.DEV ? "http://localhost:5001" : "");
+  ?? "https://monysa-api.fly.dev";
 
 export class AdminApiError extends Error {
   constructor(public status: number, message: string) {

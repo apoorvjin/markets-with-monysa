@@ -1,7 +1,7 @@
 name: moby
 description: FinBrio — Global Financial Intelligence Dashboard
 publish_to: 'none'
-version: 1.0.1+202607180151
+version: 1.1.0+202608042210
 
 environment:
   sdk: '>=3.3.0 <4.0.0'

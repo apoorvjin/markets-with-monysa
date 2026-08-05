@@ -174,3 +174,20 @@ export const UsaDebtResponse = z
   })
   .passthrough();
 export type UsaDebtResponse = z.infer<typeof UsaDebtResponse>;
+
+/** GET /api/economy/debt-comparison — G20+ Debt-to-GDP (World Bank, annual — not real-time).
+ * `year` is per-country since World Bank reporting recency varies a lot by country;
+ * `debtToGdpPct`/`year` are both null when no World Bank figure exists for that country. */
+export const DebtComparisonCountry = z.object({
+  code: z.string(),
+  name: z.string(),
+  debtToGdpPct: z.number().nullable(),
+  year: z.string().nullable(),
+});
+export type DebtComparisonCountry = z.infer<typeof DebtComparisonCountry>;
+
+export const DebtComparisonResponse = z.object({
+  countries: z.array(DebtComparisonCountry),
+  lastUpdated: z.string().nullish(),
+});
+export type DebtComparisonResponse = z.infer<typeof DebtComparisonResponse>;

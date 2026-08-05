@@ -10,6 +10,7 @@ class QuoteItem {
     this.changePercent,
     this.preMarketPrice,
     this.preMarketChangePercent,
+    this.priceType,
   });
 
   final String symbol;
@@ -22,6 +23,9 @@ class QuoteItem {
   final double? changePercent;
   final double? preMarketPrice;
   final double? preMarketChangePercent;
+  // "spot" | "futures" | null — commodities Yahoo serves as futures get a real spot
+  // overlay (gold today); null for index/crypto/forex. Drives the Spot/Futures tag.
+  final String? priceType;
 
   factory QuoteItem.fromJson(Map<String, dynamic> j) => QuoteItem(
         symbol: j['symbol'] as String,
@@ -35,6 +39,7 @@ class QuoteItem {
         preMarketPrice: (j['preMarketPrice'] as num?)?.toDouble(),
         preMarketChangePercent:
             (j['preMarketChangePercent'] as num?)?.toDouble(),
+        priceType: j['priceType'] as String?,
       );
 }
 
@@ -59,6 +64,7 @@ class TradingSignal {
     this.vwapDeviation,
     this.vixAtSignal,
     this.dynamicThreshold,
+    this.priceType,
   });
 
   final String symbol;
@@ -80,6 +86,7 @@ class TradingSignal {
   final double? vwapDeviation;
   final double? vixAtSignal;
   final double? dynamicThreshold;
+  final String? priceType; // "spot" | "futures" | null — see QuoteItem.priceType
 
   factory TradingSignal.fromJson(Map<String, dynamic> j) => TradingSignal(
         symbol: j['symbol'] as String,
@@ -105,6 +112,7 @@ class TradingSignal {
         vwapDeviation: (j['vwapDeviation'] as num?)?.toDouble(),
         vixAtSignal: (j['vixAtSignal'] as num?)?.toDouble(),
         dynamicThreshold: (j['dynamicThreshold'] as num?)?.toDouble(),
+        priceType: j['priceType'] as String?,
       );
 }
 
@@ -238,6 +246,102 @@ class NewsResult {
   const NewsResult({required this.articles, required this.aggregateSentiment});
   final List<NewsArticle> articles;
   final double aggregateSentiment;
+}
+
+/// Official company press release from Nasdaq (unofficial keyless endpoint).
+class NasdaqPressRelease {
+  const NasdaqPressRelease({
+    required this.title,
+    required this.url,
+    required this.created,
+  });
+
+  final String title;
+  final String url;
+
+  /// Coarse date string as Nasdaq gives it, e.g. "Aug 4, 2026".
+  final String created;
+
+  factory NasdaqPressRelease.fromJson(Map<String, dynamic> j) => NasdaqPressRelease(
+        title: j['title'] as String? ?? '',
+        url: j['url'] as String? ?? '',
+        created: j['created'] as String? ?? '',
+      );
+}
+
+/// Insider (Form 4) transaction from Nasdaq. All fields are display strings.
+class InsiderTrade {
+  const InsiderTrade({
+    required this.insider,
+    required this.relation,
+    required this.date,
+    required this.type,
+    required this.shares,
+    required this.price,
+  });
+
+  final String insider;
+  final String relation;
+  final String date;
+  final String type;
+  final String shares;
+  final String price;
+
+  factory InsiderTrade.fromJson(Map<String, dynamic> j) => InsiderTrade(
+        insider: j['insider'] as String? ?? '',
+        relation: j['relation'] as String? ?? '',
+        date: j['date'] as String? ?? '',
+        type: j['type'] as String? ?? '',
+        shares: j['shares'] as String? ?? '',
+        price: j['price'] as String? ?? '',
+      );
+}
+
+/// Institutional (13F) holder from Nasdaq.
+class InstitutionalHolder {
+  const InstitutionalHolder({
+    required this.owner,
+    required this.sharesHeld,
+    required this.sharesChangePct,
+    required this.marketValue,
+  });
+
+  final String owner;
+  final String sharesHeld;
+  final String sharesChangePct;
+  final String marketValue;
+
+  factory InstitutionalHolder.fromJson(Map<String, dynamic> j) => InstitutionalHolder(
+        owner: j['owner'] as String? ?? '',
+        sharesHeld: j['sharesHeld'] as String? ?? '',
+        sharesChangePct: j['sharesChangePct'] as String? ?? '',
+        marketValue: j['marketValue'] as String? ?? '',
+      );
+}
+
+/// One row of Nasdaq's dividend calendar.
+class DividendRow {
+  const DividendRow({
+    required this.symbol,
+    required this.companyName,
+    required this.rate,
+    required this.annualDividend,
+    required this.paymentDate,
+  });
+
+  final String symbol;
+  final String companyName;
+  final String rate;
+  final String annualDividend;
+  final String paymentDate;
+
+  factory DividendRow.fromJson(Map<String, dynamic> j) => DividendRow(
+        symbol: j['symbol'] as String? ?? '',
+        companyName: j['companyName'] as String? ?? '',
+        rate: j['rate'] as String? ?? '',
+        annualDividend: j['annualDividend'] as String? ?? '',
+        paymentDate: j['paymentDate'] as String? ?? '',
+      );
 }
 
 class StockSearchResult {

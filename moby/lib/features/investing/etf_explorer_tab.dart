@@ -27,6 +27,7 @@ const List<({String id, String label})> _kCategories = [
   (id: 'fixed_income', label: 'Fixed Income'),
   (id: 'commodity', label: 'Commodity'),
   (id: 'thematic', label: 'Thematic'),
+  (id: 'global_sector', label: 'Global Sectors'),
   (id: 'leveraged', label: 'Leveraged/Inverse'),
 ];
 
@@ -546,7 +547,7 @@ class _RotationView extends ConsumerWidget {
   final String category;
 
   // Must match ETF_ROTATION_CATEGORIES in server/data/etf_universe.ts.
-  static const _rotationEligible = {'sector', 'broad', 'international', 'thematic'};
+  static const _rotationEligible = {'sector', 'broad', 'international', 'thematic', 'global_sector'};
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

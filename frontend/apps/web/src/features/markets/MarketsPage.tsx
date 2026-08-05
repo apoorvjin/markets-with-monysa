@@ -7,6 +7,7 @@ import {
   TREEMAP_TIMEFRAMES,
   type TreemapIndexParam,
   type TreemapTimeframe,
+  type TreemapStock,
 } from "@monysa/contracts";
 import { CanvasTreemap } from "@monysa/charts";
 import {
@@ -194,6 +195,20 @@ function TreemapSkeleton() {
   );
 }
 
+// Live pre/post-market change (vs the regular close) for the active session, or
+// null outside extended hours. Mirrors mobile's sessionDeltaPct.
+function sessionDelta(
+  marketState: string | null | undefined,
+  s: TreemapStock,
+): number | null {
+  if (marketState === "OVERNIGHT") return s.overnightChangePercent ?? null;
+  if (marketState === "PRE" || marketState === "PREPRE")
+    return s.preMarketChangePercent ?? null;
+  if (marketState === "POST" || marketState === "POSTPOST")
+    return s.postMarketChangePercent ?? null;
+  return null;
+}
+
 function TreemapTab() {
   const navigate = useNavigate();
   const [index, setIndex] = useState<TreemapIndexParam>("sp500");
@@ -220,6 +235,7 @@ function TreemapTab() {
     label: s.symbol,
     value: effectiveMarketCap(s),
     change: s.changePercent ?? 0,
+    extraChange: sessionDelta(data?.marketState, s),
     sublabel: `${s.name} · ${s.sector ?? "—"} · ${fmtCompact(effectiveMarketCap(s))}`,
     group: s.sector ?? "Other",
     buySignal: s.buyVolumeSignal ?? false,

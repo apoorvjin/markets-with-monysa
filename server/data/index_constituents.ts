@@ -123,6 +123,99 @@ export const RUSSELL2000_SYMBOLS: string[] = [
   "HALO", "QLYS", "TKR",  "ETSY", "POOL", "GTLB", "HIMS", "INTA", "ASB",  "BWXT",
 ];
 
+// S&P/TSX 60 — Canada large-cap blue chips. Yahoo suffix: .TO (class shares use
+// a hyphen, e.g. BIP-UN, CTC-A — Yahoo's convention, not the raw TSX dot notation).
+// All 60 symbols verified live against Yahoo before being added (2026-07).
+export const TSX60_SYMBOLS: string[] = [
+  "AEM.TO", "ATD.TO", "ABX.TO", "BNS.TO", "BMO.TO", "BCE.TO", "BAM.TO", "BN.TO",
+  "BIP-UN.TO", "CAE.TO", "CNR.TO", "CM.TO", "CCO.TO", "CNQ.TO", "CTC-A.TO", "CCL-B.TO",
+  "CLS.TO", "CP.TO", "CVE.TO", "CSU.TO", "GIB-A.TO", "DOL.TO", "FFH.TO", "EMA.TO",
+  "FM.TO", "ENB.TO", "FTS.TO", "FSV.TO", "WN.TO", "FNV.TO", "GIL.TO", "H.TO",
+  "IMO.TO", "IFC.TO", "K.TO", "MG.TO", "L.TO", "MFC.TO", "MRU.TO", "NA.TO",
+  "NTR.TO", "OTEX.TO", "QSR.TO", "PPL.TO", "POW.TO", "RY.TO", "RCI-B.TO", "SHOP.TO",
+  "SAP.TO", "SLF.TO", "SU.TO", "TRP.TO", "T.TO", "TECK-B.TO", "TRI.TO", "TOU.TO",
+  "TD.TO", "WCN.TO", "WSP.TO", "WPM.TO",
+];
+
+// S&P/ASX 50 — Australia large-cap blue chips. Yahoo suffix: .AX
+// All 47 symbols verified live against Yahoo before being added (2026-07);
+// 2 of the source list's 49 (an ETF entry, one unconfirmed recent ASX redomicile)
+// were dropped rather than guessed.
+export const ASX50_SYMBOLS: string[] = [
+  "ALL.AX", "ANZ.AX", "BHP.AX", "CAR.AX", "BXB.AX", "AMC.AX", "CBA.AX", "COL.AX",
+  "CSL.AX", "COH.AX", "EVN.AX", "FMG.AX", "CPU.AX", "FPH.AX", "GMG.AX", "IAG.AX",
+  "LYC.AX", "JHX.AX", "MPL.AX", "JBH.AX", "MQG.AX", "NAB.AX", "NEM.AX", "NST.AX",
+  "NWS.AX", "ORG.AX", "REA.AX", "QAN.AX", "QBE.AX", "PME.AX", "RIO.AX", "RMD.AX",
+  "SCG.AX", "SOL.AX", "S32.AX", "SGH.AX", "SIG.AX", "SGP.AX", "STO.AX", "TLS.AX",
+  "SUN.AX", "WBC.AX", "TCL.AX", "WDS.AX", "WES.AX", "WOW.AX", "XRO.AX",
+];
+
+// Ibovespa (Brazil) — top constituents by weight. Yahoo suffix: .SA
+// All 33 symbols verified live against Yahoo before being added (2026-07);
+// 8 candidates (incl. Embraer, Eletrobras, JBS, Natura — likely renamed/
+// restructured tickers since the source list was published) failed live
+// verification and were dropped rather than guessed at a corrected symbol.
+export const IBOVESPA_SYMBOLS: string[] = [
+  "VALE3.SA", "PETR4.SA", "B3SA3.SA", "ITUB4.SA", "BBDC4.SA", "BBAS3.SA", "ABEV3.SA", "WEGE3.SA",
+  "GGBR4.SA", "RENT3.SA", "RADL3.SA", "MGLU3.SA", "SUZB3.SA", "RDOR3.SA", "BPAC11.SA", "EQTL3.SA",
+  "KLBN11.SA", "HAPV3.SA", "UGPA3.SA", "CMIG4.SA", "CSAN3.SA", "LREN3.SA", "SBSP3.SA", "VIVT3.SA",
+  "CSNA3.SA", "SANB11.SA", "TIMS3.SA", "BEEF3.SA", "CYRE3.SA", "MULT3.SA", "EGIE3.SA", "ASAI3.SA",
+  "YDUQ3.SA",
+];
+
+// S&P/BMV IPC (Mexico) — top constituents. Yahoo suffix: .MX
+// All 33 symbols verified live against Yahoo before being added (2026-07);
+// 2 candidates (ALFA A, Grupo Elektra) failed live verification and were
+// dropped rather than guessed at a corrected symbol.
+export const IPC_SYMBOLS: string[] = [
+  "AC.MX", "ALSEA.MX", "BBAJIOO.MX", "CEMEXCPO.MX", "VOLARA.MX", "BOLSAA.MX", "KOFUBL.MX", "AMXB.MX",
+  "LIVEPOLC-1.MX", "VESTA.MX", "GRUMAB.MX", "GENTERA.MX", "LABB.MX", "FEMSAUBD.MX", "OMAB.MX", "GAPB.MX",
+  "ASURB.MX", "BIMBOA.MX", "GCARSOA1.MX", "GCC.MX", "CHDRAUIB.MX", "GFNORTEO.MX", "GFINBURO.MX", "GMEXICOB.MX",
+  "KIMBERA.MX", "PE&OLES.MX", "TLEVISACPO.MX", "MEGACPO.MX", "PINFRA.MX", "ORBIA.MX", "Q.MX", "RA.MX",
+  "WALMEX.MX",
+];
+
+// KOSPI (South Korea) — top constituents by market cap, 6-digit KRX codes.
+// Yahoo suffix: .KS. All 24 symbols verified live against Yahoo before being
+// added (2026-07). Deliberately a shorter, higher-confidence list rather than
+// padded out with lower-confidence guesses — see Wave 2 notes.
+export const KOSPI_SYMBOLS: string[] = [
+  "005930.KS", "000660.KS", "000270.KS", "005380.KS", "068270.KS", "035420.KS", "373220.KS", "105560.KS",
+  "207940.KS", "006400.KS", "012450.KS", "012330.KS", "005490.KS", "066570.KS", "051910.KS", "096770.KS",
+  "028260.KS", "030200.KS", "032830.KS", "090430.KS", "034220.KS", "055550.KS", "086790.KS", "015760.KS",
+];
+
+// TAIEX (Taiwan) — top constituents by market cap; the full TAIEX tracks ~1000+
+// companies, impractical to enumerate (same rationale as RUSSELL2000_SYMBOLS
+// above). Yahoo suffix: .TW. All 30 symbols verified live against Yahoo before
+// being added (2026-07); 2 candidates (financial holding cos.) failed live
+// verification and were dropped rather than guessed at a corrected symbol.
+export const TAIEX_SYMBOLS: string[] = [
+  "2330.TW", "2317.TW", "2454.TW", "2412.TW", "2382.TW", "2308.TW", "3008.TW", "2881.TW",
+  "2882.TW", "2884.TW", "2886.TW", "2892.TW", "2891.TW", "1303.TW", "1301.TW", "2885.TW",
+  "1326.TW", "3711.TW", "2303.TW", "2912.TW", "2002.TW", "4938.TW", "3231.TW", "2395.TW",
+  "1216.TW", "2603.TW", "1101.TW", "2609.TW", "2615.TW", "1102.TW",
+];
+
+// FTSE/JSE Top 40 (South Africa) — Yahoo suffix: .JO
+// All 40 symbols verified live against Yahoo before being added (2026-07).
+export const JSE_TOP40_SYMBOLS: string[] = [
+  "ANH.JO", "ANG.JO", "NPN.JO", "CFR.JO", "BTI.JO", "GLN.JO", "PRX.JO", "AGL.JO",
+  "FSR.JO", "SBK.JO", "VAL.JO", "GFI.JO", "MTN.JO", "VOD.JO", "S32.JO", "ABG.JO",
+  "SLM.JO", "DSY.JO", "BID.JO", "HAR.JO", "IMP.JO", "SOL.JO", "NED.JO", "SHP.JO",
+  "NRP.JO", "INP.JO", "REM.JO", "KIO.JO", "NPH.JO", "OUT.JO", "SSW.JO", "RNI.JO",
+  "PPH.JO", "BVT.JO", "QLT.JO", "EXX.JO", "SHC.JO", "APN.JO", "GRT.JO", "MNP.JO",
+];
+
+// Straits Times Index (Singapore) — Yahoo suffix: .SI
+// All 30 symbols verified live against Yahoo before being added (2026-07).
+export const STI_SYMBOLS: string[] = [
+  "A17U.SI", "9CI.SI", "D05.SI", "C38U.SI", "C09.SI", "J69U.SI", "D01.SI", "BUOU.SI",
+  "H78.SI", "G13.SI", "BN4.SI", "J36.SI", "AJBU.SI", "ME8U.SI", "M44U.SI", "N2IU.SI",
+  "O39.SI", "5E2.SI", "U96.SI", "Z74.SI", "S68.SI", "C6L.SI", "S58.SI", "S63.SI",
+  "Y92.SI", "U11.SI", "V03.SI", "F34.SI", "U14.SI", "BS6.SI",
+];
+
 export const INDEX_SYMBOLS: Record<string, string[]> = {
   ndx:        NDX_SYMBOLS,
   dji:        DJI_SYMBOLS,
@@ -132,4 +225,12 @@ export const INDEX_SYMBOLS: Record<string, string[]> = {
   hsi:        HSI_SYMBOLS,
   nikkei225:  NIKKEI225_SYMBOLS,
   russell2000: RUSSELL2000_SYMBOLS,
+  tsx60:      TSX60_SYMBOLS,
+  asx50:      ASX50_SYMBOLS,
+  ibovespa:   IBOVESPA_SYMBOLS,
+  ipc:        IPC_SYMBOLS,
+  kospi200:   KOSPI_SYMBOLS,
+  taiex:      TAIEX_SYMBOLS,
+  jsetop40:   JSE_TOP40_SYMBOLS,
+  sti:        STI_SYMBOLS,
 };

@@ -1161,6 +1161,11 @@ class _AboutSection extends StatelessWidget {
               ),
               Divider(height: 1, color: c.border),
               const _AboutLinkRow(
+                label: 'Terms of Use',
+                url: 'https://www.finbrio.net/terms',
+              ),
+              Divider(height: 1, color: c.border),
+              const _AboutLinkRow(
                 label: 'Support',
                 url: 'https://www.finbrio.net/support',
               ),

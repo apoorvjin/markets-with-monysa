@@ -930,6 +930,39 @@ class _StockResultRow extends StatelessWidget {
 
 // ── Asset Rows ────────────────────────────────────────────────────────────────
 
+/// Spot/Futures chip — shown only for commodities (priceType set). Gold trades on a
+/// real spot feed; other commodities show the futures contract (priced above spot).
+class _PriceTypeTag extends StatelessWidget {
+  const _PriceTypeTag(this.priceType);
+  final String? priceType;
+
+  @override
+  Widget build(BuildContext context) {
+    if (priceType == null) return const SizedBox.shrink();
+    final c = context.colors;
+    final isSpot = priceType == 'spot';
+    final color = isSpot ? c.accent : c.textFaint;
+    return Padding(
+      padding: const EdgeInsets.only(left: AppSpacing.s2),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(AppRadius.full),
+          border: Border.all(color: color.withAlpha(isSpot ? 140 : 90)),
+        ),
+        child: Text(
+          isSpot ? 'SPOT' : 'FUT',
+          style: AppTypography.xs.copyWith(
+            color: color,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.4,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _AssetRow extends StatefulWidget {
   const _AssetRow({required this.item, super.key});
   final QuoteItem item;
@@ -994,8 +1027,13 @@ class _AssetRowState extends State<_AssetRow> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
-                  Text(item.symbol,
-                      style: AppTypography.sm.copyWith(color: c.textMuted)),
+                  Row(
+                    children: [
+                      Text(item.symbol,
+                          style: AppTypography.sm.copyWith(color: c.textMuted)),
+                      _PriceTypeTag(item.priceType),
+                    ],
+                  ),
                 ],
               ),
             ),

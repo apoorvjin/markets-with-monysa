@@ -11,6 +11,9 @@ import '../../shared/widgets/max_width_layout.dart';
 final _debtProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
     (_) => DebtRepository.instance.fetchDebt());
 
+final _debtComparisonProvider = FutureProvider.autoDispose<Map<String, dynamic>>(
+    (_) => DebtRepository.instance.fetchDebtComparison());
+
 // ── Data Model ────────────────────────────────────────────────────────────────
 
 class _Stat {
@@ -334,6 +337,8 @@ class _UsaDebtBodyState extends ConsumerState<UsaDebtBody> {
                   _ForeignHoldersBar(items: activeStats),
                 ...activeStats.map(
                     (s) => _StatCard(stat: s, accentColor: cat.accent)),
+                const SizedBox(height: 16),
+                const _GlobalDebtComparisonSection(),
                 const SizedBox(height: 12),
                 _Footer(recordDate: recordDate),
               ],
@@ -843,6 +848,92 @@ class _StatCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Global Debt Comparison (Wave 1d) ────────────────────────────────────────
+//
+// Beside, not instead of, the US debt clock above — annual-frequency World
+// Bank data (GC.DOD.TOTL.GD.ZS), not real-time. Coverage is genuinely uneven
+// across countries (confirmed live: some entries are 30+ years old, several
+// have no data at all) — shown honestly per-country rather than hidden or
+// implied as current.
+
+class _GlobalDebtComparisonSection extends ConsumerWidget {
+  const _GlobalDebtComparisonSection();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_debtComparisonProvider);
+
+    return async.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (data) {
+        final countries =
+            (data['countries'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+        final ranked = countries
+            .where((c2) => c2['debtToGdpPct'] != null)
+            .toList()
+          ..sort((a, b) => ((b['debtToGdpPct'] as num?) ?? 0)
+              .compareTo((a['debtToGdpPct'] as num?) ?? 0));
+        final unavailable =
+            countries.where((c2) => c2['debtToGdpPct'] == null).toList();
+        if (ranked.isEmpty) return const SizedBox.shrink();
+
+        return Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: c.surfaceCard,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.border, width: 0.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('GLOBAL DEBT COMPARISON',
+                  style: AppTypography.xs.copyWith(
+                      color: c.textSecondary,
+                      letterSpacing: 0.5,
+                      fontWeight: FontWeight.w500)),
+              const SizedBox(height: 2),
+              Text('Debt-to-GDP, World Bank — annual data, not a live figure',
+                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+              const SizedBox(height: 10),
+              for (final row in ranked)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(row['name'] as String? ?? '',
+                            style: AppTypography.md
+                                .copyWith(color: c.textPrimary)),
+                      ),
+                      Text('${row['debtToGdpPct']}%',
+                          style: AppTypography.md.copyWith(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 8),
+                      Text('as of ${row['year']}',
+                          style: AppTypography.xs
+                              .copyWith(color: c.textMuted)),
+                    ],
+                  ),
+                ),
+              if (unavailable.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'No World Bank figure available for: ${unavailable.map((c2) => c2['name']).join(', ')}',
+                  style: AppTypography.xs.copyWith(color: c.textMuted),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

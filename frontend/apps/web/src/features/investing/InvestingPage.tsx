@@ -37,7 +37,7 @@ const TABS = [
   "Dashboard",
   "Multibaggers",
   "ETFs",
-  "Presidential",
+  "US Presidential Disclosures",
   "Smart $",
   "Earnings Calendar",
 ] as const;
@@ -59,7 +59,7 @@ export function InvestingPage() {
       {tab === "Exposure" && <ExposureTab />}
       {tab === "Dashboard" && <DashboardTab />}
       {tab === "Multibaggers" && <MultibaggersTab />}
-      {tab === "Presidential" && <PresidentialTab />}
+      {tab === "US Presidential Disclosures" && <PresidentialTab />}
       {tab === "Smart $" && <SmartMoneyTab />}
       {tab === "Earnings Calendar" && <EarningsTab />}
       {tab === "ETFs" && <EtfExplorerTab />}
@@ -150,10 +150,12 @@ function SectorBestSetupsCard() {
           section refreshes automatically.
         </div>
       ) : (
-        <div className="grid-2">
-          <SectorGroupList title="Leading sectors" groups={data.leading} />
-          <SectorGroupList title="Improving sectors" groups={data.improving} />
-        </div>
+        <ProBlur positive={true} className="sector-setups-blur">
+          <div className="grid-2">
+            <SectorGroupList title="Leading sectors" groups={data.leading} />
+            <SectorGroupList title="Improving sectors" groups={data.improving} />
+          </div>
+        </ProBlur>
       )}
     </Card>
   );
@@ -166,6 +168,11 @@ const MOVER_INDICES = [
   { param: "ndx", label: "Nasdaq" },
   { param: "dji", label: "Dow Jones" },
   { param: "russell2000", label: "Russell 2000" },
+  { param: "ftse100", label: "🇬🇧 FTSE 100" },
+  { param: "dax40", label: "🇩🇪 DAX 40" },
+  { param: "nikkei225", label: "🇯🇵 Nikkei 225" },
+  { param: "hsi", label: "🇭🇰 Hang Seng" },
+  { param: "nifty50", label: "🇮🇳 Nifty 50" },
 ] as const;
 type MoverIndex = (typeof MOVER_INDICES)[number]["param"];
 
@@ -383,15 +390,27 @@ const EARNINGS_SECTOR_EMOJI: Record<string, string> = {
   Utilities: "🔌",
 };
 
+// ISO 3166-1 alpha-2 -> flag emoji via the regional-indicator-symbol trick
+// (each letter A-Z maps to U+1F1E6..U+1F1FF) — works for any country code
+// without a hardcoded per-country lookup table.
+function flagEmoji(countryCode: string): string {
+  return [...countryCode.toUpperCase()]
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
+}
+
 function EarningsTab() {
   const navigate = useNavigate();
   const [days, setDays] = useState(15);
   const [query, setQuery] = useState("");
   const [megaOnly, setMegaOnly] = useState(false);
   const [sector, setSector] = useState<string | null>(null);
+  // null = default US (sp500) path, unchanged; a country code switches to the
+  // Trading Economics snapshot path, gated server-side by a Remote Config toggle.
+  const [country, setCountry] = useState<string | null>(null);
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["earnings", days],
-    queryFn: () => api.getEarningsCalendar(days),
+    queryKey: ["earnings", days, country],
+    queryFn: () => api.getEarningsCalendar(days, country ?? undefined),
     staleTime: 6 * 3600_000,
   });
 
@@ -433,9 +452,23 @@ function EarningsTab() {
 
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
+
+  const countryUnavailable = country !== null && data && data.available === false;
+
   return (
     <>
       <div className="toolbar">
+        <ChipRow>
+          <Chip label="🇺🇸 US" active={country === null} onClick={() => setCountry(null)} />
+          {(data?.countries ?? []).map((c) => (
+            <Chip
+              key={c.code}
+              label={`${flagEmoji(c.code)} ${c.name}`}
+              active={country === c.code}
+              onClick={() => setCountry(c.code)}
+            />
+          ))}
+        </ChipRow>
         <ChipRow>
           {[7, 15, 30].map((d) => (
             <Chip key={d} label={`${d} days`} active={days === d} onClick={() => setDays(d)} />
@@ -465,6 +498,10 @@ function EarningsTab() {
       </div>
       {isLoading || !data ? (
         <SkeletonList rows={10} />
+      ) : countryUnavailable ? (
+        <Card>
+          <div className="cell-sub">Global earnings data isn't available yet for this country.</div>
+        </Card>
       ) : grouped.length === 0 ? (
         <Card>
           <div className="cell-sub">
@@ -476,7 +513,7 @@ function EarningsTab() {
       ) : (
         <>
           <div className="cell-sub" style={{ margin: "var(--s2) 0" }}>
-            {filtered.length} companies reporting · S&P 500
+            {filtered.length} companies reporting · {country ? (data?.countries?.find((c) => c.code === country)?.name ?? country) : "S&P 500"}
             {busiest ? ` · Busiest: ${busiest.date} (${busiest.n})` : ""}
           </div>
           <div className="tbl-wrap" style={{ maxHeight: "70vh" }}>
@@ -746,7 +783,7 @@ function SmartMoneyTab() {
       <Card>
         <strong>
           {active.data?.meta?.label ??
-            (strategy === "lobbying" ? "Lobbying growth" : "Insider buying")}
+            (strategy === "lobbying" ? "US Lobbying growth" : "US Insider buying")}
         </strong>
         {active.isLoading || !active.data ? (
           <SkeletonList rows={10} height={28} />
@@ -853,6 +890,7 @@ const ETF_CATEGORIES: { id: EtfCategory | ""; label: string }[] = [
   { id: "fixed_income", label: "Fixed Income" },
   { id: "commodity", label: "Commodity" },
   { id: "thematic", label: "Thematic" },
+  { id: "global_sector", label: "Global Sectors" },
   { id: "leveraged", label: "Leveraged/Inverse" },
 ];
 
@@ -1103,6 +1141,7 @@ const RRG_ELIGIBLE_CATEGORIES = new Set<EtfCategory>([
   "broad",
   "international",
   "thematic",
+  "global_sector",
 ]);
 
 function EtfRotationView(props: { category: EtfCategory | "" }) {

@@ -19,6 +19,7 @@ import {
   fmtPct,
   fmtPrice,
   FreshnessBar,
+  ProBlur,
   SignalBadge,
   Skeleton,
   SkeletonList,
@@ -76,6 +77,31 @@ function useQuotes(refetchMs = 30_000) {
 
 const CATEGORIES = ["★ Watchlist", "Commodities", "Indices", "Stocks", "Forex", "Crypto"] as const;
 
+/** Spot/Futures chip — only for commodities (priceType set); null for index/crypto/forex. */
+function PriceTypeTag({ priceType }: { priceType?: "spot" | "futures" | null }) {
+  if (!priceType) return null;
+  const isSpot = priceType === "spot";
+  return (
+    <span
+      title={isSpot ? "Spot price" : "Front-month futures (trades above spot)"}
+      style={{
+        marginLeft: 6,
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: 0.4,
+        padding: "1px 5px",
+        borderRadius: 100,
+        verticalAlign: "middle",
+        color: isSpot ? "var(--accent)" : "var(--text-faint)",
+        border: `1px solid ${isSpot ? "var(--accent)" : "var(--text-faint)"}`,
+        opacity: isSpot ? 1 : 0.7,
+      }}
+    >
+      {isSpot ? "SPOT" : "FUT"}
+    </span>
+  );
+}
+
 function QuoteRows(props: { quotes: QuoteItem[]; watchlist: string[] }) {
   const navigate = useNavigate();
   return (
@@ -111,6 +137,7 @@ function QuoteRows(props: { quotes: QuoteItem[]; watchlist: string[] }) {
             <span style={{ marginRight: 8 }}>{q.flag ?? ""}</span>
             <span className="cell-main">{q.name}</span>{" "}
             <span className="cell-sub">{q.symbol}</span>
+            <PriceTypeTag priceType={q.priceType} />
           </td>
           <td className="num cell-main">{fmtPrice(q.price, q.currency)}</td>
           <td className={`num ${changeClass(q.change)}`}>
@@ -399,6 +426,11 @@ function SignalsTab() {
   const [type, setType] = useState<string>("ALL");
   const [strategy, setStrategy] = useState(STRATEGIES[0]!);
   const { data, isLoading, error, refetch } = useQuotes();
+  // Mobile locks any strategy with serverParam >= 4 (S4–S9 base + all S1+–S9+
+  // enhanced) behind `signals_advanced`. Web has no upgrade sheet to block
+  // chip selection with, so the chips stay clickable but the result table
+  // renders as a permanent blurred teaser instead.
+  const isAdvanced = Number(strategy.serverParam) >= 4;
 
   const symbols = useMemo(() => {
     const quotes = data?.quotes ?? [];
@@ -420,6 +452,28 @@ function SignalsTab() {
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
 
+  const table = (
+    <table className="tbl">
+      <thead>
+        <tr>
+          <th>Asset</th>
+          <th>Signal</th>
+          <th className="num">Confidence</th>
+          <th className="num">Entry</th>
+          <th className="num">Stop</th>
+          <th className="num">Target</th>
+        </tr>
+      </thead>
+      <tbody>
+        {symbols.map((q, i) => {
+          const sq = signalQueries[i];
+          const sig = sq?.data;
+          return <SignalRow key={q.symbol} quote={q} loading={!!sq?.isLoading} signal={sig} />;
+        })}
+      </tbody>
+    </table>
+  );
+
   return (
     <>
       <div className="toolbar">
@@ -432,7 +486,7 @@ function SignalsTab() {
           {STRATEGIES.map((s) => (
             <Chip
               key={s.serverParam}
-              label={s.label}
+              label={Number(s.serverParam) >= 4 ? `${s.label} 🔒` : s.label}
               active={strategy.serverParam === s.serverParam}
               onClick={() => setStrategy(s)}
             />
@@ -444,31 +498,20 @@ function SignalsTab() {
           S9 Silver Liquidity Sweep — optimised for Silver (SI=F) intraday only.
         </div>
       )}
+      {isAdvanced && (
+        <div className="cell-sub">S4–S9 and enhanced (+) strategies require Pro.</div>
+      )}
       {isLoading || !data ? (
         <SkeletonList rows={12} />
       ) : (
         <div className="tbl-wrap" style={{ maxHeight: "70vh" }}>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Asset</th>
-                <th>Signal</th>
-                <th className="num">Confidence</th>
-                <th className="num">Entry</th>
-                <th className="num">Stop</th>
-                <th className="num">Target</th>
-              </tr>
-            </thead>
-            <tbody>
-              {symbols.map((q, i) => {
-                const sq = signalQueries[i];
-                const sig = sq?.data;
-                return (
-                  <SignalRow key={q.symbol} quote={q} loading={!!sq?.isLoading} signal={sig} />
-                );
-              })}
-            </tbody>
-          </table>
+          {isAdvanced ? (
+            <ProBlur positive={true} className="signals-advanced-blur">
+              {table}
+            </ProBlur>
+          ) : (
+            table
+          )}
         </div>
       )}
     </>
@@ -507,11 +550,17 @@ function SignalRow(props: {
 
 // ── Alerts (localStorage, evaluated against 10s-polled quotes) ────────────
 
+// Free-tier cap — mirrors RemoteConfigService.alertLimitFree's default ('3')
+// in moby/lib/services/remote_config_service.dart. Web has no remote config
+// or auth, so every visitor gets the free default.
+const FREE_ALERT_LIMIT = 3;
+
 function AlertsTab() {
   const alerts = useAlerts();
   const [symbol, setSymbol] = useState("");
   const [price, setPrice] = useState("");
   const [direction, setDirection] = useState<"above" | "below">("above");
+  const limitReached = alerts.length >= FREE_ALERT_LIMIT;
 
   // 10s polling while the tab is open — mirrors mobile alert_provider
   const { data } = useQuery({
@@ -531,6 +580,7 @@ function AlertsTab() {
   const priceOf = (sym: string) => quotes.find((q) => q.symbol === sym)?.price;
 
   const submit = () => {
+    if (limitReached) return;
     const target = Number(price);
     const q = quotes.find((x) => x.symbol === symbol);
     if (!q || !Number.isFinite(target) || target <= 0) return;
@@ -577,14 +627,19 @@ function AlertsTab() {
             className="ui-chip"
             data-active="true"
             onClick={submit}
-            disabled={!symbol || !price}
+            disabled={!symbol || !price || limitReached}
           >
             Add alert
           </button>
         </div>
-        {symbol && (
+        {symbol && !limitReached && (
           <div className="cell-sub" style={{ marginTop: "var(--s2)" }}>
             Current price: {fmtPrice(priceOf(symbol))}
+          </div>
+        )}
+        {limitReached && (
+          <div className="cell-sub" style={{ marginTop: "var(--s2)" }}>
+            Free tier is limited to {FREE_ALERT_LIMIT} alerts — remove one to add another.
           </div>
         )}
       </Card>

@@ -154,7 +154,7 @@ class _InvestingScreenState extends State<InvestingScreen>
             Tab(text: 'Dashboard'),
             Tab(text: 'Multibaggers'),
             Tab(text: 'ETFs'),
-            Tab(text: 'Presidential'),
+            Tab(text: 'US Presidential Disclosures'),
             Tab(text: 'Smart \$'),
             Tab(text: 'Earnings Calendar'),
           ],
@@ -652,6 +652,11 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
     (id: 'ndx', label: 'Nasdaq'),
     (id: 'dji', label: 'Dow Jones'),
     (id: 'russell2000', label: 'Russell 2000'),
+    (id: 'ftse100', label: '🇬🇧 FTSE 100'),
+    (id: 'dax40', label: '🇩🇪 DAX 40'),
+    (id: 'nikkei225', label: '🇯🇵 Nikkei 225'),
+    (id: 'hsi', label: '🇭🇰 Hang Seng'),
+    (id: 'nifty50', label: '🇮🇳 Nifty 50'),
   ];
   String _selected = 'sp500';
   String _moversFilter = 'gainers'; // gainers | losers
@@ -689,7 +694,7 @@ class _MoversCardState extends ConsumerState<_MoversCard> {
           ),
           const SizedBox(height: AppSpacing.s2),
           Text(
-            'Top 10 gainers & losers in the active US session',
+            'Top 10 gainers & losers in the active session',
             style: AppTypography.xs.copyWith(color: c.textMuted),
           ),
           const SizedBox(height: AppSpacing.s4),
@@ -2251,7 +2256,7 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
                         size: 16, color: c.warning),
                     const SizedBox(width: AppSpacing.s2),
                     Expanded(
-                      child: Text('Smart Money Signals',
+                      child: Text('US Smart Money Signals',
                           style: AppTypography.labelMd.copyWith(
                               color: c.textPrimary,
                               fontWeight: FontWeight.w700)),
@@ -2385,7 +2390,7 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
               label: 'S1',
               title: 'Lobbying Growth',
               rule:
-                  'Top-10 by largest QoQ increase in Senate LDA lobbying spend',
+                  '(US) Top-10 by largest QoQ increase in Senate LDA lobbying spend',
               explanation:
                   'Companies ramping up lobbying signal upcoming regulatory battles, government contracts, or legislative tailwinds. A sharp spending surge often precedes policy moves that benefit that company\'s sector.',
               examples: 'AMZN, META, GOOGL',
@@ -2398,7 +2403,7 @@ class _QuiverTabState extends ConsumerState<_QuiverTab> {
               label: 'S2',
               title: 'Insider Buys',
               rule:
-                  'Top-10 by insider Form 4 buy count via SEC EDGAR (90-day window)',
+                  '(US) Top-10 by insider Form 4 buy count via SEC EDGAR (90-day window)',
               explanation:
                   'Corporate insiders (officers, directors, 10%+ holders) must file Form 4 when they trade their own company\'s stock. Clusters of insider purchases are a strong signal of management confidence in near-term prospects.',
               examples: 'PLTR, META, NVDA',

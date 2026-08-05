@@ -20,7 +20,7 @@ import { api } from "../../lib/api";
 import { Gauge } from "../../components/Gauge";
 import { HeatmapGrid } from "../../components/HeatmapGrid";
 
-const TABS = ["Dashboard", "Correlation", "Adv Correlation", "Economic Calendar", "Crisis", "Debt"] as const;
+const TABS = ["Dashboard", "Correlation", "Adv Correlation", "Economic Calendar", "Crisis", "US Debt"] as const;
 type Tab = (typeof TABS)[number];
 
 export function MacroPage() {
@@ -40,7 +40,7 @@ export function MacroPage() {
       {tab === "Adv Correlation" && <AdvCorrelationTab />}
       {tab === "Economic Calendar" && <CalendarTab />}
       {tab === "Crisis" && <CrisisTab />}
-      {tab === "Debt" && <DebtTab />}
+      {tab === "US Debt" && <DebtTab />}
     </div>
   );
 }
@@ -479,31 +479,13 @@ function SectorRotationCard() {
   );
 }
 
+// Pro-gated on mobile (`analyst_notes_unlimited`). Web has no auth/purchase
+// flow, so free-tier is the permanent default — clicking "Generate briefing"
+// shows a blurred teaser instead of actually calling the (paid, GPT-4o-mini)
+// /api/volatility/briefing endpoint, since a locked feature shouldn't still
+// incur AI cost on every visitor's click.
 function AiBriefingCard() {
-  const vol = useQuery({
-    queryKey: ["volatility-assets"],
-    queryFn: () => api.getVolatilityAssets(),
-    staleTime: 10 * 60_000,
-  });
   const [requested, setRequested] = useState(false);
-
-  const briefing = useQuery({
-    queryKey: ["briefing"],
-    enabled: requested && !!vol.data,
-    staleTime: 30 * 60_000,
-    queryFn: () => {
-      const items = vol.data?.items ?? [];
-      const pct1M = (sym: string) =>
-        items.find((a) => a.symbol === sym)?.changePercent1M ?? null;
-      return api.postBriefing({
-        vix: vol.data?.vix?.price ?? null,
-        vixBand: vol.data?.vix?.band ?? null,
-        goldPct1M: pct1M("GC=F"),
-        oilPct1M: pct1M("CL=F"),
-        dxyPct1M: pct1M("DX-Y.NYB"),
-      });
-    },
-  });
 
   return (
     <Card>
@@ -513,16 +495,17 @@ function AiBriefingCard() {
           <Chip label="Generate briefing" active onClick={() => setRequested(true)} />
         )}
       </div>
-      {requested &&
-        (briefing.isLoading ? (
-          <SkeletonList rows={4} height={18} />
-        ) : briefing.error ? (
-          <div className="cell-sub">Briefing unavailable: {(briefing.error as Error).message}</div>
-        ) : (
+      {requested && (
+        <ProBlur positive={true} className="briefing-blur">
           <p style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", marginTop: "var(--s3)" }}>
-            {briefing.data?.briefing}
+            Markets are digesting mixed signals this week — volatility remains
+            contained while cross-asset correlations suggest investors are
+            rotating rather than de-risking. Key levels to watch: the VIX
+            term structure, gold's relationship to real yields, and whether
+            the dollar's recent move holds into next week's data.
           </p>
-        ))}
+        </ProBlur>
+      )}
     </Card>
   );
 }
@@ -638,19 +621,68 @@ function DebtTab() {
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
   if (isLoading || !data) return <SkeletonList rows={6} height={48} />;
   return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--s5)" }}>
+      <Card>
+        <div className="page-header">
+          <strong>US National Debt</strong>
+          <span className="cell-sub">as of {data.recordDate ?? "—"}</span>
+        </div>
+        <div className="stat-row" style={{ marginTop: "var(--s4)" }}>
+          <Stat label="Total debt" value={data.totalDebtFormatted ?? "—"} valueClassName="num-down" />
+          <Stat label="Per citizen" value={data.debtPerCitizen ?? "—"} />
+          <Stat label="Debt / GDP" value={data.debtToGdpRatio ?? "—"} />
+          <Stat label="Daily increase" value={data.dailyIncrease ?? "—"} />
+          <Stat label="Deficit (fiscal YTD)" value={data.annualDeficit ?? "—"} />
+          <Stat label="Interest payments (YTD)" value={data.interestPayments ?? "—"} />
+        </div>
+      </Card>
+      <GlobalDebtComparisonCard />
+    </div>
+  );
+}
+
+// Beside, not instead of, the US debt clock above — annual-frequency World
+// Bank data (GC.DOD.TOTL.GD.ZS), not real-time. Coverage is genuinely uneven
+// across countries (confirmed live: some entries are 30+ years old, several
+// have no data at all) — shown honestly per-country rather than hidden or
+// implied as current, same principle as the app's other dated-data fields.
+function GlobalDebtComparisonCard() {
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ["debt-comparison"],
+    queryFn: () => api.getDebtComparison(),
+    staleTime: 12 * 3600_000,
+  });
+  if (error)
+    return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
+  if (isLoading || !data) return <SkeletonList rows={8} height={28} />;
+
+  const ranked = [...data.countries]
+    .filter((c) => c.debtToGdpPct != null)
+    .sort((a, b) => (b.debtToGdpPct ?? 0) - (a.debtToGdpPct ?? 0));
+  const unavailable = data.countries.filter((c) => c.debtToGdpPct == null);
+
+  return (
     <Card>
       <div className="page-header">
-        <strong>US National Debt</strong>
-        <span className="cell-sub">as of {data.recordDate ?? "—"}</span>
+        <strong>Global Debt Comparison</strong>
+        <span className="cell-sub">Debt-to-GDP, World Bank — annual data, not a live figure</span>
       </div>
-      <div className="stat-row" style={{ marginTop: "var(--s4)" }}>
-        <Stat label="Total debt" value={data.totalDebtFormatted ?? "—"} valueClassName="num-down" />
-        <Stat label="Per citizen" value={data.debtPerCitizen ?? "—"} />
-        <Stat label="Debt / GDP" value={data.debtToGdpRatio ?? "—"} />
-        <Stat label="Daily increase" value={data.dailyIncrease ?? "—"} />
-        <Stat label="Deficit (fiscal YTD)" value={data.annualDeficit ?? "—"} />
-        <Stat label="Interest payments (YTD)" value={data.interestPayments ?? "—"} />
-      </div>
+      <table className="tbl" style={{ marginTop: "var(--s3)" }}>
+        <tbody>
+          {ranked.map((c) => (
+            <tr key={c.code}>
+              <td className="cell-main">{c.name}</td>
+              <td className="num">{c.debtToGdpPct}%</td>
+              <td className="cell-sub num">as of {c.year}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {unavailable.length > 0 && (
+        <div className="cell-sub" style={{ marginTop: "var(--s3)" }}>
+          No World Bank figure available for: {unavailable.map((c) => c.name).join(", ")}
+        </div>
+      )}
     </Card>
   );
 }
@@ -670,7 +702,21 @@ const MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+function nextBusinessDay(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function CalendarTab() {
+  const divDate = nextBusinessDay();
+  const dividends = useQuery({
+    queryKey: ["dividends", divDate],
+    queryFn: () => api.getDividendsCalendar(divDate),
+    staleTime: 6 * 3600_000,
+  });
+
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["economy-events"],
     queryFn: () => api.getEconomyEvents(),
@@ -679,6 +725,8 @@ function CalendarTab() {
   if (error)
     return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
   if (isLoading || !data) return <SkeletonList rows={10} />;
+
+  const divRows = dividends.data?.rows ?? [];
 
   const byMonth = new Map<string, typeof data.events>();
   for (const e of data.events) {
@@ -690,6 +738,40 @@ function CalendarTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--s5)" }}>
       <FreshnessBar lastUpdated={data.lastUpdated} />
+
+      {divRows.length > 0 && (
+        <Card>
+          <strong>Ex-Dividends</strong>
+          <div className="cell-sub" style={{ marginTop: "2px" }}>
+            Going ex-dividend {divDate} · via Nasdaq
+          </div>
+          <div style={{ overflowX: "auto", marginTop: "var(--s3)" }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Company</th>
+                  <th className="num">Rate</th>
+                  <th className="num">Annual</th>
+                  <th>Pay date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {divRows.slice(0, 30).map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.symbol}</td>
+                    <td className="cell-sub">{r.companyName ?? ""}</td>
+                    <td className="num">{r.rate ?? ""}</td>
+                    <td className="num">{r.annualDividend ?? ""}</td>
+                    <td className="cell-sub">{r.paymentDate ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
       <ChipRow>
         {(["Fed", "Inflation", "Jobs", "GDP", "Other"] as const).map((cat) => (
           <span key={cat} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "var(--fs-xs)", color: "var(--text-muted)" }}>

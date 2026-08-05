@@ -3,6 +3,7 @@ import { fetchYahooPrice, fetchRangeData, fetchIntradayCandles } from "./shared"
 import type { OHLCVCandle } from "./shared";
 import { getDevicePlan, isPro } from "../plan-enforcement";
 import { INDEX_SYMBOLS } from "../data/index_constituents";
+import { startYahooOvernightStream, getOvernightQuote } from "../lib/yahoo-overnight-stream";
 
 // ── FX normalisation (USD primary, native secondary) ─────────────────────────
 
@@ -154,6 +155,13 @@ const assetsCacheMap = new Map<string, { data: unknown; timestamp: number }>();
 const assetsInFlightMap = new Map<string, Promise<void>>();
 
 export function registerHeatmapRoutes(app: Express): void {
+  // Overnight (Blue Ocean) price stream — leader + clock gated internally. Start
+  // with the S&P 500 universe (ndx/dji are subsets; russell2000/non-US excluded
+  // for now — monitor before widening). Idempotent.
+  startYahooOvernightStream(async () =>
+    (await fetchConstituents("sp500")).map((c) => c.symbol),
+  );
+
   app.get("/api/heatmap", async (_req, res) => {
     try {
       res.set("Cache-Control", "public, max-age=450, stale-while-revalidate=900"); // 7.5m / 15m SWR
@@ -276,7 +284,14 @@ export function registerHeatmapRoutes(app: Express): void {
       }
 
       const index = (req.query.index as string | undefined)?.toLowerCase() ?? "sp500";
-      const SUPPORTED_MOVER_INDICES = new Set(["sp500", "ndx", "dji", "russell2000"]);
+      // Same indices the treemap supports (below) — movers reuses the exact same
+      // treemap quote pipeline via ensureTreemapCacheFresh, so there's no reason
+      // this set should be narrower than the treemap's own SUPPORTED_INDICES.
+      const SUPPORTED_MOVER_INDICES = new Set([
+        "sp500", "ndx", "dji", "ftse100", "nifty50",
+        "dax40", "hsi", "nikkei225", "russell2000",
+        "tsx60", "asx50", "ibovespa", "ipc", "kospi200", "taiex", "jsetop40", "sti",
+      ]);
       if (!SUPPORTED_MOVER_INDICES.has(index)) {
         return res.status(400).json({
           error: `Unsupported index: ${index}. Supported: ${[...SUPPORTED_MOVER_INDICES].join(", ")}.`,
@@ -294,15 +309,18 @@ export function registerHeatmapRoutes(app: Express): void {
       const cached = treemapDataCache.get(cacheKey)!;
       const marketState = cached.marketState ?? "REGULAR";
 
-      const session: "pre" | "regular" | "post" =
+      const session: "pre" | "regular" | "post" | "overnight" =
         marketState === "PRE"
           ? "pre"
+          : marketState === "OVERNIGHT"
+          ? "overnight"
           : (marketState === "POST" || marketState === "POSTPOST")
           ? "post"
           : "regular";
 
       const pickPct = (s: typeof cached.stocks[number]): number | null => {
         if (session === "pre") return s.preMarketChangePercent;
+        if (session === "overnight") return s.overnightChangePercent;
         if (session === "post") return s.postMarketChangePercent;
         return s.changePercent;
       };
@@ -356,6 +374,8 @@ export function registerHeatmapRoutes(app: Express): void {
       const SUPPORTED_INDICES = new Set([
         "sp500", "ndx", "dji", "ftse100", "nifty50",
         "dax40", "hsi", "nikkei225", "russell2000",
+        // Wave 2 additions — see index_constituents.ts for sourcing/verification notes.
+        "tsx60", "asx50", "ibovespa", "ipc", "kospi200", "taiex", "jsetop40", "sti",
       ]);
       if (!SUPPORTED_INDICES.has(index)) {
         return res.status(400).json({
@@ -416,6 +436,11 @@ type TreemapStock = {
   preMarketChangePercent: number | null;
   postMarketPrice: number | null;
   postMarketChangePercent: number | null;
+  // Overnight (Blue Ocean ATS) session — only populated during 8pm–4am ET, from
+  // the WS stream (REST freezes at the 8pm post-market close). changePercent is
+  // vs the regular close.
+  overnightPrice: number | null;
+  overnightChangePercent: number | null;
   // FX normalisation fields (US-005).
   nativeCurrency: string;        // "USD" | "GBP" | "JPY" | "HKD" | "INR"
   marketCapUsd: number | null;   // null only when non-USD index + FX fetch failed
@@ -554,6 +579,11 @@ async function ensureTreemapCacheFresh(
         rangeMap = await fetchRangeBatch(symbols, TIMEFRAME_RANGE[timeframe]);
       }
 
+      // Session deltas (pre/post/overnight) only make sense on 1d, where the
+      // tile's %change is the regular daily move. On 1w/1m/ytd the tile shows a
+      // multi-day range change, so a session bracket would be meaningless —
+      // suppress the session fields there entirely.
+      const is1d = timeframe === "1d";
       const stocks: TreemapStock[] = [];
       for (const c of constituents) {
         const q = quotes.get(c.symbol);
@@ -576,6 +606,7 @@ async function ensureTreemapCacheFresh(
         const marketCapUsd = currency === "USD"
           ? q.marketCap
           : (fxRate != null ? +(q.marketCap * fxRate).toFixed(0) : null);
+        const overnight = is1d ? getOvernightQuote(c.symbol) : null;
         stocks.push({
           symbol: c.symbol,
           name,
@@ -588,10 +619,12 @@ async function ensureTreemapCacheFresh(
           fiftyTwoWeekHigh: q.fiftyTwoWeekHigh,
           fiftyTwoWeekLow: q.fiftyTwoWeekLow,
           sparkline,
-          preMarketPrice: q.preMarketPrice,
-          preMarketChangePercent: q.preMarketChangePercent,
-          postMarketPrice: q.postMarketPrice,
-          postMarketChangePercent: q.postMarketChangePercent,
+          preMarketPrice: is1d ? q.preMarketPrice : null,
+          preMarketChangePercent: is1d ? q.preMarketChangePercent : null,
+          postMarketPrice: is1d ? q.postMarketPrice : null,
+          postMarketChangePercent: is1d ? q.postMarketChangePercent : null,
+          overnightPrice: overnight?.price ?? null,
+          overnightChangePercent: overnight?.changePercent ?? null,
           nativeCurrency: currency,
           marketCapUsd,
           fxRateUsed: currency !== "USD" ? fxRate : null,
@@ -610,6 +643,18 @@ async function ensureTreemapCacheFresh(
         for (const [state, n] of counts) {
           if (n > max) { max = n; marketState = state; }
         }
+      }
+
+      // Overnight synthesis: when the raw state is the 8pm–4am ET window and we
+      // actually have live overnight (Blue Ocean) prices, present it as a single
+      // "OVERNIGHT" state. Non-US indices / weekends have no overnight data →
+      // they keep POSTPOST/PREPRE (which the client renders as "Closed").
+      if (
+        is1d &&
+        (marketState === "POSTPOST" || marketState === "PREPRE") &&
+        stocks.some((s) => s.overnightChangePercent != null)
+      ) {
+        marketState = "OVERNIGHT";
       }
 
       // Gold-ring "strong 30-min buying" flag — 1d + REGULAR only, top-N tiles.

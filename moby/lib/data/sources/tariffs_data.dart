@@ -48,6 +48,7 @@ class CountryTariff {
     required this.laymanExplanation,
     this.lastUpdated = '',
     this.impactScore,
+    this.hasStockCoverage = true,
   });
 
   final String countryName;
@@ -58,6 +59,10 @@ class CountryTariff {
   final String laymanExplanation;
   final String lastUpdated;
   final double? impactScore; // 0-100 weighted exposure: rate + sector breadth + USD exposure
+  // False for the ~30 tariff-list countries with no Yahoo-resolvable exchange in
+  // COUNTRY_EXCHANGE_MAP (server/routes/markets.ts) — see Wave 4's correctness fix.
+  // Defaults true so an older/incomplete payload doesn't wrongly hide the button.
+  final bool hasStockCoverage;
 
   factory CountryTariff.fromJson(Map<String, dynamic> j) => CountryTariff(
         countryName: j['countryName'] as String,
@@ -72,6 +77,7 @@ class CountryTariff {
         laymanExplanation: j['laymanExplanation'] as String? ?? '',
         lastUpdated: j['lastUpdated'] as String? ?? '',
         impactScore: (j['impactScore'] as num?)?.toDouble(),
+        hasStockCoverage: j['hasStockCoverage'] as bool? ?? true,
       );
 
   String get flag {

@@ -940,7 +940,7 @@ export function registerQuiverRoutes(app: Express) {
     try {
       res.set("Cache-Control", "public, max-age=14400, stale-while-revalidate=28800"); // 4h / 8h SWR
       const items = await getLobbyingPortfolio();
-      reply(res, items, { label: "Lobbying Growth", rebalance: "Monthly" });
+      reply(res, items, { label: "US Lobbying Growth", rebalance: "Monthly" });
     } catch (e) {
       console.error("[quiver/lobbying]", e);
       res.status(500).json({ error: "Failed to load lobbying data" });
@@ -989,7 +989,7 @@ export function registerQuiverRoutes(app: Express) {
     try {
       res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR
       const items = await getInsiderPortfolio();
-      reply(res, items, { label: "Insider Buys", rebalance: "Weekly" });
+      reply(res, items, { label: "US Insider Buys", rebalance: "Weekly" });
     } catch (e) {
       console.error("[quiver/insider]", e);
       res.status(500).json({ error: "Failed to load insider data" });
