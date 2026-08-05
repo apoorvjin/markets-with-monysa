@@ -248,16 +248,24 @@ export type AdvCorrelationHistoryResponse = z.infer<typeof AdvCorrelationHistory
     S9 ("Silver Liquidity Sweep") applies to SI=F only — mirror mobile and
     filter the asset list to silver when S9 is selected.
     Enhanced S1+–S9+ use serverParams "10"–"18". */
-export const STRATEGIES: ReadonlyArray<{ label: string; serverParam: string; isEnhanced: boolean }> = [
+// Compact descriptor shown under the S-code on the picker chips (mirrors mobile
+// TradingStrategy.shortName). Full names live in /api/trading/strategies titles.
+const STRATEGY_SHORT_NAMES = [
+  "Core", "Vol-Adj", "News", "Dual", "Quant", "Adapt News", "APEX", "Consensus", "Silver",
+] as const;
+
+export const STRATEGIES: ReadonlyArray<{ label: string; name: string; serverParam: string; isEnhanced: boolean }> = [
   // Base strategies (S1–S9)
   ...Array.from({ length: 9 }, (_, i) => ({
     label: `S${i + 1}`,
+    name: STRATEGY_SHORT_NAMES[i]!,
     serverParam: String(i + 1),
     isEnhanced: false,
   })),
   // Enhanced strategies (S1+–S9+)
   ...Array.from({ length: 9 }, (_, i) => ({
     label: `S${i + 1}+`,
+    name: `${STRATEGY_SHORT_NAMES[i]!}+`,
     serverParam: String(i + 10),
     isEnhanced: true,
   })),

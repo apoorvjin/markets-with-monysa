@@ -486,7 +486,12 @@ function SignalsTab() {
           {STRATEGIES.map((s) => (
             <Chip
               key={s.serverParam}
-              label={Number(s.serverParam) >= 4 ? `${s.label} 🔒` : s.label}
+              label={
+                <span style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1.12, gap: 1 }}>
+                  <span>{Number(s.serverParam) >= 4 ? `${s.label} 🔒` : s.label}</span>
+                  <span style={{ fontSize: "0.72em", fontWeight: 400, opacity: 0.66 }}>{s.name}</span>
+                </span>
+              }
               active={strategy.serverParam === s.serverParam}
               onClick={() => setStrategy(s)}
             />

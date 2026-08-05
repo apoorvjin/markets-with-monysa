@@ -12,6 +12,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../providers/strategy_provider.dart';
+import '../../providers/strategy_defs.dart';
 import '../../providers/chart_provider_provider.dart';
 import '../../shared/widgets/signal_badge.dart';
 import '../../shared/widgets/glass_card.dart';
@@ -547,23 +548,43 @@ class _StrategyPillRow extends StatelessWidget {
                       : c.border,
             ),
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              if (isLocked) ...[
-                Icon(Icons.lock_rounded,
-                    size: 9, color: c.textMuted.withAlpha(160)),
-                const SizedBox(width: 3),
-              ],
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (isLocked) ...[
+                    Icon(Icons.lock_rounded,
+                        size: 9, color: c.textMuted.withAlpha(160)),
+                    const SizedBox(width: 3),
+                  ],
+                  Text(
+                    s.label,
+                    style: AppTypography.sm.copyWith(
+                      color: isLocked
+                          ? c.textMuted.withAlpha(160)
+                          : isActive
+                              ? chipColor
+                              : c.textSecondary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
               Text(
-                s.label,
-                style: AppTypography.sm.copyWith(
+                s.shortName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: AppTypography.xs.copyWith(
+                  fontSize: 9,
+                  height: 1.15,
                   color: isLocked
-                      ? c.textMuted.withAlpha(160)
+                      ? c.textMuted.withAlpha(130)
                       : isActive
-                          ? chipColor
-                          : c.textSecondary,
-                  fontWeight: FontWeight.w600,
+                          ? chipColor.withAlpha(210)
+                          : c.textMuted,
                 ),
               ),
             ],
@@ -662,107 +683,68 @@ void _showStrategyInfoModal(BuildContext context) {
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
     ),
-    builder: (_) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.75,
-      minChildSize: 0.4,
-      maxChildSize: 0.92,
-      builder: (ctx, scrollController) => Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(
-                AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: c.border,
-                      borderRadius: BorderRadius.circular(2),
+    builder: (_) => Consumer(
+      builder: (ctx, ref, __) {
+        final defs = ref.watch(strategyDefsProvider).valueOrNull ??
+            kStrategyDefsFallback;
+        return DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          minChildSize: 0.4,
+          maxChildSize: 0.92,
+          builder: (ctx, scrollController) => Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: c.border,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: AppSpacing.s5),
+                    Text('Trading Strategies',
+                        style: AppTypography.headingMd
+                            .copyWith(color: c.textPrimary)),
+                    const SizedBox(height: AppSpacing.s4),
+                  ],
                 ),
-                const SizedBox(height: AppSpacing.s5),
-                Text('Trading Strategies',
-                    style: AppTypography.headingMd
-                        .copyWith(color: c.textPrimary)),
-                const SizedBox(height: AppSpacing.s4),
-              ],
-            ),
+              ),
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: EdgeInsets.fromLTRB(
+                      AppSpacing.s5,
+                      0,
+                      AppSpacing.s5,
+                      AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
+                  children: [
+                    for (final s in defs) ...[
+                      _AssetStrategyInfoRow(
+                        label: s.label,
+                        title: s.title,
+                        description: s.description,
+                        detail: s.detail,
+                        accentColor: s.accentColor,
+                      ),
+                      const SizedBox(height: AppSpacing.s4),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
-          Expanded(
-            child: ListView(
-              controller: scrollController,
-              padding: EdgeInsets.fromLTRB(
-                  AppSpacing.s5,
-                  0,
-                  AppSpacing.s5,
-                  AppSpacing.s8 + MediaQuery.of(ctx).padding.bottom),
-              children: [
-                _AssetStrategyInfoRow(
-                  label: 'S1', title: 'Technical Analysis',
-                  description: 'Pure price-action signals using momentum and volatility indicators.',
-                  detail: 'RSI-14 · MACD · EMA crossovers · Bollinger Bands · ATR · Rate of Change',
-                  accentColor: c.accent,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S2', title: 'Multi-Factor',
-                  description: 'Builds on S1 with volatility-adaptive entry and exit thresholds.',
-                  detail: 'All S1 indicators + dynamic thresholds calibrated to current market vol',
-                  accentColor: c.warning,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S3', title: 'Hybrid (Tech + Sentiment)',
-                  description: 'Blends technical signals with real-time news sentiment scoring.',
-                  detail: 'S1 signals (70%) + NLP sentiment from latest headlines (30%)',
-                  accentColor: c.danger,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S4', title: 'Regime-Adaptive',
-                  description: 'Detects market regime first, then activates the right engine.',
-                  detail: 'ADX > 25 → Trend Engine · ADX < 18 → Range Engine (RSI, Bollinger, ATR)',
-                  accentColor: c.positive,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S5', title: 'Professional Systematic',
-                  description: 'Four-regime classification with dynamic indicator weights and consensus gate.',
-                  detail: 'Quiet Trend · Quiet Range · Volatile Trend · Chaotic → No Trade · OBV confirmation',
-                  accentColor: c.warning,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S6', title: 'Adaptive Hybrid',
-                  description: 'Regime-aware fusion of technical signals and news sentiment.',
-                  detail: 'High-vol: tech 90% / news 10% · Strong-trend: 85/15 · Low-vol: 60/40',
-                  accentColor: c.accent,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S7', title: 'APEX — Adaptive Probabilistic EXecution',
-                  description: 'Five-regime classifier with divergence veto and 0–100 quality gate (must hit 60).',
-                  detail: 'Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade)',
-                  accentColor: c.danger,
-                ),
-                const SizedBox(height: AppSpacing.s4),
-                _AssetStrategyInfoRow(
-                  label: 'S8', title: 'Ensemble — S4+S5+S7 Consensus',
-                  description: 'Runs three strategies and weights their votes by per-regime accuracy.',
-                  detail: 'Full size on 3/3 agreement · 60% size on 2/3 · No trade on split',
-                  accentColor: c.positive,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        );
+      },
     ),
   );
 }

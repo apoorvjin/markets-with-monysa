@@ -2061,7 +2061,7 @@ function strategyEnsemble(
   const consensusLabel = consensus > 0 ? "bullish" : consensus < 0 ? "bearish" : "mixed";
 
   const bullets = [
-    `Ensemble ${regime} — ${buys.length ? buys.join("+") : "none"} buy · ${sells.length ? sells.join("+") : "none"} sell · weighted consensus ${consensus >= 0 ? "+" : ""}${(consensus * 100).toFixed(0)}%`,
+    `Consensus Vote ${regime} — ${buys.length ? buys.join("+") : "none"} buy · ${sells.length ? sells.join("+") : "none"} sell · weighted consensus ${consensus >= 0 ? "+" : ""}${(consensus * 100).toFixed(0)}%`,
     ...r7.bullets.slice(1, 3),
     agreementCount === 3
       ? "All three engines agree — maximum conviction, full position"
@@ -2930,7 +2930,7 @@ function strategyEnsemblePlus(
   const consensusLabel = consensus > 0 ? "bullish" : consensus < 0 ? "bearish" : "mixed";
 
   const bullets = [
-    `Ensemble+ ${regime} — ${s7dir === null ? "S7+ abstained (quality gate)" : "S7+ voted"} · ${buys.length ? buys.join("+") : "none"} buy · ${sells.length ? sells.join("+") : "none"} sell`,
+    `Consensus Vote+ ${regime} — ${s7dir === null ? "S7+ abstained (quality gate)" : "S7+ voted"} · ${buys.length ? buys.join("+") : "none"} buy · ${sells.length ? sells.join("+") : "none"} sell`,
     ...r7.bullets.slice(1, 3),
     agreementCount >= totalActive
       ? `All ${totalActive} active engines agree — maximum conviction`
@@ -4035,7 +4035,7 @@ const STRATEGY_DEFS = [
   {
     id: "1",
     label: "S1",
-    title: "Technical Analysis",
+    title: "Core Signals",
     description: "Pure price-action signals using momentum and volatility indicators.",
     detail: "RSI-14 · MACD · EMA crossovers · Bollinger Bands · ATR · Rate of Change",
     accentHex: "#00D4AA",
@@ -4043,7 +4043,7 @@ const STRATEGY_DEFS = [
   {
     id: "2",
     label: "S2",
-    title: "Multi-Factor",
+    title: "Volatility-Weighted",
     description: "Builds on S1 with volatility-adaptive entry and exit thresholds.",
     detail: "All S1 indicators + dynamic thresholds calibrated to current market vol",
     accentHex: "#FFB84D",
@@ -4051,7 +4051,7 @@ const STRATEGY_DEFS = [
   {
     id: "3",
     label: "S3",
-    title: "Hybrid (Tech + Sentiment)",
+    title: "News Blend",
     description: "Blends technical signals with real-time news sentiment scoring.",
     detail: "S1 signals (65%) + NLP sentiment from latest headlines (35%)",
     accentHex: "#FF4D6A",
@@ -4059,7 +4059,7 @@ const STRATEGY_DEFS = [
   {
     id: "4",
     label: "S4",
-    title: "Regime-Adaptive",
+    title: "Dual-Engine",
     description: "Detects market regime first, then activates the right engine — Trend or Mean Reversion.",
     detail: "ADX > 25 → Trend Engine (EMA200 1.2×, MACD, Volume) · ADX < 18 → Range Engine (RSI, Bollinger, ATR) · High-conviction threshold (0.55)",
     accentHex: "#00C49A",
@@ -4067,7 +4067,7 @@ const STRATEGY_DEFS = [
   {
     id: "5",
     label: "S5",
-    title: "Professional Systematic",
+    title: "Quant Regime",
     description: "Four-regime classification with dynamic indicator weights, consensus gate, and calibrated confidence — built for high-probability setups.",
     detail: "Quiet Trend (0.45) · Quiet Range (0.60) · Volatile Trend (0.65) · Chaotic → No Trade · ≥60% consensus required · OBV + volume confirmation · score-to-win-rate calibration · VIX-adaptive threshold: −0.05 when VIX<15, +0.10 when VIX>30 (applies to S5 and S5+)",
     accentHex: "#FFB84D",
@@ -4075,7 +4075,7 @@ const STRATEGY_DEFS = [
   {
     id: "6",
     label: "S6",
-    title: "Adaptive Hybrid",
+    title: "Adaptive News",
     description: "Regime-aware fusion of S2 technical signals and enhanced news sentiment — weights shift automatically based on volatility and trend strength.",
     detail: "High-vol: tech 90% / news 10% · Strong-trend: 85/15 · Low-vol: 60/40 · Default: 70/30 · Freshness decay · Source credibility · Negation detection · BUY >0.45 / SELL <−0.35",
     accentHex: "#00D4AA",
@@ -4083,7 +4083,7 @@ const STRATEGY_DEFS = [
   {
     id: "7",
     label: "S7",
-    title: "APEX — Adaptive Probabilistic EXecution",
+    title: "APEX — Quality-Gated Regime Engine",
     description: "Five-regime classifier with regime-specific direction engines, divergence veto, higher-timeframe permission layer, and a 0–100 quality gate that must hit 60 before any trade fires.",
     detail: "Strong Trend · Weak Trend · Ranging · Volatile Breakout · Chaotic (no trade) · VWAP · OBV · Divergence veto · HTF alignment · Cross-asset confirmation · Regime-aware SL/TP (1:1.8 → 2:4.5)",
     accentHex: "#FF4D6A",
@@ -4091,7 +4091,7 @@ const STRATEGY_DEFS = [
   {
     id: "8",
     label: "S8",
-    title: "Ensemble — S4 + S5 + S7 Weighted Consensus",
+    title: "Consensus Vote — S4 + S5 + S7",
     description: "Runs three strategies simultaneously and weights their votes by per-regime historical accuracy. Requires 2 of 3 to agree before firing — when engines split, the answer is HOLD.",
     detail: "Strong Trend: S7 50% · S4 35% · S5 15% · Ranging: S5 45% · S7 35% · S4 20% · Volatile Break: S7 55% · S4 35% · S5 10% · Full position on 3/3 · 60% size on 2/3 · No trade on 1/3 or split",
     accentHex: "#00C49A",
@@ -4108,7 +4108,7 @@ const STRATEGY_DEFS = [
   {
     id: "10",
     label: "S1+",
-    title: "Technical Analysis+",
+    title: "Core Signals+",
     description: "S1 enhanced with OBV institutional flow scoring and volume-participation gate — thin-volume signals are automatically dampened.",
     detail: "All S1 indicators + OBV slope (confirms/contradicts trend) + volume participation gate (sub-50% avg → 0.55× mult, sub-80% → 0.82×) + MACD near-crossover bonus (within 8% of line) · Threshold: 0.35",
     accentHex: "#00D4AA",
@@ -4116,7 +4116,7 @@ const STRATEGY_DEFS = [
   {
     id: "11",
     label: "S2+",
-    title: "Multi-Factor+",
+    title: "Volatility-Weighted+",
     description: "S2 with regime-aware weight shifting instead of blanket volatility multiplier, plus a candle-body direction lock that penalises entries against the prevailing bar.",
     detail: "S1+ base + ADX regime weights (trending: 1.05×, ranging: 0.80×, high-vol: 0.70×) + candle direction lock (opposing body >30% of range → 0.72×) · Threshold: 0.35",
     accentHex: "#FFB84D",
@@ -4124,7 +4124,7 @@ const STRATEGY_DEFS = [
   {
     id: "12",
     label: "S3+",
-    title: "Hybrid+",
+    title: "News Blend+",
     description: "S3 with stricter news quality gate (min 3 high-relevance articles, relevance ≥0.5) and adaptive tech/news blend that shifts to 80/20 when news is stale (>6h).",
     detail: "S1+ base (65%) + enhanced sentiment (35%) · Relevance gate 0.5 (vs 0.2 in S3) · Min 3 articles before news weight activates · Stale-news shift 80/20 when >6h old · Freshness decay + credibility weighting",
     accentHex: "#FF4D6A",
@@ -4132,7 +4132,7 @@ const STRATEGY_DEFS = [
   {
     id: "13",
     label: "S4+",
-    title: "Regime-Adaptive+",
+    title: "Dual-Engine+",
     description: "S4 with a fixed neutral-zone engine (ADX 18–25 no longer falls through), Bollinger Width amplifier in MR mode, and volume-confirmation scoring in Trend mode.",
     detail: "ADX >25 → Trend Engine · ADX 18–25 → Weak Trend Engine (0.70× weight) · ADX <18 → MR Engine + BB-width amplifier (compressed: 1.30×) · Trend mode: vol 1.2× avg confirms (1.0× weight), OBV slope tie-breaker · Split thresholds: Trend 0.45 · MR 0.65 · Other 0.35",
     accentHex: "#00C49A",
@@ -4140,7 +4140,7 @@ const STRATEGY_DEFS = [
   {
     id: "14",
     label: "S5+",
-    title: "Professional Systematic+",
+    title: "Quant Regime+",
     description: "S5 with volume-spike gate on Volatile Trend regime, weighted consensus gate (replacing raw count), and regime-aware EMA200 stretch penalty.",
     detail: "All S5 regimes + Volatile Trend gate: vol must be ≥1.5× avg or regime reclassified to Quiet Range · Weighted consensus ≥60% required (vs raw count) · EMA200 stretch >4% in range / >8% in trend → 15% quality penalty · Same 4 regime thresholds: 0.45/0.60/0.65/chaos",
     accentHex: "#FFB84D",
@@ -4148,7 +4148,7 @@ const STRATEGY_DEFS = [
   {
     id: "15",
     label: "S6+",
-    title: "Adaptive Hybrid+",
+    title: "Adaptive News+",
     description: "S6 with stricter source credibility (unknown publishers score 0.35 vs 0.55), stale-news penalty when ATR<1% + news>6h, and minimum 3-article gate before news weight exceeds 15%.",
     detail: "S2+ tech base + enhanced S6+ sentiment · Unknown source credibility → 0.35 (was 0.55) · Low-vol + stale news → 80/20 split · Min 3 articles for news >10% weight · All original regime weights inherited",
     accentHex: "#00D4AA",
@@ -4164,7 +4164,7 @@ const STRATEGY_DEFS = [
   {
     id: "17",
     label: "S8+",
-    title: "Ensemble+ — Regime-Shared · S7 Abstention",
+    title: "Consensus Vote+ — Regime-Shared · S7 Abstention",
     description: "S8 improved: S7+ abstains instead of voting HOLD when quality gate fails, all sub-strategies share S7+'s regime classification, and position size is differentiated by whether S7+ is among the agreeing engines.",
     detail: "Votes: S4+ + S5+ + S7+ (abstains if quality <60) · Shared regime across all engines (no conflicting classification) · S7+ in majority → 100% risk · S4++S5+ only → 50% risk · Full agreement → 100% risk · Threshold 0.38",
     accentHex: "#00C49A",

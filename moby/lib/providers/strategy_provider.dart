@@ -56,24 +56,47 @@ extension TradingStrategyExt on TradingStrategy {
       };
 
   String get name => switch (this) {
-        TradingStrategy.s1     => 'Technical',
-        TradingStrategy.s2     => 'Multi-Factor',
-        TradingStrategy.s3     => 'Hybrid',
-        TradingStrategy.s4     => 'Regime-Adaptive',
-        TradingStrategy.s5     => 'Professional',
-        TradingStrategy.s6     => 'Adaptive Hybrid',
+        TradingStrategy.s1     => 'Core Signals',
+        TradingStrategy.s2     => 'Volatility-Weighted',
+        TradingStrategy.s3     => 'News Blend',
+        TradingStrategy.s4     => 'Dual-Engine',
+        TradingStrategy.s5     => 'Quant Regime',
+        TradingStrategy.s6     => 'Adaptive News',
         TradingStrategy.s7     => 'APEX',
-        TradingStrategy.s8     => 'Ensemble',
+        TradingStrategy.s8     => 'Consensus Vote',
         TradingStrategy.s9     => 'Silver Liquidity Sweep',
-        TradingStrategy.s1Plus => 'Technical+',
-        TradingStrategy.s2Plus => 'Multi-Factor+',
-        TradingStrategy.s3Plus => 'Hybrid+',
-        TradingStrategy.s4Plus => 'Regime-Adaptive+',
-        TradingStrategy.s5Plus => 'Professional+',
-        TradingStrategy.s6Plus => 'Adaptive Hybrid+',
+        TradingStrategy.s1Plus => 'Core Signals+',
+        TradingStrategy.s2Plus => 'Volatility-Weighted+',
+        TradingStrategy.s3Plus => 'News Blend+',
+        TradingStrategy.s4Plus => 'Dual-Engine+',
+        TradingStrategy.s5Plus => 'Quant Regime+',
+        TradingStrategy.s6Plus => 'Adaptive News+',
         TradingStrategy.s7Plus => 'APEX+',
-        TradingStrategy.s8Plus => 'Ensemble+',
+        TradingStrategy.s8Plus => 'Consensus Vote+',
         TradingStrategy.s9Plus => 'Silver Liquidity Sweep+',
+      };
+
+  // Compact descriptor shown under the S-code on the strategy picker chips
+  // (the full `name` is too wide for a quarter-width pill). Mirrors web STRATEGIES.name.
+  String get shortName => switch (this) {
+        TradingStrategy.s1     => 'Core',
+        TradingStrategy.s2     => 'Vol-Adj',
+        TradingStrategy.s3     => 'News',
+        TradingStrategy.s4     => 'Dual',
+        TradingStrategy.s5     => 'Quant',
+        TradingStrategy.s6     => 'Adapt News',
+        TradingStrategy.s7     => 'APEX',
+        TradingStrategy.s8     => 'Consensus',
+        TradingStrategy.s9     => 'Silver',
+        TradingStrategy.s1Plus => 'Core+',
+        TradingStrategy.s2Plus => 'Vol-Adj+',
+        TradingStrategy.s3Plus => 'News+',
+        TradingStrategy.s4Plus => 'Dual+',
+        TradingStrategy.s5Plus => 'Quant+',
+        TradingStrategy.s6Plus => 'Adapt News+',
+        TradingStrategy.s7Plus => 'APEX+',
+        TradingStrategy.s8Plus => 'Consensus+',
+        TradingStrategy.s9Plus => 'Silver+',
       };
 
   String get description => switch (this) {
