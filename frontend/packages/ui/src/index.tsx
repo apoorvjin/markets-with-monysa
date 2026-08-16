@@ -102,16 +102,22 @@ export function FreshnessBar(props: { lastUpdated: string | null | undefined }) 
 }
 
 /** Blurs children behind a gain/loss-tinted "Upgrade to Pro" overlay.
-    Visual-only teaser — web has no purchase flow, so this never unlocks;
-    mirrors ProBlurOverlay in the Flutter app (pro_blur_overlay.dart). */
+    Mirrors ProBlurOverlay in the Flutter app (pro_blur_overlay.dart). Pass
+    `unlocked` (true for signed-in Pro users) to render the real content with
+    no blur — free/signed-out users keep the teaser. */
 export function ProBlur(props: {
   children: ReactNode;
   positive: boolean;
   className?: string;
+  /** When true, render children directly (Pro user) — no blur, no overlay. */
+  unlocked?: boolean;
   /** Override for tight spaces where "Upgrade to Pro" would clip (e.g. an
       inline metric chip). Defaults to the full phrase. */
   label?: string;
 }) {
+  if (props.unlocked) {
+    return <>{props.children}</>;
+  }
   return (
     <span className={`pro-blur ${props.className ?? ""}`}>
       <span className="pro-blur-content" aria-hidden="true">

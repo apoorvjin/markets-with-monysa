@@ -48,6 +48,45 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
   bool _loading = false;
   String? _error;
 
+  /// Real localized price from the store (e.g. "€11,99", "$12.99"), read from
+  /// the current RevenueCat offering. Apple charges the store price, not the
+  /// hardcoded Remote Config number — so a European user must see the euro
+  /// amount they'll actually be billed, not a "$12.99" that never matches.
+  /// Null until loaded / if the offering is unavailable, in which case we fall
+  /// back to the Remote Config USD price.
+  String? _priceString;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrice();
+  }
+
+  Future<void> _loadPrice() async {
+    if (!EntitlementService.isRevenueCatConfigured) return;
+    try {
+      final offerings = await Purchases.getOfferings();
+      final offering = offerings.current;
+      // Same package resolution as _onPurchaseTap so the displayed price is the
+      // one that will actually be charged.
+      final package = offering?.monthly ??
+          offering?.annual ??
+          ((offering?.availablePackages.isNotEmpty ?? false)
+              ? offering!.availablePackages.first
+              : null);
+      final priceString = package?.storeProduct.priceString;
+      if (priceString != null && priceString.isNotEmpty && mounted) {
+        setState(() => _priceString = priceString);
+      }
+    } catch (_) {
+      // Keep the Remote Config fallback on any failure.
+    }
+  }
+
+  /// Full price label including currency symbol. Prefers the live localized
+  /// store price; falls back to the Remote Config USD price (prefixed with $).
+  String get _priceLabel =>
+      _priceString ?? '\$${RemoteConfigService.proMonthlyPriceUsd}';
 
   Future<void> _onPurchaseTap() async {
     if (!EntitlementService.isRevenueCatConfigured) {
@@ -188,7 +227,7 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
             ),
           ],
           const SizedBox(height: AppSpacing.s6),
-          const _TierComparison(),
+          _TierComparison(proPrice: '$_priceLabel/mo'),
           const SizedBox(height: AppSpacing.s5),
           Container(
             width: double.infinity,
@@ -208,7 +247,7 @@ class _UpgradeSheetState extends State<UpgradeSheet> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '7-day free trial, then \$${RemoteConfigService.proMonthlyPriceUsd}/month. '
+                  '7-day free trial, then $_priceLabel/month. '
                   'Renews automatically every month until canceled.',
                   style: AppTypography.xs.copyWith(color: c.textSecondary),
                 ),
@@ -305,7 +344,11 @@ class _LegalLink extends StatelessWidget {
 }
 
 class _TierComparison extends StatelessWidget {
-  const _TierComparison();
+  const _TierComparison({required this.proPrice});
+
+  /// Localized "…/mo" price label for the Pro column, resolved by the parent
+  /// from the live store price (falls back to the Remote Config USD price).
+  final String proPrice;
 
   @override
   Widget build(BuildContext context) {
@@ -328,7 +371,7 @@ class _TierComparison extends StatelessWidget {
         const SizedBox(width: AppSpacing.s3),
         _TierColumn(
           label: 'Pro',
-          price: '\$${RemoteConfigService.proMonthlyPriceUsd}/mo',
+          price: proPrice,
           features: const [
             'All 9 signal strategies',
             'Unlimited price alerts',

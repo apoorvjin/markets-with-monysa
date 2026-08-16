@@ -27,6 +27,7 @@ import {
   timeAgo,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
+import { SplcGraphCard } from "../../components/SplcGraphCard";
 
 const RANGES: ChartRange[] = ["1mo", "3mo", "6mo", "1y", "5y"];
 
@@ -552,6 +553,8 @@ export function AssetPage(props: { symbol: string; name?: string }) {
           </div>
         )}
       </Card>
+
+      <SplcGraphCard symbol={symbol} />
     </div>
   );
 }

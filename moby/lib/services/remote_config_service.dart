@@ -25,6 +25,7 @@ abstract final class RemoteConfigService {
     'enable_google_signin': 'false',
     'enable_apple_signin': 'false',
     'new_strategy_s4_enabled': 'false',
+    'wire_enabled': 'false',
   };
 
   // ── Initialise ────────────────────────────────────────────────────────────
@@ -69,6 +70,11 @@ abstract final class RemoteConfigService {
   /// Whether S4 strategy is enabled for users (dark-launch gate).
   static bool get newStrategyS4Enabled =>
       _rc.getString('new_strategy_s4_enabled') == 'true';
+
+  /// Whether the Wire (News/OSINT) tab is shown in the bottom nav.
+  /// Kill-switch — defaults to false (hidden) until flipped in Firebase.
+  static bool get wireEnabled =>
+      _rc.getString('wire_enabled') == 'true';
 
   // ── Force refresh (call after returning from the background) ─────────────
 

@@ -1,6 +1,6 @@
 # Moby — Global Financial Intelligence
 
-Flutter mobile app (iOS / Android) backed by a TypeScript Express API. Built for macro investors, professional traders, and trade compliance teams.
+Flutter mobile app (iOS / Android) backed by a TypeScript Express API. Built for the macro-curious — people who follow tariffs, congressional trades and the debt clock — and the self-directed traders who act on the data.
 
 > **Disclaimer:** All prices, signals, and data shown are for informational purposes only and do not constitute financial advice.
 

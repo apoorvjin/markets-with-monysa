@@ -10,11 +10,14 @@ import { registerBillingRoutes } from "./routes/billing";
 import { registerQuiverRoutes } from "./routes/quiver";
 import { registerOgeRoutes } from "./routes/oge";
 import { registerEtfRoutes } from "./routes/etf";
+import { registerSplcRoutes } from "./routes/splc";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerWaitlistRoutes } from "./routes/waitlist";
 import { registerWireRoutes } from "./routes/wire";
 import { registerIntelRoutes } from "./routes/intel";
 import { registerNasdaqRoutes } from "./routes/nasdaq";
+import { registerDatacentersRoutes } from "./routes/datacenters";
+import { registerMaritimeRoutes } from "./routes/maritime";
 import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -35,11 +38,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerQuiverRoutes(app);
   registerOgeRoutes(app);
   registerEtfRoutes(app);
+  registerSplcRoutes(app);
   registerAuthRoutes(app);
   registerWaitlistRoutes(app);
   registerWireRoutes(app);
   registerIntelRoutes(app);
   registerNasdaqRoutes(app);
+  registerDatacentersRoutes(app);
+  registerMaritimeRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

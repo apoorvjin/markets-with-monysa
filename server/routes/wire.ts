@@ -28,7 +28,7 @@ let breakingCache: { data: unknown; ts: number } | null = null;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 120;
 
-interface WireItem {
+export interface WireItem {
   title: string;
   link: string;
   pubDate: string;
@@ -54,8 +54,14 @@ function setCacheHeaders(res: Response, ttlMs: number): void {
   res.set("Cache-Control", `public, max-age=${maxAge}, stale-while-revalidate=${swr}`);
 }
 
-/** Fetch + normalize + classify every feed on a desk, merged/deduped/sorted. */
-async function aggregateDesk(desk: WireDesk): Promise<WireItem[]> {
+/**
+ * Fetch + normalize + classify every feed on a desk, merged/deduped/sorted.
+ * Exported so other route modules can reuse an existing desk's live feed
+ * aggregation instead of re-registering the same RSS sources (see
+ * server/routes/datacenters.ts, which filters the corporate desk for
+ * data-center-related announcements).
+ */
+export async function aggregateDesk(desk: WireDesk): Promise<WireItem[]> {
   const feeds = feedsForDesk(desk);
   const perFeed = await Promise.all(
     feeds.map(async (feed: Feed) => {

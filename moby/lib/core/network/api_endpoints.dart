@@ -131,6 +131,12 @@ abstract final class ApiEndpoints {
 
   static String get sendVerificationEmail => '$baseUrl/api/auth/send-verification-email';
 
+  // Wire — News/OSINT terminal (server route registered via routes.ts).
+  static String get wireDesks => '$baseUrl/api/wire/desks';
+  static String wireItems(String desk, {int limit = 50}) =>
+      '$baseUrl/api/wire/items?desk=${Uri.encodeComponent(desk)}&limit=$limit';
+  static String get wireBreaking => '$baseUrl/api/wire/breaking';
+
   static String etfList({String? category}) => category == null
       ? '$baseUrl/api/etf/list'
       : '$baseUrl/api/etf/list?category=$category';

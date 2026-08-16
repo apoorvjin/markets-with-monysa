@@ -21,6 +21,7 @@ import {
   HeatmapAssetsResponse,
   HeatmapResponse,
   InstitutionalFlowResponse,
+  MeResponse,
   MoversResponse,
   DividendsResponse,
   InsiderTradesResponse,
@@ -32,10 +33,13 @@ import {
   QuiverResponse,
   QuotesResponse,
   RegimeSummaryResponse,
+  ScannerBacktestResponse,
   ScannerResponse,
   SearchResponse,
   SectorBestSetupsResponse,
   SectorsResponse,
+  SplcGraphResponse,
+  SplcUniverseResponse,
   TariffsResponse,
   TradingSignal,
   TreemapResponse,
@@ -50,6 +54,11 @@ import {
   IntelMarketsResponse,
   IntelMaritimeResponse,
   IntelAirspaceResponse,
+  DataCenterFacilitiesResponse,
+  DataCenterPipelineResponse,
+  DataCenterAnnouncementsResponse,
+  MaritimeVesselsResponse,
+  MaritimeChokepointsResponse,
   YieldCurveHistoryResponse,
   type WireDesk,
   type ChartRange,
@@ -105,10 +114,20 @@ export function createApiClient(opts: ApiClientOptions) {
   async function get<S extends z.ZodTypeAny>(
     path: string,
     schema: S,
+    opts?: { revalidate?: boolean },
   ): Promise<z.infer<S>> {
     // Plain GET with no custom headers — keeps requests "simple" (no CORS
     // preflight) and lets the browser HTTP cache drive ETag/304 revalidation.
-    const res = await fetchFn(`${baseUrl}${path}`);
+    //
+    // `revalidate` forces a conditional request instead of trusting a stored
+    // copy. Needed where a previously-served long max-age could still be
+    // "fresh" in a browser: until it expires the browser answers locally and
+    // never learns the response changed. `no-cache` (not `no-store`) keeps
+    // the ETag round-trip, so the usual answer is still a cheap 304.
+    const res = await fetchFn(
+      `${baseUrl}${path}`,
+      opts?.revalidate ? { cache: "no-cache" } : undefined,
+    );
     if (!res.ok) {
       let code: string | undefined;
       let message = `${res.status} ${res.statusText}`;
@@ -140,7 +159,22 @@ export function createApiClient(opts: ApiClientOptions) {
     return schema.parse(await res.json());
   }
 
+  /** Resolves the signed-in user's identity + plan. Unlike every other call,
+      this sends an Authorization bearer (the Firebase ID token) so the server
+      can verify identity and look the plan up — it deliberately opts out of the
+      header-free/ETag path since the response is per-user and uncacheable. */
+  async function getMe(idToken: string): Promise<z.infer<typeof MeResponse>> {
+    const res = await fetchFn(`${baseUrl}/api/me`, {
+      headers: { Authorization: `Bearer ${idToken}` },
+    });
+    if (!res.ok) {
+      throw new ApiError(`${res.status} ${res.statusText}`, res.status, undefined, "/api/me");
+    }
+    return MeResponse.parse(await res.json());
+  }
+
   return {
+    getMe,
     // ── Markets ──────────────────────────────────────────────────────────
     getIndices: () => get("/api/futures/indices", FuturesResponse),
     getCommodities: () => get("/api/futures/commodities", FuturesResponse),
@@ -195,6 +229,11 @@ export function createApiClient(opts: ApiClientOptions) {
       ),
     getRegimeSummary: () =>
       get("/api/trading/regime-summary", RegimeSummaryResponse),
+    getScannerBacktest: (version: "v1" | "v2", type = "assets") =>
+      get(
+        `/api/trading/scanner/backtest/${type}${qs({ version })}`,
+        ScannerBacktestResponse,
+      ),
     getEarningsCalendar: (days = 15, country?: string) =>
       get(`/api/trading/earnings-calendar${qs({ days, country })}`, EarningsResponse),
     getBacktest: (symbol: string) =>
@@ -250,6 +289,13 @@ export function createApiClient(opts: ApiClientOptions) {
     getEtfProfile: (symbol: string) =>
       get(`/api/etf/${encodeURIComponent(symbol)}/profile`, EtfProfileResponse),
     getEtfRotation: () => get("/api/etf/rotation", EtfRotationResponse),
+    // revalidate: these two shipped with a 30-minute max-age before the
+    // payload shape changed, so some browsers still hold a "fresh" copy of
+    // the old shape and would otherwise never re-ask. Costs one 304.
+    getSplcUniverse: () =>
+      get("/api/splc/universe", SplcUniverseResponse, { revalidate: true }),
+    getSplcGraph: (symbol: string) =>
+      get(`/api/splc/${encodeURIComponent(symbol)}`, SplcGraphResponse, { revalidate: true }),
 
     // ── Wire (News/OSINT & gov-feed terminal) ───────────────────────────
     getWireDesks: () => get("/api/wire/desks", WireDesksResponse),
@@ -262,6 +308,16 @@ export function createApiClient(opts: ApiClientOptions) {
     getIntelMarkets: () => get("/api/intel/markets", IntelMarketsResponse),
     getIntelMaritime: () => get("/api/intel/maritime", IntelMaritimeResponse),
     getIntelAirspace: () => get("/api/intel/airspace", IntelAirspaceResponse),
+
+    // ── Data Centers (operating facilities + AI construction pipeline) ──
+    getDatacenterFacilities: () => get("/api/datacenters/facilities", DataCenterFacilitiesResponse),
+    getDatacenterPipeline: () => get("/api/datacenters/pipeline", DataCenterPipelineResponse),
+    getDatacenterAnnouncements: () => get("/api/datacenters/announcements", DataCenterAnnouncementsResponse),
+
+    // ── Tankers (live AIS vessel positions + chokepoint transit counts) ──
+    getMaritimeVessels: (params?: { bbox?: string; types?: string }) =>
+      get(`/api/maritime/vessels${qs({ bbox: params?.bbox, types: params?.types })}`, MaritimeVesselsResponse),
+    getMaritimeChokepoints: () => get("/api/maritime/chokepoints", MaritimeChokepointsResponse),
   };
 }
 

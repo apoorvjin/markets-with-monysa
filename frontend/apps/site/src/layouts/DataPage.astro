@@ -1,0 +1,141 @@
+---
+// Shared layout for the programmatic data/landing pages (debt clock, indicators).
+// Renders the chrome (breadcrumb, header, CTA, footer) + BreadcrumbList/FAQPage
+// JSON-LD; pages fill the default <slot> with their metrics/content using the
+// `dp-*` global helper classes defined below.
+import Base from "./Base.astro";
+import Nav from "../components/Nav.astro";
+import Faq from "../components/Faq.astro";
+import type { FaqItem } from "../components/Faq.astro";
+import DownloadCta from "../components/DownloadCta.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  eyebrow: string;
+  h1: string;
+  lead?: string;
+  updated?: string;
+  crumbLabel: string;
+  crumbPath: string;
+  faqItems?: FaqItem[];
+  ctaHeading: string;
+  ctaBody: string;
+}
+const {
+  title, description, ogTitle, ogDescription, ogImage, eyebrow, h1, lead, updated,
+  crumbLabel, crumbPath, faqItems = [], ctaHeading, ctaBody,
+} = Astro.props;
+
+const site = "https://www.finbrio.net";
+const breadcrumbJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: `${site}/` },
+    { "@type": "ListItem", position: 2, name: crumbLabel, item: `${site}${crumbPath}` },
+  ],
+};
+const faqJsonLd = faqItems.length
+  ? {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      mainEntity: faqItems.map((f) => ({
+        "@type": "Question",
+        name: f.q,
+        acceptedAnswer: { "@type": "Answer", text: f.a },
+      })),
+    }
+  : null;
+---
+
+<Base title={title} description={description} ogTitle={ogTitle} ogDescription={ogDescription} ogImage={ogImage}>
+  <Fragment slot="head">
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(breadcrumbJsonLd)} />
+    {faqJsonLd && <script is:inline type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />}
+  </Fragment>
+
+  <Nav />
+
+  <main id="main-content" class="wrap">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href="/">Home</a> <span>/</span> <span aria-current="page">{crumbLabel}</span>
+    </nav>
+
+    <header class="head">
+      <p class="eyebrow">{eyebrow}</p>
+      <h1>{h1}</h1>
+      {lead && <p class="lead">{lead}</p>}
+      {updated && <p class="updated">{updated}</p>}
+    </header>
+
+    <slot />
+
+    {
+      faqItems.length > 0 && (
+        <section class="dp-block">
+          <h2>FAQ</h2>
+          <Faq items={faqItems} />
+        </section>
+      )
+    }
+
+    <section class="cta-block">
+      <h2>{ctaHeading}</h2>
+      <p>{ctaBody}</p>
+      <DownloadCta />
+    </section>
+  </main>
+
+  <footer class="foot">
+    <a href="/">FinBrio</a>
+    <nav>
+      <a href="/tariffs">Tariffs</a>
+      <a href="/us-debt-clock">US Debt Clock</a>
+      <a href="/indicators/yield-curve">Yield Curve</a>
+      <a href="/indicators/fear-and-greed">Fear &amp; Greed</a>
+      <a href="/indicators/vix">VIX</a>
+      <a href="/#macro">Macro</a>
+    </nav>
+    <p>Informational only — not financial advice.</p>
+  </footer>
+</Base>
+
+<style>
+  .wrap { max-width: 820px; margin: 0 auto; padding: calc(var(--s8) * 1.5) var(--s5) var(--s8); }
+  .crumbs { font-size: 13px; color: var(--text-muted); display: flex; gap: var(--s2); align-items: center; margin-bottom: var(--s6); }
+  .crumbs a { color: var(--text-secondary); text-decoration: none; }
+  .crumbs a:hover { color: var(--accent); }
+  .crumbs span[aria-current] { color: var(--text-primary); }
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 var(--s3); }
+  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 var(--s5); color: var(--text-primary); }
+  .lead { font-size: 17px; line-height: 1.7; color: var(--text-secondary); max-width: 66ch; margin: 0 0 var(--s4); }
+  .updated { font-size: 13px; color: var(--text-muted); margin: 0; }
+  .cta-block { text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: var(--s8) var(--s6); margin: calc(var(--s8) * 1.2) 0; }
+  .cta-block h2 { font-size: clamp(20px, 3.5vw, 26px); margin: 0 0 var(--s3); color: var(--text-primary); }
+  .cta-block p { color: var(--text-secondary); max-width: 52ch; margin: 0 auto var(--s6); line-height: 1.6; }
+  .foot { max-width: 820px; margin: 0 auto; padding: var(--s7) var(--s5) var(--s8); border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: var(--s4); align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-muted); }
+  .foot > a { font-weight: 800; color: var(--text-primary); text-decoration: none; }
+  .foot nav { display: flex; gap: var(--s5); flex-wrap: wrap; }
+  .foot nav a { color: var(--text-secondary); text-decoration: none; }
+  .foot nav a:hover { color: var(--accent); }
+  .foot p { margin: 0; width: 100%; }
+</style>
+
+<!-- Global helpers for slotted page content (scoping doesn't reach the slot). -->
+<style is:global>
+  .dp-block { margin: calc(var(--s8) * 1.1) 0; }
+  .dp-block > h2 { font-size: clamp(20px, 3.5vw, 26px); letter-spacing: -0.01em; margin: 0 0 var(--s5); color: var(--text-primary); }
+  .dp-metrics { display: flex; gap: var(--s5); flex-wrap: wrap; margin: var(--s6) 0; }
+  .dp-metric { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: var(--s5) var(--s6); min-width: 180px; flex: 1 1 180px; }
+  .dp-metric__value { font-size: clamp(30px, 5vw, 46px); font-weight: 800; letter-spacing: -0.03em; color: var(--text-primary); font-variant-numeric: tabular-nums; line-height: 1; }
+  .dp-metric__value--accent { color: var(--accent); }
+  .dp-metric__value--warn { color: var(--warning, #ffb84d); }
+  .dp-metric__value--danger { color: var(--danger, #ff4d6a); }
+  .dp-metric__value span { font-size: 20px; color: var(--text-muted); font-weight: 600; }
+  .dp-metric__label { font-size: 13px; color: var(--text-secondary); margin-top: var(--s3); }
+  .dp-prose p { font-size: 17px; line-height: 1.7; color: var(--text-secondary); max-width: 68ch; margin: 0 0 var(--s4); }
+</style>

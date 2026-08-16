@@ -5,7 +5,7 @@ import 'package:dio/dio.dart';
 /// Mutated by `ChartProviderNotifier` (and seeded from SharedPreferences in
 /// `main.dart`) so the Dio interceptor can stamp every outgoing request with
 /// `X-Chart-Renderer` without taking a Riverpod dependency.
-String currentChartRenderer = 'yahoo';
+String currentChartRenderer = 'inhouse';
 
 class ChartRendererInterceptor extends Interceptor {
   @override

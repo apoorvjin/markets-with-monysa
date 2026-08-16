@@ -1,0 +1,59 @@
+---
+import DataPage from "../../layouts/DataPage.astro";
+import { fetchJson } from "../../lib/api";
+import type { FaqItem } from "../../components/Faq.astro";
+
+interface FearGreed {
+  value: number;
+  classification: string;
+  history?: { value: number; date: string }[];
+}
+const fg = await fetchJson<FearGreed>("/api/volatility/fear-greed");
+const val = fg.value;
+const cls = fg.classification;
+const tone =
+  val <= 25 ? "danger" : val < 45 ? "warn" : val <= 55 ? "" : val < 75 ? "accent" : "accent";
+const updated = fg.history?.[0]?.date;
+
+const title = `Fear & Greed Index Today: ${val} (${cls}) | FinBrio`;
+const description = `The CNN Fear & Greed Index is at ${val} today — "${cls}". See what it measures, how to read it, and the market-stress context, updated live on FinBrio.`;
+
+const faqItems: FaqItem[] = [
+  { q: "What is the Fear & Greed Index today?", a: `The index reads ${val} out of 100 — classified as "${cls}". Below 25 is "Extreme Fear", above 75 is "Extreme Greed".` },
+  { q: "What does the Fear & Greed Index measure?", a: "It blends seven market signals — momentum, price strength, breadth, put/call options, junk-bond demand, volatility (VIX), and safe-haven demand — into a single 0–100 gauge of market sentiment." },
+  { q: "Is a low Fear & Greed reading bullish or bearish?", a: "Contrarians often read extreme fear as a potential buying opportunity and extreme greed as a warning — but it's a sentiment gauge, not a timing signal. It's most useful alongside the VIX, the yield curve and breadth." },
+];
+---
+
+<DataPage
+  title={title}
+  description={description}
+  ogTitle={`Fear & Greed Index: ${val} — ${cls}`}
+  ogDescription="What the sentiment gauge measures and how to read it — live, in context."
+  ogImage="/og/fear-and-greed.png"
+  eyebrow="Macro Indicator"
+  h1="Fear & Greed Index today"
+  lead={`Market sentiment right now reads ${val}/100 — "${cls}".`}
+  updated={updated ? `Updated ${updated} · source: CNN Fear & Greed` : "Source: CNN Fear & Greed"}
+  crumbLabel="Fear & Greed"
+  crumbPath="/indicators/fear-and-greed"
+  faqItems={faqItems}
+  ctaHeading="Read market sentiment — with context"
+  ctaBody="FinBrio pairs the Fear & Greed gauge with the VIX, market-stress meter and yield curve, so a single reading never fools you. Free on iOS and the web."
+>
+  <div class="dp-metrics">
+    <div class="dp-metric">
+      <div class={`dp-metric__value ${tone ? `dp-metric__value--${tone}` : ""}`}>{val}<span>/100</span></div>
+      <div class="dp-metric__label">Fear &amp; Greed reading</div>
+    </div>
+    <div class="dp-metric">
+      <div class={`dp-metric__value ${tone ? `dp-metric__value--${tone}` : ""}`}>{cls}</div>
+      <div class="dp-metric__label">Classification</div>
+    </div>
+  </div>
+
+  <section class="dp-prose dp-block">
+    <p>The Fear &amp; Greed Index distills seven separate market signals into one number from 0 (Extreme Fear) to 100 (Extreme Greed). It's a fast read on the crowd's mood — useful precisely because emotion, not fundamentals, drives markets at the extremes.</p>
+    <p>Read it as context, not a trigger: extreme fear has often marked local bottoms and extreme greed local tops, but the gauge can stay pinned for weeks. FinBrio shows it beside the VIX and yield curve so you see the whole regime, not one dial.</p>
+  </section>
+</DataPage>

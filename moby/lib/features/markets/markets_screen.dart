@@ -18,6 +18,7 @@ import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/pro_blur_overlay.dart';
 import '../../shared/widgets/shimmer_list.dart';
+import '../../shared/widgets/sparkline_chart.dart';
 import 'treemap_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ final _cotProvider = FutureProvider<CotData>(
 final _cbRatesProvider = FutureProvider<Map<String, CbRateInfo>>(
     (_) => MarketsRepository.instance.fetchCentralBankRates());
 
-enum _MarketSort { name, price, change }
+enum _MarketSort { name, price, change, relevance }
 
 // ── Screen ────────────────────────────────────────────────────────────────────
 
@@ -77,6 +78,10 @@ class _MarketsScreenState extends ConsumerState<MarketsScreen>
   Widget build(BuildContext context) {
     final c = context.colors;
     return Scaffold(
+      // See feedback_keyboard_squish memory: without this, the TabBar appBar
+      // + keyboard leaves almost no body height for the search field + list,
+      // rendering as an empty black gap. Same fix as TradingScreen/MacroScreen.
+      resizeToAvoidBottomInset: false,
       backgroundColor: c.background,
       appBar: AppBar(
         centerTitle: true,
@@ -161,10 +166,16 @@ class _SortHeader extends StatelessWidget {
     required this.sortBy,
     required this.ascending,
     required this.onSortChange,
+    this.assetLabel = 'ASSET',
+    this.priceLabel = 'PRICE',
+    this.changeLabel = '% CHG',
   });
   final _MarketSort sortBy;
   final bool ascending;
   final void Function(_MarketSort) onSortChange;
+  final String assetLabel;
+  final String priceLabel;
+  final String changeLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +190,7 @@ class _SortHeader extends StatelessWidget {
         children: [
           Expanded(
             child: _SortBtn(
-              label: 'ASSET',
+              label: assetLabel,
               active: sortBy == _MarketSort.name,
               ascending: ascending,
               onTap: () => onSortChange(_MarketSort.name),
@@ -190,7 +201,7 @@ class _SortHeader extends StatelessWidget {
           SizedBox(
             width: 80,
             child: _SortBtn(
-              label: 'PRICE',
+              label: priceLabel,
               active: sortBy == _MarketSort.price,
               ascending: ascending,
               onTap: () => onSortChange(_MarketSort.price),
@@ -202,7 +213,7 @@ class _SortHeader extends StatelessWidget {
           SizedBox(
             width: 70,
             child: _SortBtn(
-              label: '% CHG',
+              label: changeLabel,
               active: sortBy == _MarketSort.change,
               ascending: ascending,
               onTap: () => onSortChange(_MarketSort.change),
@@ -262,6 +273,10 @@ class _SortBtn extends StatelessWidget {
 
 List<MarketItem> _sortItems(
     List<MarketItem> items, _MarketSort sortBy, bool ascending) {
+  // Server already returns items in a curated relevance order (indices by
+  // market cap — WORLD_INDICES; forex by liquidity — FOREX_PAIRS, both in
+  // markets.ts) — preserve that fetched order as-is rather than re-sorting.
+  if (sortBy == _MarketSort.relevance) return items;
   final sorted = [...items];
   sorted.sort((a, b) {
     if (sortBy == _MarketSort.name) {
@@ -291,7 +306,9 @@ class _IndicesTab extends ConsumerStatefulWidget {
 
 class _IndicesTabState extends ConsumerState<_IndicesTab> {
   String _query = '';
-  _MarketSort _sortBy = _MarketSort.change;
+  // Indices default to the server's market-cap-ordered list rather than
+  // being pre-sorted by daily % change.
+  _MarketSort _sortBy = _MarketSort.relevance;
   bool _ascending = false;
 
   void _handleSort(_MarketSort field) {
@@ -325,6 +342,11 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
                     i.symbol.toLowerCase().contains(_query))
                 .toList();
         final sorted = _sortItems(filtered, _sortBy, _ascending);
+        // Grouped-by-region cards only make sense on the untouched
+        // market-cap order — sorting by Value/% 1D is a "find the biggest
+        // mover globally" intent, which grouping would work against, so an
+        // explicit sort (or an active search) falls back to a flat list.
+        final grouped = _sortBy == _MarketSort.relevance && _query.isEmpty;
         return Column(
           children: [
             _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
@@ -332,6 +354,9 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
               sortBy: _sortBy,
               ascending: _ascending,
               onSortChange: _handleSort,
+              assetLabel: 'INDEX',
+              priceLabel: 'VALUE',
+              changeLabel: '% 1D',
             ),
             if (repo.isIndicesStale)
               _StaleBanner(onRefresh: () => ref.invalidate(_indicesProvider))
@@ -344,21 +369,225 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
                       color: c.accent,
                       backgroundColor: c.surface,
                       onRefresh: () => ref.refresh(_indicesProvider.future),
-                      child: ListView.builder(
-                        padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).padding.bottom +
-                                AppSpacing.s3),
-                        itemCount: sorted.length,
-                        itemBuilder: (ctx, i) => _MarketRow(
-                              key: ValueKey(sorted[i].symbol),
-                              item: sorted[i]),
-                      ),
+                      child: grouped
+                          ? _GroupedIndexList(items: sorted)
+                          : _FlatIndexList(items: sorted),
                     ),
             ),
           ],
         );
       },
     );
+  }
+}
+
+/// Stable group-by-category (server already returns items in market-cap
+/// order, so both the group order — by first-occurrence — and each group's
+/// internal order fall out of that for free, no extra sort needed).
+Map<String, List<MarketItem>> _groupByCategory(List<MarketItem> items) {
+  final groups = <String, List<MarketItem>>{};
+  for (final item in items) {
+    (groups[item.category ?? 'Other'] ??= []).add(item);
+  }
+  return groups;
+}
+
+class _GroupedIndexList extends StatelessWidget {
+  const _GroupedIndexList({required this.items});
+  final List<MarketItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final groups = _groupByCategory(items);
+    return ListView.builder(
+      padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom +
+              MediaQuery.of(context).viewInsets.bottom +
+              AppSpacing.s3),
+      itemCount: groups.length,
+      itemBuilder: (ctx, i) {
+        final entry = groups.entries.elementAt(i);
+        return _IndexGroupSection(label: entry.key, items: entry.value);
+      },
+    );
+  }
+}
+
+class _IndexGroupSection extends StatelessWidget {
+  const _IndexGroupSection({required this.label, required this.items});
+  final String label;
+  final List<MarketItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+              AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s2),
+          child: Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                    color: c.accent, borderRadius: BorderRadius.circular(3)),
+              ),
+              const SizedBox(width: AppSpacing.s2),
+              Text(label.toUpperCase(),
+                  style: AppTypography.labelSm.copyWith(
+                      color: c.textSecondary, letterSpacing: 0.4)),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s4),
+          child: Column(
+            children: items
+                .map((item) => Padding(
+                      padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+                      child: _IndexCard(key: ValueKey(item.symbol), item: item),
+                    ))
+                .toList(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _FlatIndexList extends StatelessWidget {
+  const _FlatIndexList({required this.items});
+  final List<MarketItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s3, AppSpacing.s4,
+          MediaQuery.of(context).padding.bottom +
+              MediaQuery.of(context).viewInsets.bottom +
+              AppSpacing.s3),
+      itemCount: items.length,
+      itemBuilder: (ctx, i) => Padding(
+        padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+        child: _IndexCard(key: ValueKey(items[i].symbol), item: items[i]),
+      ),
+    );
+  }
+}
+
+/// Sparkline Rows pattern: elevated card + inline 1-month sparkline, used by
+/// any tab whose items carry a `sparkline` (Indices, Commodities). Forex
+/// keeps using the flat `_MarketRow` — it doesn't fetch a sparkline.
+class _IndexCard extends StatelessWidget {
+  const _IndexCard({required this.item, super.key});
+  final MarketItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final pct = item.changePercent;
+    final isUp = (pct ?? 0) >= 0;
+    final pctColor = isUp ? c.positive : c.danger;
+    final pctStr =
+        pct == null ? '--' : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
+    final subtitle =
+        [item.symbol, item.region ?? item.unit].whereType<String>().join(' · ');
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      onTap: () {
+        HapticFeedback.selectionClick();
+        ChartModal.show(context, symbol: item.symbol, name: item.name);
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.s4, vertical: AppSpacing.s4),
+        decoration: BoxDecoration(
+          color: c.surfaceElevated,
+          border: Border.all(color: c.border),
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Text(item.flag ?? '', style: const TextStyle(fontSize: 18)),
+            ),
+            const SizedBox(width: AppSpacing.s3),
+            SizedBox(
+              width: 108,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(item.name,
+                      style: AppTypography.labelLg.copyWith(color: c.textPrimary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: AppTypography.xs.copyWith(color: c.textMuted),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis),
+                ],
+              ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s2),
+                child: LayoutBuilder(
+                  builder: (ctx, constraints) => SparklineChart(
+                    data: item.sparkline ?? const [],
+                    color: pctColor,
+                    width: constraints.maxWidth,
+                    height: 26,
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(
+              width: 76,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_formatPrice(item.price, null),
+                      style: AppTypography.numericLg.copyWith(color: c.textPrimary)),
+                  const SizedBox(height: 5),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isUp ? c.positiveDim : c.dangerDim,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(pctStr,
+                        style: AppTypography.sm.copyWith(
+                            color: pctColor, fontWeight: FontWeight.w600)),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatPrice(double? price, String? unit) {
+    if (price == null) return '--';
+    if (unit == 'JPY' || price > 1000) return price.toStringAsFixed(0);
+    if (price < 1) return price.toStringAsFixed(4);
+    return price.toStringAsFixed(2);
   }
 }
 
@@ -415,6 +644,7 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
               sortBy: _sortBy,
               ascending: _ascending,
               onSortChange: _handleSort,
+              assetLabel: 'COMMODITY',
             ),
             if (repo.isCommoditiesStale)
               _StaleBanner(onRefresh: () => ref.invalidate(_commoditiesProvider))
@@ -428,13 +658,18 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
                       backgroundColor: c.surface,
                       onRefresh: () => ref.refresh(_commoditiesProvider.future),
                       child: ListView.builder(
-                        padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).padding.bottom +
+                        padding: EdgeInsets.fromLTRB(
+                            AppSpacing.s4, AppSpacing.s3, AppSpacing.s4,
+                            MediaQuery.of(context).padding.bottom +
+                                MediaQuery.of(context).viewInsets.bottom +
                                 AppSpacing.s3),
                         itemCount: sorted.length,
-                        itemBuilder: (ctx, i) => _MarketRow(
-                              key: ValueKey(sorted[i].symbol),
-                              item: sorted[i]),
+                        itemBuilder: (ctx, i) => Padding(
+                              padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+                              child: _IndexCard(
+                                  key: ValueKey(sorted[i].symbol),
+                                  item: sorted[i]),
+                            ),
                       ),
                     ),
             ),
@@ -456,7 +691,9 @@ class _ForexTab extends ConsumerStatefulWidget {
 
 class _ForexTabState extends ConsumerState<_ForexTab> {
   String _query = '';
-  _MarketSort _sortBy = _MarketSort.change;
+  // Default to the server's curated liquidity order (Majors first — see
+  // FOREX_PAIRS in markets.ts) rather than pre-sorting by daily % change.
+  _MarketSort _sortBy = _MarketSort.relevance;
   bool _ascending = false;
 
   void _handleSort(_MarketSort field) {
@@ -514,11 +751,12 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                     ? ListView(
                         padding: EdgeInsets.only(
                             bottom: MediaQuery.of(context).padding.bottom +
+                                MediaQuery.of(context).viewInsets.bottom +
                                 AppSpacing.s3),
                         children: (() {
                           final grouped = <String, List<MarketItem>>{};
                           for (final item in items) {
-                            (grouped[item.region ?? 'Other'] ??= []).add(item);
+                            (grouped[item.category ?? 'Other'] ??= []).add(item);
                           }
                           // Sort within each group
                           for (final key in grouped.keys) {
@@ -550,6 +788,7 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
                     : ListView.builder(
                         padding: EdgeInsets.only(
                             bottom: MediaQuery.of(context).padding.bottom +
+                                MediaQuery.of(context).viewInsets.bottom +
                                 AppSpacing.s3),
                         itemCount: sorted.length,
                         itemBuilder: (ctx, i) => _MarketRow(
@@ -819,6 +1058,87 @@ class _CotCard extends StatelessWidget {
   }
 }
 
+// Different metric from _CotCard above (cash-market net buy/sell, not
+// futures long/short positioning) — deliberately a distinct card layout
+// (no sentiment bar / long-short split) rather than shoehorned into CotMetal.
+class _RegionalFlowCard extends StatelessWidget {
+  const _RegionalFlowCard({required this.group});
+  final RegionalFlowGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      margin: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
+      padding: const EdgeInsets.all(AppSpacing.s4),
+      decoration: BoxDecoration(
+        color: c.surfaceCard,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('${group.flag ?? ''} ${group.region} — ${group.market}',
+                    style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              ),
+              if (group.date != null)
+                Text(group.date!,
+                    style: AppTypography.xs.copyWith(color: c.textMuted)),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          ...group.items.map((item) => Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.s3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.label,
+                              style: AppTypography.sm.copyWith(color: c.textPrimary)),
+                          Text('(${item.category})',
+                              style: AppTypography.xs.copyWith(color: c.textMuted)),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _Stat('Buy', item.buyValue.toStringAsFixed(2), c.positive, c),
+                    ),
+                    Expanded(
+                      child: _Stat('Sell', item.sellValue.toStringAsFixed(2), c.danger, c),
+                    ),
+                    Expanded(
+                      child: _Stat(
+                        'Net',
+                        '${item.netValue >= 0 ? '+' : ''}${item.netValue.toStringAsFixed(2)}',
+                        item.netValue >= 0 ? c.positive : c.danger,
+                        c,
+                      ),
+                    ),
+                  ],
+                ),
+              )),
+          Text('Values in ${group.unit}',
+              style: AppTypography.xs.copyWith(color: c.textMuted)),
+          if (group.source != null) ...[
+            const SizedBox(height: 2),
+            Text('Source: ${group.source}',
+                style: AppTypography.xs.copyWith(color: c.textMuted)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _SentimentBar extends StatelessWidget {
   const _SentimentBar({required this.longPct, required this.palette});
   final double longPct;
@@ -933,7 +1253,7 @@ class _FxDifferential extends ConsumerWidget {
 
 // ── CFTC Positions Tab ────────────────────────────────────────────────────────
 
-enum _CotCategory { metals, energy, agriculture, currencies, indices }
+enum _CotCategory { metals, energy, agriculture, currencies, indices, regionalFlows }
 
 class _CftcTab extends ConsumerStatefulWidget {
   const _CftcTab();
@@ -946,11 +1266,12 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
   _CotCategory _category = _CotCategory.metals;
 
   static const _chips = [
-    (_CotCategory.metals,      'Metals'),
-    (_CotCategory.energy,      'Energy'),
-    (_CotCategory.indices,     'Indices & Rates'),
-    (_CotCategory.agriculture, 'Agriculture'),
-    (_CotCategory.currencies,  'Currencies'),
+    (_CotCategory.metals,        'Metals'),
+    (_CotCategory.energy,        'Energy'),
+    (_CotCategory.indices,       'Indices & Rates'),
+    (_CotCategory.agriculture,   'Agriculture'),
+    (_CotCategory.currencies,    'Currencies'),
+    (_CotCategory.regionalFlows, 'Regional Flows'),
   ];
 
   @override
@@ -964,12 +1285,14 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
         onRetry: () => ref.invalidate(_cotProvider),
       ),
       data: (cot) {
+        final isRegionalFlows = _category == _CotCategory.regionalFlows;
         final items = switch (_category) {
-          _CotCategory.metals      => cot.metals,
-          _CotCategory.energy      => cot.energy,
-          _CotCategory.agriculture => cot.agriculture,
-          _CotCategory.currencies  => cot.currencies,
-          _CotCategory.indices     => cot.indicesRates,
+          _CotCategory.metals        => cot.metals,
+          _CotCategory.energy        => cot.energy,
+          _CotCategory.agriculture   => cot.agriculture,
+          _CotCategory.currencies    => cot.currencies,
+          _CotCategory.indices       => cot.indicesRates,
+          _CotCategory.regionalFlows => const <CotMetal>[],
         };
 
         return RefreshIndicator(
@@ -1002,7 +1325,18 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
                 ),
               ),
               const SizedBox(height: AppSpacing.s3),
-              if (items.isNotEmpty)
+              if (isRegionalFlows)
+                if (cot.regionalFlows.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(AppSpacing.s8),
+                    child: Center(
+                      child: Text('No regional flow data available right now',
+                          style: AppTypography.sm.copyWith(color: c.textMuted)),
+                    ),
+                  )
+                else
+                  ...cot.regionalFlows.map((g) => _RegionalFlowCard(group: g))
+              else if (items.isNotEmpty)
                 ...items.asMap().entries.map((entry) {
                   final card = _CotCard(metal: entry.value);
                   final revealed = entry.key == 0 ||
@@ -1023,7 +1357,7 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
                         style: AppTypography.sm.copyWith(color: c.textMuted)),
                   ),
                 ),
-              if (cot.reportDate != null)
+              if (!isRegionalFlows && cot.reportDate != null)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(
                       AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, 0),

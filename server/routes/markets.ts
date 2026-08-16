@@ -412,53 +412,81 @@ function getMarketStatus(countryCode: string): { isOpen: boolean; label: string 
 
 // ─── Futures Data ───────────────────────────────────────────────────────────
 
+// Ordered by approximate total domestic equity market capitalization of each
+// region (curated, static — same pattern as ETF_UNIVERSE/LOBBYING_UNIVERSE;
+// indices themselves have no "market cap", so country-level cap is the best
+// available proxy). This order is what the Flutter Indices tab shows by
+// default before any column sort is applied — re-curate deliberately, don't
+// let it drift back to alphabetical/random.
+// `category` is an MSCI-style broad region tier — drives the Flutter Indices
+// tab's grouped-card sections. Kept independent from `region` (the specific
+// country), since a card group like "Europe" spans many `region` values.
 const WORLD_INDICES = [
-  { symbol: "^GSPC",    name: "S&P 500",            region: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
-  { symbol: "^DJI",     name: "Dow Jones",           region: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
-  { symbol: "^IXIC",    name: "NASDAQ Composite",    region: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
-  { symbol: "^RUT",     name: "Russell 2000",        region: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
-  { symbol: "^VIX",     name: "CBOE VIX",            region: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:15 PM ET",  tz: "America/New_York",  currency: "USD" },
-  { symbol: "^FTSE",    name: "FTSE 100",            region: "United Kingdom",flag: "🇬🇧", openTime: "8:00 AM – 4:30 PM GMT", tz: "Europe/London",     currency: "GBP" },
-  { symbol: "^GDAXI",   name: "DAX 40",              region: "Germany",       flag: "🇩🇪", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Berlin",     currency: "EUR" },
-  { symbol: "^FCHI",    name: "CAC 40",              region: "France",        flag: "🇫🇷", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Paris",      currency: "EUR" },
-  { symbol: "^STOXX50E",name: "Euro Stoxx 50",       region: "Europe",        flag: "🇪🇺", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Berlin",     currency: "EUR" },
-  { symbol: "^IBEX",    name: "IBEX 35",             region: "Spain",         flag: "🇪🇸", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Madrid",     currency: "EUR" },
-  { symbol: "FTSEMIB.MI",name:"FTSE MIB",            region: "Italy",         flag: "🇮🇹", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Rome",       currency: "EUR" },
-  { symbol: "^AEX",     name: "AEX",                 region: "Netherlands",   flag: "🇳🇱", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Amsterdam",  currency: "EUR" },
-  { symbol: "^SSMI",    name: "SMI",                 region: "Switzerland",   flag: "🇨🇭", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Zurich",     currency: "CHF" },
-  { symbol: "^OMX",     name: "OMX Stockholm 30",    region: "Sweden",        flag: "🇸🇪", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Stockholm",  currency: "SEK" },
-  { symbol: "^OSEAX",   name: "Oslo All Share",      region: "Norway",        flag: "🇳🇴", openTime: "9:00 AM – 4:20 PM CET", tz: "Europe/Oslo",       currency: "NOK" },
-  { symbol: "^OMXC25",  name: "OMX Copenhagen 25",   region: "Denmark",       flag: "🇩🇰", openTime: "9:00 AM – 5:00 PM CET", tz: "Europe/Copenhagen", currency: "DKK" },
-  { symbol: "^N225",    name: "Nikkei 225",          region: "Japan",         flag: "🇯🇵", openTime: "9:00 AM – 3:00 PM JST", tz: "Asia/Tokyo",        currency: "JPY" },
-  { symbol: "^HSI",     name: "Hang Seng Index",     region: "Hong Kong",     flag: "🇭🇰", openTime: "9:30 AM – 4:00 PM HKT", tz: "Asia/Hong_Kong",    currency: "HKD" },
-  { symbol: "000001.SS",name: "Shanghai Composite",  region: "China",         flag: "🇨🇳", openTime: "9:30 AM – 3:00 PM CST", tz: "Asia/Shanghai",     currency: "CNY" },
-  { symbol: "^NSEI",    name: "Nifty 50",            region: "India",         flag: "🇮🇳", openTime: "9:15 AM – 3:30 PM IST", tz: "Asia/Kolkata",      currency: "INR" },
-  { symbol: "^BSESN",   name: "BSE Sensex",          region: "India",         flag: "🇮🇳", openTime: "9:15 AM – 3:30 PM IST", tz: "Asia/Kolkata",      currency: "INR" },
-  { symbol: "^KS11",    name: "KOSPI",               region: "South Korea",   flag: "🇰🇷", openTime: "9:00 AM – 3:30 PM KST", tz: "Asia/Seoul",        currency: "KRW" },
-  { symbol: "^TWII",    name: "TAIEX",               region: "Taiwan",        flag: "🇹🇼", openTime: "9:00 AM – 1:30 PM CST", tz: "Asia/Taipei",       currency: "TWD" },
-  { symbol: "^AXJO",    name: "ASX 200",             region: "Australia",     flag: "🇦🇺", openTime: "10:00 AM – 4:00 PM AEST",tz:"Australia/Sydney",   currency: "AUD" },
-  { symbol: "^STI",     name: "Straits Times Index", region: "Singapore",     flag: "🇸🇬", openTime: "9:00 AM – 5:00 PM SGT", tz: "Asia/Singapore",    currency: "SGD" },
-  { symbol: "^KLSE",    name: "KLCI",                region: "Malaysia",      flag: "🇲🇾", openTime: "9:00 AM – 5:00 PM MYT", tz: "Asia/Kuala_Lumpur", currency: "MYR" },
-  { symbol: "^JKSE",    name: "IDX Composite",       region: "Indonesia",     flag: "🇮🇩", openTime: "9:00 AM – 4:00 PM WIB", tz: "Asia/Jakarta",      currency: "IDR" },
-  { symbol: "^SET.BK",  name: "SET Index",           region: "Thailand",      flag: "🇹🇭", openTime: "10:00 AM – 4:30 PM ICT",tz: "Asia/Bangkok",      currency: "THB" },
-  { symbol: "^CASE30",  name: "EGX 30",              region: "Egypt",         flag: "🇪🇬", openTime: "10:00 AM – 2:30 PM EET", tz: "Africa/Cairo",      currency: "EGP" },
-  { symbol: "^TA125.TA",name: "TA-125",              region: "Israel",        flag: "🇮🇱", openTime: "9:45 AM – 5:15 PM IST", tz: "Asia/Jerusalem",    currency: "ILS" },
-  { symbol: "^BVSP",    name: "Ibovespa",            region: "Brazil",        flag: "🇧🇷", openTime: "10:00 AM – 5:00 PM BRT",tz: "America/Sao_Paulo", currency: "BRL" },
-  { symbol: "^MXX",     name: "IPC Mexico",          region: "Mexico",        flag: "🇲🇽", openTime: "8:30 AM – 3:00 PM CST", tz: "America/Mexico_City",currency:"MXN" },
-  { symbol: "^GSPTSE",  name: "S&P/TSX Composite",  region: "Canada",        flag: "🇨🇦", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/Toronto",   currency: "CAD" },
-  { symbol: "^MERV",    name: "MERVAL",              region: "Argentina",     flag: "🇦🇷", openTime: "11:00 AM – 5:00 PM ART",tz: "America/Argentina/Buenos_Aires", currency: "ARS" },
-  { symbol: "^XJO",     name: "All Ordinaries",      region: "Australia",     flag: "🇦🇺", openTime: "10:00 AM – 4:00 PM AEST",tz:"Australia/Sydney",  currency: "AUD" },
-  { symbol: "^NZ50",    name: "NZX 50",              region: "New Zealand",   flag: "🇳🇿", openTime: "10:00 AM – 4:45 PM NZST",tz:"Pacific/Auckland",  currency: "NZD" },
-  { symbol: "^ATX",     name: "ATX",                 region: "Austria",       flag: "🇦🇹", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Vienna",     currency: "EUR" },
-  { symbol: "^BFX",     name: "BEL 20",              region: "Belgium",       flag: "🇧🇪", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Brussels",   currency: "EUR" },
-  { symbol: "^PSI20",   name: "PSI 20",              region: "Portugal",      flag: "🇵🇹", openTime: "9:00 AM – 5:30 PM WET", tz: "Europe/Lisbon",     currency: "EUR" },
-  { symbol: "^WIG20",   name: "WIG 20",              region: "Poland",        flag: "🇵🇱", openTime: "9:00 AM – 5:00 PM CET", tz: "Europe/Warsaw",     currency: "PLN" },
-  { symbol: "^ATX50",   name: "ATHEX Composite",     region: "Greece",        flag: "🇬🇷", openTime: "10:00 AM – 5:20 PM EET",tz: "Europe/Athens",     currency: "EUR" },
-  { symbol: "^TASI.SR", name: "Tadawul All Share",   region: "Saudi Arabia",  flag: "🇸🇦", openTime: "10:00 AM – 3:00 PM AST", tz: "Asia/Riyadh",      currency: "SAR" },
-  { symbol: "^MOEX.ME", name: "MOEX Russia",         region: "Russia",        flag: "🇷🇺", openTime: "10:00 AM – 6:50 PM MSK", tz: "Europe/Moscow",     currency: "RUB" },
-  { symbol: "^J203.JO", name: "JSE All Share",       region: "South Africa",  flag: "🇿🇦", openTime: "9:00 AM – 5:00 PM SAST",tz: "Africa/Johannesburg",currency:"ZAR" },
-  { symbol: "^IPSA",    name: "S&P/CLX IPSA",        region: "Chile",         flag: "🇨🇱", openTime: "9:30 AM – 4:00 PM CLT", tz: "America/Santiago",  currency: "CLP" },
-  { symbol: "^COLCAP",  name: "COLCAP",              region: "Colombia",      flag: "🇨🇴", openTime: "9:30 AM – 4:00 PM COT", tz: "America/Bogota",    currency: "COP" },
+  // United States — by far the largest equity market
+  { symbol: "^GSPC",    name: "S&P 500",            region: "United States", category: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
+  { symbol: "^IXIC",    name: "NASDAQ Composite",    region: "United States", category: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
+  { symbol: "^DJI",     name: "Dow Jones",           region: "United States", category: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
+  { symbol: "^RUT",     name: "Russell 2000",        region: "United States", category: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/New_York",  currency: "USD" },
+  { symbol: "^VIX",     name: "CBOE VIX",            region: "United States", category: "United States", flag: "🇺🇸", openTime: "9:30 AM – 4:15 PM ET",  tz: "America/New_York",  currency: "USD" },
+  // China / Hong Kong
+  { symbol: "000001.SS",name: "Shanghai Composite",  region: "China",         category: "Asia-Pacific", flag: "🇨🇳", openTime: "9:30 AM – 3:00 PM CST", tz: "Asia/Shanghai",     currency: "CNY" },
+  { symbol: "^HSI",     name: "Hang Seng Index",     region: "Hong Kong",     category: "Asia-Pacific", flag: "🇭🇰", openTime: "9:30 AM – 4:00 PM HKT", tz: "Asia/Hong_Kong",    currency: "HKD" },
+  // Japan
+  { symbol: "^N225",    name: "Nikkei 225",          region: "Japan",         category: "Asia-Pacific", flag: "🇯🇵", openTime: "9:00 AM – 3:00 PM JST", tz: "Asia/Tokyo",        currency: "JPY" },
+  // India
+  { symbol: "^NSEI",    name: "Nifty 50",            region: "India",         category: "India", flag: "🇮🇳", openTime: "9:15 AM – 3:30 PM IST", tz: "Asia/Kolkata",      currency: "INR" },
+  { symbol: "^BSESN",   name: "BSE Sensex",          region: "India",         category: "India", flag: "🇮🇳", openTime: "9:15 AM – 3:30 PM IST", tz: "Asia/Kolkata",      currency: "INR" },
+  // Europe majors
+  { symbol: "^FCHI",    name: "CAC 40",              region: "France",        category: "Europe", flag: "🇫🇷", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Paris",      currency: "EUR" },
+  { symbol: "^FTSE",    name: "FTSE 100",            region: "United Kingdom",category: "Europe", flag: "🇬🇧", openTime: "8:00 AM – 4:30 PM GMT", tz: "Europe/London",     currency: "GBP" },
+  { symbol: "^GDAXI",   name: "DAX 40",              region: "Germany",       category: "Europe", flag: "🇩🇪", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Berlin",     currency: "EUR" },
+  { symbol: "^STOXX50E",name: "Euro Stoxx 50",       region: "Europe",        category: "Europe", flag: "🇪🇺", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Berlin",     currency: "EUR" },
+  { symbol: "^SSMI",    name: "SMI",                 region: "Switzerland",   category: "Europe", flag: "🇨🇭", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Zurich",     currency: "CHF" },
+  // Saudi Arabia — large due to Aramco
+  { symbol: "^TASI.SR", name: "Tadawul All Share",   region: "Saudi Arabia",  category: "Middle East & Africa", flag: "🇸🇦", openTime: "10:00 AM – 3:00 PM AST", tz: "Asia/Riyadh",      currency: "SAR" },
+  // Canada
+  { symbol: "^GSPTSE",  name: "S&P/TSX Composite",  region: "Canada",        category: "Americas", flag: "🇨🇦", openTime: "9:30 AM – 4:00 PM ET",  tz: "America/Toronto",   currency: "CAD" },
+  // Taiwan / South Korea — TSMC / Samsung-driven
+  { symbol: "^TWII",    name: "TAIEX",               region: "Taiwan",        category: "Asia-Pacific", flag: "🇹🇼", openTime: "9:00 AM – 1:30 PM CST", tz: "Asia/Taipei",       currency: "TWD" },
+  { symbol: "^KS11",    name: "KOSPI",               region: "South Korea",   category: "Asia-Pacific", flag: "🇰🇷", openTime: "9:00 AM – 3:30 PM KST", tz: "Asia/Seoul",        currency: "KRW" },
+  // Australia
+  { symbol: "^AXJO",    name: "ASX 200",             region: "Australia",     category: "Asia-Pacific", flag: "🇦🇺", openTime: "10:00 AM – 4:00 PM AEST",tz:"Australia/Sydney",   currency: "AUD" },
+  { symbol: "^AORD",    name: "All Ordinaries",      region: "Australia",     category: "Asia-Pacific", flag: "🇦🇺", openTime: "10:00 AM – 4:00 PM AEST",tz:"Australia/Sydney",  currency: "AUD" },
+  // Rest of Europe
+  { symbol: "^IBEX",    name: "IBEX 35",             region: "Spain",         category: "Europe", flag: "🇪🇸", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Madrid",     currency: "EUR" },
+  { symbol: "FTSEMIB.MI",name:"FTSE MIB",            region: "Italy",         category: "Europe", flag: "🇮🇹", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Rome",       currency: "EUR" },
+  { symbol: "^AEX",     name: "AEX",                 region: "Netherlands",   category: "Europe", flag: "🇳🇱", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Amsterdam",  currency: "EUR" },
+  { symbol: "^OMXC25",  name: "OMX Copenhagen 25",   region: "Denmark",       category: "Europe", flag: "🇩🇰", openTime: "9:00 AM – 5:00 PM CET", tz: "Europe/Copenhagen", currency: "DKK" },
+  { symbol: "^OMX",     name: "OMX Stockholm 30",    region: "Sweden",        category: "Europe", flag: "🇸🇪", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Stockholm",  currency: "SEK" },
+  // Brazil / South Africa
+  { symbol: "^BVSP",    name: "Ibovespa",            region: "Brazil",        category: "Americas", flag: "🇧🇷", openTime: "10:00 AM – 5:00 PM BRT",tz: "America/Sao_Paulo", currency: "BRL" },
+  { symbol: "^J203.JO", name: "JSE All Share",       region: "South Africa",  category: "Middle East & Africa", flag: "🇿🇦", openTime: "9:00 AM – 5:00 PM SAST",tz: "Africa/Johannesburg",currency:"ZAR" },
+  // Southeast Asia
+  { symbol: "^STI",     name: "Straits Times Index", region: "Singapore",     category: "Asia-Pacific", flag: "🇸🇬", openTime: "9:00 AM – 5:00 PM SGT", tz: "Asia/Singapore",    currency: "SGD" },
+  { symbol: "^JKSE",    name: "IDX Composite",       region: "Indonesia",     category: "Asia-Pacific", flag: "🇮🇩", openTime: "9:00 AM – 4:00 PM WIB", tz: "Asia/Jakarta",      currency: "IDR" },
+  { symbol: "^SET.BK",  name: "SET Index",           region: "Thailand",      category: "Asia-Pacific", flag: "🇹🇭", openTime: "10:00 AM – 4:30 PM ICT",tz: "Asia/Bangkok",      currency: "THB" },
+  { symbol: "^KLSE",    name: "KLCI",                region: "Malaysia",      category: "Asia-Pacific", flag: "🇲🇾", openTime: "9:00 AM – 5:00 PM MYT", tz: "Asia/Kuala_Lumpur", currency: "MYR" },
+  // Mexico
+  { symbol: "^MXX",     name: "IPC Mexico",          region: "Mexico",        category: "Americas", flag: "🇲🇽", openTime: "8:30 AM – 3:00 PM CST", tz: "America/Mexico_City",currency:"MXN" },
+  // Israel / Belgium / Poland
+  { symbol: "^TA125.TA",name: "TA-125",              region: "Israel",        category: "Middle East & Africa", flag: "🇮🇱", openTime: "9:45 AM – 5:15 PM IST", tz: "Asia/Jerusalem",    currency: "ILS" },
+  { symbol: "^BFX",     name: "BEL 20",              region: "Belgium",       category: "Europe", flag: "🇧🇪", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Brussels",   currency: "EUR" },
+  { symbol: "WIG20.WA", name: "WIG 20",              region: "Poland",        category: "Europe", flag: "🇵🇱", openTime: "9:00 AM – 5:00 PM CET", tz: "Europe/Warsaw",     currency: "PLN" },
+  // Russia — nominal market size is mid-pack, but ranked near the bottom:
+  // Moscow Exchange has been closed to Western investors since 2022 sanctions.
+  { symbol: "IMOEX.ME", name: "MOEX Russia",         region: "Russia",        category: "Europe", flag: "🇷🇺", openTime: "10:00 AM – 6:50 PM MSK", tz: "Europe/Moscow",     currency: "RUB" },
+  // Egypt / Chile / Norway / Argentina / New Zealand / Austria / Portugal / Greece / Colombia
+  { symbol: "^CASE30",  name: "EGX 30",              region: "Egypt",         category: "Middle East & Africa", flag: "🇪🇬", openTime: "10:00 AM – 2:30 PM EET", tz: "Africa/Cairo",      currency: "EGP" },
+  { symbol: "^IPSA",    name: "S&P/CLX IPSA",        region: "Chile",         category: "Americas", flag: "🇨🇱", openTime: "9:30 AM – 4:00 PM CLT", tz: "America/Santiago",  currency: "CLP" },
+  { symbol: "^OSEAX",   name: "Oslo All Share",      region: "Norway",        category: "Europe", flag: "🇳🇴", openTime: "9:00 AM – 4:20 PM CET", tz: "Europe/Oslo",       currency: "NOK" },
+  { symbol: "^MERV",    name: "MERVAL",              region: "Argentina",     category: "Americas", flag: "🇦🇷", openTime: "11:00 AM – 5:00 PM ART",tz: "America/Argentina/Buenos_Aires", currency: "ARS" },
+  { symbol: "^NZ50",    name: "NZX 50",              region: "New Zealand",   category: "Asia-Pacific", flag: "🇳🇿", openTime: "10:00 AM – 4:45 PM NZST",tz:"Pacific/Auckland",  currency: "NZD" },
+  { symbol: "^ATX",     name: "ATX",                 region: "Austria",       category: "Europe", flag: "🇦🇹", openTime: "9:00 AM – 5:30 PM CET", tz: "Europe/Vienna",     currency: "EUR" },
+  { symbol: "PSI20.LS", name: "PSI 20",              region: "Portugal",      category: "Europe", flag: "🇵🇹", openTime: "9:00 AM – 5:30 PM WET", tz: "Europe/Lisbon",     currency: "EUR" },
+  { symbol: "GD.AT",    name: "ATHEX Composite",     region: "Greece",        category: "Europe", flag: "🇬🇷", openTime: "10:00 AM – 5:20 PM EET",tz: "Europe/Athens",     currency: "EUR" },
+  // No raw COLCAP index ticker exists on Yahoo — iShares COLCAP ETF (NAV
+  // tracks the index 1:1) used as a proxy, same pattern as SPOT_OVERLAY.
+  { symbol: "ICOLCAP.CL",name: "COLCAP",             region: "Colombia",      category: "Americas", flag: "🇨🇴", openTime: "9:30 AM – 4:00 PM COT", tz: "America/Bogota",    currency: "COP" },
 ];
 
 const COMMODITIES = [
@@ -537,6 +565,27 @@ const FOREX_PAIRS = [
 const futuresCache: Map<string, { data: any[]; timestamp: number }> = new Map();
 const FUTURES_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
+/**
+ * 1-month daily-close sparkline per symbol, same shape/range as the
+ * `r1m.sparkline` field volatility.ts already feeds into SparklineChart —
+ * reusing that convention rather than inventing an intraday one. Chunked at
+ * the same concurrency as fetchBatch to stay under Yahoo's per-IP rate limit.
+ */
+async function fetchSparklineBatch(symbols: string[]): Promise<Map<string, number[]>> {
+  const results = new Map<string, number[]>();
+  const BATCH = 10;
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const batch = symbols.slice(i, i + BATCH);
+    const fetched = await Promise.all(
+      batch.map(s => fetchRangeData(s, "1mo").then(r => ({ s, r }))),
+    );
+    for (const { s, r } of fetched) {
+      if (r?.sparkline) results.set(s, r.sparkline);
+    }
+  }
+  return results;
+}
+
 // ─── COT: CFTC Commitments of Traders ────────────────────────────────────────
 // Disaggregated report (kh3c-gbw2): Managed Money = hedge funds / CTAs
 // Fields: m_money_positions_long_all, m_money_positions_short_all
@@ -582,10 +631,105 @@ const COT_LEGACY = [
   { name: "Canadian Dollar",   emoji: "🇨🇦", code: "090741", symbol: "CADUSD=X", category: "currencies", vsUsd: true  },
   { name: "Swiss Franc",       emoji: "🇨🇭", code: "092741", symbol: "CHFUSD=X", category: "currencies", vsUsd: true  },
   { name: "Mexican Peso",      emoji: "🇲🇽", code: "095741", symbol: "MXN=X",    category: "currencies", vsUsd: true  },
+  // International equity index — CME dual-lists Nikkei 225 (Yen-denominated),
+  // making it the ONE non-US index CFTC actually regulates and reports on.
+  // The USD-denominated sibling contract (code 240741) stopped getting fresh
+  // weekly reports years ago (stale since 2026-03) and is deliberately excluded —
+  // showing it would silently present months-old data as current.
+  { name: "Nikkei 225",        emoji: "🇯🇵", code: "240743", symbol: "NIY=F",    category: "indices",    vsUsd: false },
 ];
 
 const COT_CACHE_DURATION = 4 * 60 * 60 * 1000; // 4 hours
 let cotMetalsCache: { data: unknown; timestamp: number } | null = null;
+
+// ─── Regional Flows: NSE India FII/DII cash-market activity ──────────────────
+// Not a CFTC-style long/short futures position — CFTC has no jurisdiction
+// outside US-regulated exchanges, so Eurex/ICE Europe/HKEX/NSE/ASX have no
+// free COT-equivalent at all. This is the one genuinely-free substitute found:
+// NSE's own daily FII vs DII net buy/sell in the CASH equity market (₹ crores).
+// Kept as a clearly separate "Regional Flows" section rather than folded into
+// the COT categories above, since it's a different metric entirely.
+const NSE_FLOWS_CACHE_DURATION = 6 * 60 * 60 * 1000; // 6 hours — updates once/day after IST close
+let nseFlowsCache: { data: RegionalFlowGroup | null; timestamp: number } | null = null;
+
+type RegionalFlowGroup = {
+  region: string;
+  flag: string;
+  market: string;
+  date: string | null;
+  unit: string;
+  items: {
+    category: string;
+    label: string;
+    buyValue: number;
+    sellValue: number;
+    netValue: number;
+    netBias: "Net Buying" | "Net Selling";
+  }[];
+  source: string;
+  sourceUrl: string;
+};
+
+async function fetchNseFiiDiiFlows(): Promise<RegionalFlowGroup | null> {
+  const CATEGORY_LABELS: Record<string, string> = {
+    "FII/FPI": "Foreign Institutional Investors",
+    DII: "Domestic Institutional Investors",
+  };
+  try {
+    const resp = await fetch("https://www.nseindia.com/api/fiidiiTradeReact", {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const rows = await resp.json() as { category: string; date: string; buyValue: string; sellValue: string; netValue: string }[];
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    const items = rows.map(r => {
+      const buyValue = parseFloat(r.buyValue);
+      const sellValue = parseFloat(r.sellValue);
+      const netValue = parseFloat(r.netValue);
+      return {
+        category: r.category,
+        label: CATEGORY_LABELS[r.category] ?? r.category,
+        buyValue,
+        sellValue,
+        netValue,
+        netBias: (netValue >= 0 ? "Net Buying" : "Net Selling") as "Net Buying" | "Net Selling",
+      };
+    });
+
+    return {
+      region: "India",
+      flag: "🇮🇳",
+      market: "NSE Cash Market",
+      date: rows[0]?.date ?? null,
+      unit: "₹ Crores",
+      items,
+      source: "NSE India — FII/DII Trading Activity",
+      sourceUrl: "https://www.nseindia.com/reports/fii-dii",
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getRegionalFlows(): Promise<RegionalFlowGroup[]> {
+  if (nseFlowsCache && Date.now() - nseFlowsCache.timestamp < NSE_FLOWS_CACHE_DURATION) {
+    return nseFlowsCache.data ? [nseFlowsCache.data] : [];
+  }
+  const india = await fetchNseFiiDiiFlows();
+  // Fall back to a stale cached value on a transient failure rather than
+  // blanking out the section — a bot-blocked NSE call shouldn't flash empty.
+  if (india) {
+    nseFlowsCache = { data: india, timestamp: Date.now() };
+    return [india];
+  }
+  return nseFlowsCache?.data ? [nseFlowsCache.data] : [];
+}
 
 type CotAssetDef = { name: string; emoji: string; code: string; symbol: string; category: string; vsUsd?: boolean };
 
@@ -762,12 +906,16 @@ export function registerMarketsRoutes(app: Express): void {
 
     const fetchIndices = async () => {
       const symbols = WORLD_INDICES.map(i => i.symbol);
-      const prices = await fetchBatch(symbols);
+      const [prices, sparklines] = await Promise.all([
+        fetchBatch(symbols),
+        fetchSparklineBatch(symbols),
+      ]);
       return WORLD_INDICES.map(idx => ({
         ...idx,
         price: prices.get(idx.symbol)?.price,
         change: prices.get(idx.symbol)?.change,
         changePercent: prices.get(idx.symbol)?.changePercent,
+        sparkline: sparklines.get(idx.symbol),
       }));
     };
 
@@ -795,12 +943,16 @@ export function registerMarketsRoutes(app: Express): void {
 
     const fetchCommodities = async () => {
       const symbols = COMMODITIES.map(c => c.symbol);
-      const prices = await fetchBatch(symbols);
+      const [prices, sparklines] = await Promise.all([
+        fetchBatch(symbols),
+        fetchSparklineBatch(symbols),
+      ]);
       return COMMODITIES.map(c => ({
         ...c,
         price: prices.get(c.symbol)?.price,
         change: prices.get(c.symbol)?.change,
         changePercent: prices.get(c.symbol)?.changePercent,
+        sparkline: sparklines.get(c.symbol),
       }));
     };
 
@@ -915,7 +1067,7 @@ export function registerMarketsRoutes(app: Express): void {
       return res.json(cotMetalsCache.data);
     }
     try {
-      const [disaggResults, legacyResults] = await Promise.all([
+      const [disaggResults, legacyResults, regionalFlows] = await Promise.all([
         fetchCotAssets(
           COT_DISAGGREGATED,
           "https://publicreporting.cftc.gov/resource/kh3c-gbw2.json",
@@ -928,6 +1080,7 @@ export function registerMarketsRoutes(app: Express): void {
           "noncomm_positions_long_all",
           "noncomm_positions_short_all"
         ),
+        getRegionalFlows(),
       ]);
 
       const all = [...disaggResults, ...legacyResults].filter(Boolean) as NonNullable<Awaited<ReturnType<typeof fetchCotAssets>>[number]>[];
@@ -940,6 +1093,7 @@ export function registerMarketsRoutes(app: Express): void {
         currencies:  group("currencies"),
         energy:      group("energy"),
         agriculture: group("agriculture"),
+        regionalFlows,
         reportDate,
         lastUpdated: new Date().toISOString(),
         source: "CFTC Commitments of Traders Report",

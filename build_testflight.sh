@@ -91,6 +91,42 @@ else
 fi
 echo ""
 
+# App signing secret — falls back to RELEASE_APP_SIGNING_SECRET in .env when left
+# blank. This is the value that must exactly match the APP_SIGNING_SECRET Fly
+# secret on the server for HMAC-signed requests to validate.
+#
+# ⚠ SEQUENCING: do NOT set APP_SIGNING_SECRET on the server (`fly secrets set`)
+# until a build produced with THIS value has shipped to TestFlight and users
+# have actually updated. The server checks this env var at boot — the moment
+# it's set, EVERY request without a matching signature gets a hard 401,
+# including from every currently-installed build (which has none). Flip the
+# server on before the client is out and you break Signals/Backtest/AI
+# Briefing for your entire existing user base instantly. Ship this build
+# first, wait for adoption, then set the Fly secret.
+ENV_SIGNING_SECRET=""
+if [ -f "$SCRIPT_DIR/.env" ]; then
+  ENV_SIGNING_SECRET=$(grep '^RELEASE_APP_SIGNING_SECRET=' "$SCRIPT_DIR/.env" | head -1 | cut -d'=' -f2- | tr -d '"'"'"' \r')
+fi
+
+if [ -n "$ENV_SIGNING_SECRET" ]; then
+  echo -e "  ${BOLD}App Signing Secret${NC} (press Enter to use .env: ${CYAN}${ENV_SIGNING_SECRET:0:9}…${NC}):"
+else
+  echo -e "  ${BOLD}App Signing Secret${NC} (press Enter to skip — ships unsigned, dev-mode-equivalent):"
+fi
+echo -e -n "  > "
+read -r SIGNING_SECRET
+
+if [ -z "$SIGNING_SECRET" ]; then
+  SIGNING_SECRET="$ENV_SIGNING_SECRET"
+fi
+
+if [ -n "$SIGNING_SECRET" ]; then
+  echo -e "  ${GREEN}✓ Signing secret provided (${SIGNING_SECRET:0:9}…) — remember the sequencing warning above${NC}"
+else
+  echo -e "  ${YELLOW}⚠  No signing secret — this build ships unsigned (current behavior, matches server's current state)${NC}"
+fi
+echo ""
+
 # App Store Connect credentials
 echo -e "  ${BOLD}App Store Connect Apple ID${NC} (e.g. you@example.com):"
 echo -e -n "  > "
@@ -116,7 +152,10 @@ DART_DEFINES=""
 if [ -n "$RC_KEY" ]; then
   DART_DEFINES="--dart-define=REVENUECAT_IOS_KEY=${RC_KEY}"
 fi
-# No APP_SIGNING_SECRET → dev mode (all plans unlocked, no HMAC gate)
+if [ -n "$SIGNING_SECRET" ]; then
+  DART_DEFINES="${DART_DEFINES} --dart-define=APP_SIGNING_SECRET=${SIGNING_SECRET}"
+fi
+# Blank SIGNING_SECRET → dev mode (all plans unlocked, no HMAC gate) — same as today
 
 # ── Step 1: Flutter dependencies ──────────────────────────────────────────────
 echo -e "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -205,3 +244,23 @@ echo -e "  1. Open ${CYAN}appstoreconnect.apple.com${NC} → TestFlight"
 echo -e "  2. Wait ~10 min for Apple to process the build"
 echo -e "  3. Add testers and submit for external testing (first time requires Beta App Review)"
 echo ""
+
+if [ -n "$SIGNING_SECRET" ]; then
+  echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}${RED}  ⚠ BACKEND REMINDER — this build includes the signing secret${NC}"
+  echo -e "${BOLD}${RED}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "  Do ${BOLD}NOT${NC} set APP_SIGNING_SECRET on the server yet. Wait until this"
+  echo -e "  build has actually been reviewed, released, and adopted by your"
+  echo -e "  users (days to weeks) — then, and only then:"
+  echo ""
+  echo -e "  ${CYAN}fly secrets set -a monysa-api APP_SIGNING_SECRET=<value from .env>${NC}"
+  echo ""
+  echo -e "  Setting it before this build is out and adopted 401s Signals,"
+  echo -e "  Backtest, and AI Briefing for every current user immediately."
+  echo ""
+else
+  echo -e "  ${YELLOW}Note:${NC} this build shipped unsigned (no signing secret entered)."
+  echo -e "  Nothing to do backend-side — do not set APP_SIGNING_SECRET until a"
+  echo -e "  build that actually carries the secret is the one you've released."
+  echo ""
+fi

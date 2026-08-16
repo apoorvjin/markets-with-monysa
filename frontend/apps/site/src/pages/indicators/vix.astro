@@ -1,0 +1,57 @@
+---
+import DataPage from "../../layouts/DataPage.astro";
+import { fetchJson } from "../../lib/api";
+import type { FaqItem } from "../../components/Faq.astro";
+
+interface VolAssets {
+  vix?: { price: number; band?: string; bandLabel?: string };
+}
+const data = await fetchJson<VolAssets>("/api/volatility/assets");
+const price = data.vix?.price ?? 0;
+const label = data.vix?.bandLabel ?? "";
+const tone = price >= 30 ? "danger" : price >= 20 ? "warn" : "accent";
+
+const title = `VIX Today: ${price} (${label}) — Live Volatility Index | FinBrio`;
+const description = `The CBOE VIX ("fear index") is at ${price} today${label ? ` — ${label}` : ""}. What the VIX measures, what different levels mean, and how to use it, updated live on FinBrio.`;
+
+const faqItems: FaqItem[] = [
+  { q: "What is the VIX today?", a: `The CBOE Volatility Index (VIX) is at ${price}${label ? `, a "${label}" reading` : ""}. Roughly, under 15 is calm, 20–30 is elevated, and above 30 signals fear.` },
+  { q: "What does the VIX measure?", a: "The VIX estimates the S&P 500's expected volatility over the next 30 days, derived from S&P 500 options prices. It rises when investors pay up for downside protection — which is why it's nicknamed the market's 'fear gauge'." },
+  { q: "Is a high VIX good or bad?", a: "A high VIX means the market expects big swings — usually during sell-offs. It isn't directional on its own, but spikes have historically clustered around market bottoms. FinBrio adds term-structure regime detection so you see whether fear is building or fading." },
+];
+---
+
+<DataPage
+  title={title}
+  description={description}
+  ogTitle={`VIX: ${price}${label ? ` — ${label}` : ""}`}
+  ogDescription="The market's fear gauge — what it measures and how to read it, live."
+  ogImage="/og/vix.png"
+  eyebrow="Macro Indicator"
+  h1="VIX today — the market's fear gauge"
+  lead={`Expected 30-day S&P 500 volatility right now reads ${price}${label ? ` (${label})` : ""}.`}
+  updated="Source: CBOE VIX"
+  crumbLabel="VIX"
+  crumbPath="/indicators/vix"
+  faqItems={faqItems}
+  ctaHeading="Track the VIX — with regime detection"
+  ctaBody="FinBrio charts the VIX with term-structure regime detection, the Fear & Greed gauge and a market-stress meter. Free on iOS and the web."
+>
+  <div class="dp-metrics">
+    <div class="dp-metric">
+      <div class={`dp-metric__value dp-metric__value--${tone}`}>{price}</div>
+      <div class="dp-metric__label">VIX level</div>
+    </div>
+    {label && (
+      <div class="dp-metric">
+        <div class={`dp-metric__value dp-metric__value--${tone}`}>{label}</div>
+        <div class="dp-metric__label">Volatility regime</div>
+      </div>
+    )}
+  </div>
+
+  <section class="dp-prose dp-block">
+    <p>The VIX measures how much volatility the market expects in the S&P 500 over the next 30 days, read from options prices. It spikes when investors rush to buy protection — so it tends to jump during sell-offs and drift lower in calm, rising markets.</p>
+    <p>Level is only half the story: the <em>shape</em> of the VIX futures curve tells you whether fear is short-term or structural. FinBrio flags that regime automatically, alongside the Fear &amp; Greed index and the yield curve.</p>
+  </section>
+</DataPage>

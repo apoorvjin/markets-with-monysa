@@ -23,6 +23,7 @@ import {
   SignalBadge,
   Skeleton,
   SkeletonList,
+  Stat,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
 import {
@@ -32,6 +33,7 @@ import {
   useAlerts,
 } from "../../lib/alerts";
 import { toggleWatchlist, useWatchlist } from "../../lib/watchlist";
+import { useIsPro } from "../../lib/session";
 import { BestSetupsCard } from "../../components/BestSetupsCard";
 
 const TABS = ["Instruments", "Dashboard", "Power Moves", "Signals", "Alerts"] as const;
@@ -56,7 +58,7 @@ export function TradingPage() {
         </ChipRow>
       </div>
       {tab === "Instruments" && <InstrumentsTab />}
-      {tab === "Dashboard" && <BestSetupsCard />}
+      {tab === "Dashboard" && <DashboardTab onJumpToPowerMoves={() => setTab("Power Moves")} />}
       {tab === "Power Moves" && <PowerMovesTab />}
       {tab === "Signals" && <SignalsTab />}
       {tab === "Alerts" && <AlertsTab />}
@@ -149,6 +151,345 @@ function QuoteRows(props: { quotes: QuoteItem[]; watchlist: string[] }) {
         </tr>
       ))}
     </tbody>
+  );
+}
+
+// ── Dashboard (mirrors _DashboardzTab in trading_screen.dart) ─────────────
+
+function DashboardTab(props: { onJumpToPowerMoves: () => void }) {
+  return (
+    <>
+      <WatchlistSnapshotCard />
+      <TopMoversCard />
+      <RegimeBreadthCard />
+      <PowerMovesTeaserCard onJumpToPowerMoves={props.onJumpToPowerMoves} />
+      <WinRateLeaderboardCard />
+      <BestSetupsCard />
+    </>
+  );
+}
+
+function WinRateLeaderboardCard() {
+  const navigate = useNavigate();
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["scanner-backtest", "v1", "assets"],
+    queryFn: () => api.getScannerBacktest("v1", "assets"),
+    staleTime: 24 * 60 * 60_000,
+  });
+
+  const top = useMemo(() => {
+    const ranked: Array<{ symbol: string; name: string; flag?: string | null; tier: string; winRate1y: number }> = [];
+    for (const asset of data?.assets ?? []) {
+      let bestTier: string | null = null;
+      let bestRate = -1;
+      for (const [tier, stats] of Object.entries(asset.bySignalCount)) {
+        // Ignore thin samples — a "100% win rate" off 2 events isn't a track record.
+        if (stats.events < 5) continue;
+        if (stats.winRate1y > bestRate) {
+          bestRate = stats.winRate1y;
+          bestTier = tier;
+        }
+      }
+      if (bestTier) {
+        ranked.push({ symbol: asset.symbol, name: asset.name, flag: asset.flag, tier: bestTier, winRate1y: bestRate });
+      }
+    }
+    return ranked.sort((a, b) => b.winRate1y - a.winRate1y).slice(0, 5);
+  }, [data]);
+
+  return (
+    <Card>
+      <div className="page-header">
+        <strong>Win-Rate Leaderboard</strong>
+      </div>
+      <div className="cell-sub" style={{ marginTop: 2 }}>
+        Best 1-year historical win rate — proven track record, not tied to today's signals
+      </div>
+      {error ? (
+        <ErrorView message={(error as Error).message} />
+      ) : isLoading || !data ? (
+        <SkeletonList rows={3} height={22} />
+      ) : top.length === 0 ? (
+        <div className="cell-sub" style={{ marginTop: "var(--s2)" }}>
+          Not enough historical data yet.
+        </div>
+      ) : (
+        <div style={{ marginTop: "var(--s3)" }}>
+          {top.map((r) => (
+            <div
+              key={r.symbol}
+              className="clickable"
+              style={{ display: "flex", alignItems: "center", gap: "var(--s2)", padding: "6px 0" }}
+              onClick={() =>
+                void navigate({ to: "/asset/$symbol", params: { symbol: r.symbol }, search: { name: r.name } })
+              }
+            >
+              <span className="cell-main" style={{ flex: 1 }}>
+                {r.flag ?? ""} {r.name}
+              </span>
+              <span className="cell-sub">
+                {r.tier} sig{r.tier === "1" ? "" : "s"}
+              </span>
+              <span className="num num-up" style={{ minWidth: 44 }}>
+                {r.winRate1y.toFixed(0)}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PowerMovesTeaserCard(props: { onJumpToPowerMoves: () => void }) {
+  // Fixed to v1/Commodities — matches what a tap-through actually lands on
+  // (Power Moves opens on Commodities by default).
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["scanner", "v1"],
+    queryFn: () => api.getScannerAssets("v1"),
+    staleTime: 30 * 60_000,
+  });
+
+  const hot = useMemo(
+    () =>
+      (data?.assets ?? [])
+        .filter((a) => a.category === "Commodities" && a.signalsActive >= 3)
+        .sort((a, b) => b.signalsActive - a.signalsActive),
+    [data],
+  );
+
+  return (
+    <div style={{ cursor: "pointer" }} onClick={props.onJumpToPowerMoves}>
+      <Card>
+        <div className="page-header">
+          <strong>⚡ Power Moves</strong>
+          <span className="cell-sub">›</span>
+        </div>
+        {error ? (
+          <ErrorView message={(error as Error).message} />
+        ) : isLoading || !data ? (
+          <SkeletonList rows={2} height={20} />
+        ) : hot.length === 0 ? (
+          <div className="cell-sub" style={{ marginTop: "var(--s2)" }}>
+            No commodities showing 3+ signals right now.
+          </div>
+        ) : (
+          <div style={{ marginTop: "var(--s2)" }}>
+            <div className="cell-sub" style={{ marginBottom: "var(--s2)" }}>
+              {hot.length} asset{hot.length === 1 ? "" : "s"} showing 3+ signals right now
+            </div>
+            {hot.slice(0, 3).map((a) => (
+              <div key={a.symbol} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                <span className="cell-main">
+                  {a.flag ?? ""} {a.name}
+                </span>
+                <span className="cell-sub">{a.signalsActive} signals</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+const REGIME_LABELS: Record<string, string> = {
+  quiet_trend: "Quiet Trend",
+  quiet_range: "Quiet Range",
+  volatile_trend: "Volatile Trend",
+  chaotic: "Chaotic",
+};
+
+function RegimeBreadthCard() {
+  const navigate = useNavigate();
+  // Same query key Macro → Dashboard's RegimeSummaryCard uses — shares its
+  // cache when both are mounted; server-side cached either way.
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["regime-summary"],
+    queryFn: () => api.getRegimeSummary(),
+    staleTime: 10 * 60_000,
+  });
+
+  const dominantRegime = useMemo(() => {
+    const entries = Object.entries(data?.regimeBreakdown ?? {});
+    if (entries.length === 0) return null;
+    return entries.reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+  }, [data]);
+
+  const miniList = (items: NonNullable<typeof data>["topBullish"], tone: "num-up" | "num-down") =>
+    items.map((a) => (
+      <div
+        key={a.symbol}
+        className="clickable"
+        style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}
+        onClick={() =>
+          void navigate({ to: "/asset/$symbol", params: { symbol: a.symbol }, search: { name: a.name } })
+        }
+      >
+        <span className="cell-main">
+          {a.flag ?? ""} {a.symbol}
+        </span>
+        <span className={`num ${tone}`}>{a.confidence ?? "—"}%</span>
+      </div>
+    ));
+
+  return (
+    <Card>
+      <div className="page-header">
+        <strong>Signal Breadth</strong>
+      </div>
+      {error ? (
+        <ErrorView message={(error as Error).message} />
+      ) : isLoading || !data ? (
+        <SkeletonList rows={2} height={36} />
+      ) : (
+        <>
+          <div className="stat-row" style={{ marginTop: "var(--s3)" }}>
+            <Stat label="Bullish" value={data.bullish} valueClassName="num-up" sub={`of ${data.total}`} />
+            <Stat label="Neutral" value={data.neutral} sub=" " />
+            <Stat label="Bearish" value={data.bearish} valueClassName="num-down" sub=" " />
+          </div>
+          {dominantRegime && (
+            <div className="cell-sub" style={{ marginTop: "var(--s2)" }}>
+              Regime: {REGIME_LABELS[dominantRegime] ?? dominantRegime}
+            </div>
+          )}
+          {(data.topBullish.length > 0 || data.topBearish.length > 0) && (
+            <div className="grid-2" style={{ marginTop: "var(--s3)" }}>
+              {data.topBullish.length > 0 && (
+                <div>
+                  <span className="ui-stat-label">Top buy</span>
+                  {miniList(data.topBullish, "num-up")}
+                </div>
+              )}
+              {data.topBearish.length > 0 && (
+                <div>
+                  <span className="ui-stat-label">Top sell</span>
+                  {miniList(data.topBearish, "num-down")}
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function WatchlistSnapshotCard() {
+  const navigate = useNavigate();
+  const watchlist = useWatchlist();
+  const { data, isLoading, error } = useQuotes();
+
+  const rows = useMemo(() => {
+    const quotes = data?.quotes ?? [];
+    return quotes.filter((q) => watchlist.includes(q.symbol)).slice(0, 6);
+  }, [data, watchlist]);
+
+  return (
+    <Card>
+      <div className="page-header">
+        <strong>★ Your Watchlist</strong>
+      </div>
+      {watchlist.length === 0 ? (
+        <div className="cell-sub" style={{ padding: "var(--s3) 0" }}>
+          Star assets on the Instruments tab to track them here.
+        </div>
+      ) : error ? (
+        <ErrorView message={(error as Error).message} />
+      ) : isLoading || !data ? (
+        <SkeletonList rows={3} height={24} />
+      ) : rows.length === 0 ? (
+        <div className="cell-sub" style={{ padding: "var(--s3) 0" }}>
+          Your watchlist symbols aren't in the live feed right now.
+        </div>
+      ) : (
+        <div style={{ marginTop: "var(--s3)" }}>
+          {rows.map((q) => (
+            <div
+              key={q.symbol}
+              className="clickable"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--s2)",
+                padding: "6px 0",
+              }}
+              onClick={() =>
+                void navigate({
+                  to: "/asset/$symbol",
+                  params: { symbol: q.symbol },
+                  search: { name: q.name },
+                })
+              }
+            >
+              <span>{q.flag ?? ""}</span>
+              <span className="cell-main" style={{ flex: 1 }}>
+                {q.name}
+              </span>
+              <span className="cell-sub">{fmtPrice(q.price, q.currency)}</span>
+              <span className={`num ${changeClass(q.changePercent)}`} style={{ minWidth: 64 }}>
+                {fmtPct(q.changePercent)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function TopMoversCard() {
+  const navigate = useNavigate();
+  const { data, isLoading, error } = useQuotes();
+
+  const { gainers, losers } = useMemo(() => {
+    const ranked = (data?.quotes ?? [])
+      .filter((q) => q.changePercent != null)
+      .sort((a, b) => (b.changePercent ?? 0) - (a.changePercent ?? 0));
+    return { gainers: ranked.slice(0, 3), losers: ranked.slice(-3).reverse() };
+  }, [data]);
+
+  const moversRow = (q: QuoteItem) => (
+    <div
+      key={q.symbol}
+      className="clickable"
+      style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}
+      onClick={() =>
+        void navigate({ to: "/asset/$symbol", params: { symbol: q.symbol }, search: { name: q.name } })
+      }
+    >
+      <span className="cell-main">{q.symbol}</span>
+      <span className={`num ${changeClass(q.changePercent)}`}>{fmtPct(q.changePercent)}</span>
+    </div>
+  );
+
+  return (
+    <Card>
+      <div className="page-header">
+        <strong>Top Movers</strong>
+      </div>
+      {error ? (
+        <ErrorView message={(error as Error).message} />
+      ) : isLoading || !data ? (
+        <SkeletonList rows={3} height={24} />
+      ) : (
+        <div style={{ display: "flex", gap: "var(--s5)", marginTop: "var(--s3)" }}>
+          <div style={{ flex: 1 }}>
+            <div className="cell-sub" style={{ marginBottom: "var(--s2)" }}>
+              GAINERS
+            </div>
+            {gainers.map(moversRow)}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div className="cell-sub" style={{ marginBottom: "var(--s2)" }}>
+              LOSERS
+            </div>
+            {losers.map(moversRow)}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -275,12 +616,12 @@ const VERSION_CHIPS: Array<{
   label: string;
   enabledFor: PowerMovesType[];
 }> = [
-  { version: "v1", label: "v1 Original", enabledFor: ["Commodities"] },
-  { version: "v2", label: "v2 Pine-Aligned", enabledFor: ["Commodities"] },
-  { version: "v3", label: "v3 Super Pine", enabledFor: ["Indices"] },
-  { version: "v3c", label: "v3 Pine Commodities", enabledFor: ["Commodities"] },
-  { version: "v3f", label: "v3 Pine Forex", enabledFor: ["Forex"] },
-  { version: "v3crypto", label: "v3 Pine Crypto", enabledFor: ["Crypto"] },
+  { version: "v1", label: "Early Setup", enabledFor: ["Commodities"] },
+  { version: "v2", label: "Confirmed Breakout", enabledFor: ["Commodities"] },
+  { version: "v3", label: "Index Regime", enabledFor: ["Indices"] },
+  { version: "v3c", label: "Commodity Cycle", enabledFor: ["Commodities"] },
+  { version: "v3f", label: "FX Range Breakout", enabledFor: ["Forex"] },
+  { version: "v3crypto", label: "Crypto Breakout", enabledFor: ["Crypto"] },
 ];
 
 const V12_SIGNALS: Array<{ key: keyof ScannerAsset; label: string }> = [
@@ -423,14 +764,14 @@ function PowerMovesTab() {
 const SIGNAL_TYPES = ["ALL", "Commodities", "Indices", "Forex", "Crypto"] as const;
 
 function SignalsTab() {
+  const isPro = useIsPro();
   const [type, setType] = useState<string>("ALL");
   const [strategy, setStrategy] = useState(STRATEGIES[0]!);
   const { data, isLoading, error, refetch } = useQuotes();
   // Mobile locks any strategy with serverParam >= 4 (S4–S9 base + all S1+–S9+
-  // enhanced) behind `signals_advanced`. Web has no upgrade sheet to block
-  // chip selection with, so the chips stay clickable but the result table
-  // renders as a permanent blurred teaser instead.
-  const isAdvanced = Number(strategy.serverParam) >= 4;
+  // enhanced) behind `signals_advanced`. Chips stay clickable; for free users
+  // the result table renders as a blurred teaser, Pro users see it in full.
+  const isAdvanced = Number(strategy.serverParam) >= 4 && !isPro;
 
   const symbols = useMemo(() => {
     const quotes = data?.quotes ?? [];
@@ -561,11 +902,13 @@ function SignalRow(props: {
 const FREE_ALERT_LIMIT = 3;
 
 function AlertsTab() {
+  const isPro = useIsPro();
   const alerts = useAlerts();
   const [symbol, setSymbol] = useState("");
   const [price, setPrice] = useState("");
   const [direction, setDirection] = useState<"above" | "below">("above");
-  const limitReached = alerts.length >= FREE_ALERT_LIMIT;
+  // Pro (`alerts_unlimited`) lifts the free-tier cap.
+  const limitReached = !isPro && alerts.length >= FREE_ALERT_LIMIT;
 
   // 10s polling while the tab is open — mirrors mobile alert_provider
   const { data } = useQuery({

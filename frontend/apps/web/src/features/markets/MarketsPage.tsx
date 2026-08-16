@@ -22,6 +22,7 @@ import {
   SkeletonList,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
+import { useIsPro } from "../../lib/session";
 import { MarketTable } from "../../components/MarketTable";
 import { DashboardGrid } from "../../components/DashboardGrid";
 
@@ -66,8 +67,16 @@ const COT_GROUPS = [
   ["currencies", "Currencies"],
 ] as const;
 
+// Not a COT category — CFTC has no jurisdiction outside US-regulated
+// exchanges, so this is a different metric (NSE cash-market FII/DII net
+// flows) kept in its own chip rather than folded into the table above.
+const REGIONAL_FLOWS_KEY = "regionalFlows" as const;
+
 function CftcTab() {
-  const [group, setGroup] = useState<(typeof COT_GROUPS)[number][0]>("metals");
+  const isPro = useIsPro();
+  const [group, setGroup] = useState<(typeof COT_GROUPS)[number][0] | typeof REGIONAL_FLOWS_KEY>(
+    "metals",
+  );
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["cot-metals"],
     queryFn: () => api.getCotMetals(),
@@ -82,8 +91,15 @@ function CftcTab() {
         {COT_GROUPS.map(([key, label]) => (
           <Chip key={key} label={label} active={group === key} onClick={() => setGroup(key)} />
         ))}
+        <Chip
+          label="Regional Flows"
+          active={group === REGIONAL_FLOWS_KEY}
+          onClick={() => setGroup(REGIONAL_FLOWS_KEY)}
+        />
       </ChipRow>
-      {COT_GROUPS.filter(([key]) => key === group).map(([key, label]) => {
+      {group === REGIONAL_FLOWS_KEY && <RegionalFlowsPanel groups={data.regionalFlows ?? []} />}
+      {group !== REGIONAL_FLOWS_KEY &&
+        COT_GROUPS.filter(([key]) => key === group).map(([key, label]) => {
         const rows = data[key];
         if (!rows || rows.length === 0) return null;
         return (
@@ -103,7 +119,9 @@ function CftcTab() {
                 </thead>
                 <tbody>
                   {rows.map((m, i) => {
-                    if (i === 0) {
+                    // Pro users see every row in full; free users see only the
+                    // first row and a blurred compact teaser for the rest.
+                    if (i === 0 || isPro) {
                       return (
                         <tr key={m.name}>
                           <td>
@@ -168,6 +186,68 @@ function CftcTab() {
   );
 }
 
+// Different metric from the COT table above (cash-market net buy/sell, not
+// futures long/short positioning) — rendered as cards, not the COT `<table>`,
+// so the shape difference stays visually obvious rather than implied.
+function RegionalFlowsPanel({ groups }: { groups: import("@monysa/contracts").RegionalFlowGroup[] }) {
+  if (groups.length === 0) {
+    return (
+      <p className="cell-sub" style={{ marginTop: "var(--s3)" }}>
+        No regional flow data available right now.
+      </p>
+    );
+  }
+  return (
+    <div style={{ marginTop: "var(--s3)", display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
+      {groups.map((g) => (
+        <div key={g.region} className="ui-card" style={{ padding: "var(--s4)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: "var(--s2)" }}>
+            <strong>
+              {g.flag ?? ""} {g.region} — {g.market}
+            </strong>
+            <span className="cell-sub">{g.date ?? "—"}</span>
+          </div>
+          <div className="tbl-wrap" style={{ marginTop: "var(--s3)" }}>
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Participant</th>
+                  <th className="num">Buy ({g.unit})</th>
+                  <th className="num">Sell ({g.unit})</th>
+                  <th className="num">Net ({g.unit})</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.items.map((item) => (
+                  <tr key={item.category}>
+                    <td>
+                      <span className="cell-main">{item.label}</span>
+                      <span className="cell-sub" style={{ marginLeft: 6 }}>
+                        ({item.category})
+                      </span>
+                    </td>
+                    <td className="num">{item.buyValue.toLocaleString("en-US")}</td>
+                    <td className="num">{item.sellValue.toLocaleString("en-US")}</td>
+                    <td className={`num ${changeClass(item.netValue)}`}>
+                      {item.netValue >= 0 ? "+" : ""}
+                      {item.netValue.toLocaleString("en-US")} · {item.netBias}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {g.source && (
+            <p className="cell-sub" style={{ marginTop: "var(--s2)" }}>
+              Source: {g.source}
+            </p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Loosely mimics a squarified treemap mosaic (varied tile sizes stacked in
 // rows) so the loading state doesn't jump-cut into a completely different
 // shape once data arrives — a generic row-list skeleton reads nothing like
@@ -211,6 +291,7 @@ function sessionDelta(
 
 function TreemapTab() {
   const navigate = useNavigate();
+  const isPro = useIsPro();
   const [index, setIndex] = useState<TreemapIndexParam>("sp500");
   const [timeframe, setTimeframe] = useState<TreemapTimeframe>("1d");
   const [focusedSector, setFocusedSector] = useState<string | null>(null);
@@ -261,7 +342,7 @@ function TreemapTab() {
           {TREEMAP_TIMEFRAMES.map((tf) => (
             <Chip
               key={tf}
-              label={tf === "1d" ? TF_LABEL[tf] : `🔒 ${TF_LABEL[tf]}`}
+              label={tf === "1d" || isPro ? TF_LABEL[tf] : `🔒 ${TF_LABEL[tf]}`}
               active={timeframe === tf}
               onClick={() => setTimeframe(tf)}
             />
@@ -292,7 +373,7 @@ function TreemapTab() {
         <TreemapSkeleton />
       ) : (
         <>
-          {timeframe !== "1d" ? (
+          {timeframe !== "1d" && !isPro ? (
             <ProBlur positive={weightedAvg >= 0} className="treemap-blur">
               <CanvasTreemap height={620} data={treemapData} />
             </ProBlur>

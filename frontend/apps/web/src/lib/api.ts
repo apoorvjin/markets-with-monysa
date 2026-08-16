@@ -5,7 +5,7 @@ import { persistQueryClient } from "@tanstack/react-query-persist-client";
 
 // Local dev hits the local Express server (port 5001 — never 5000);
 // production builds default to the Fly deployment.
-const baseUrl =
+export const baseUrl =
   import.meta.env.VITE_API_BASE_URL ??
   (import.meta.env.DEV ? "http://localhost:5001" : "https://monysa-api.fly.dev");
 
@@ -33,5 +33,12 @@ persistQueryClient({
   }),
   maxAge: 24 * 3600_000,
   // Bump when any contract shape changes (mirror of DiskCache._schemaVersion).
-  buster: "v1",
+  // v2: DataCenterFacilitiesResponse gained `source`; also flushes the poisoned
+  // empty-facilities entries some clients cached while Overpass was failing.
+  // v3: SplcUniverseResponse changed `tickers: string[]` -> `companies: {...}[]`.
+  // Without this bump, a client holding the v2 entry parses the old shape into
+  // an empty company list, so SPLC search silently finds nothing. A hard
+  // refresh does NOT fix that — the entry is in localStorage, not the HTTP
+  // cache — so the buster is the only thing that clears it.
+  buster: "v3",
 });

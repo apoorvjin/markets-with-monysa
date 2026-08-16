@@ -292,7 +292,8 @@
       "Read(//Users/apoorvjin/**)",
       "Bash(lsof -ti:5001,5175,5176,5177)",
       "Bash(curl -s https://raw.githubusercontent.com/harunsaglam85/spy-0dte-trader/main/hermes_system/systemd/hermes-engine-alert.service)",
-      "Bash(curl -s http://localhost:5001/api/volatility/vix-term-structure)"
+      "Bash(curl -s http://localhost:5001/api/volatility/vix-term-structure)",
+      "Bash(grep -rnA4 \"STRATEGY_DEFS\" server/trading.ts)"
     ],
     "additionalDirectories": [
       "/Users/apoorvjin/.claude/skills",

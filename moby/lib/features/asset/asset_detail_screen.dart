@@ -1372,7 +1372,7 @@ class _MultiTfMatrix extends ConsumerWidget {
   final String symbol;
   final String strategy;
 
-  static const _tfs = ['1m', '1h', '4h', '1d'];
+  static const _tfs = ['1h', '4h', '1d'];
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -2689,7 +2689,7 @@ class _TradeRow extends StatelessWidget {
 
 // ── Signal Trace Tab ──────────────────────────────────────────────────────────
 
-// Flex weights: label=3 | 1m=3 | 1h=3 | 4h=3 | 1d=3 | win=2 | ret=3 (total 20)
+// Flex weights: label=3 | 1h=3 | 4h=3 | 1d=3 | 1w=3 | win=2 | ret=3 (total 20)
 const _kLabelFlex = 3;
 const _kTfFlex    = 3;
 const _kWinFlex   = 2;

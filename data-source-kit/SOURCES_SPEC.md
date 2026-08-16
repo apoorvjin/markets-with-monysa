@@ -104,10 +104,40 @@ A separate `adapters/news/classify.ts` tags each item with a **category** and
 
 ---
 
+## Data Centers — `auth: none` — **shipped**
+
+Global operating facilities + the U.S./Canada AI construction pipeline. No single
+free source covers both, so this is three sources fused at the route layer (see
+`server/routes/datacenters.ts`), same pattern as Wire's per-desk RSS aggregation.
+
+| Field | Value |
+|---|---|
+| Facilities adapter | `osm-overpass-datacenters` — `adapters/datacenters/osm-overpass.ts` |
+| Facilities endpoint | overpass-api.de, global query for `telecom=data_center` nodes/ways/relations |
+| Facilities coverage | ✅ verified live 2026-08-14 — 4,531 elements worldwide. Crowdsourced (OSM): real facilities that haven't been mapped won't appear; `operator` tag is whatever the mapper entered, not resolved to a parent company |
+| Facilities cache | 24h — public instance fair-use is ~10k req/day / <1GB/day, one global query/day is trivial |
+| Pipeline adapters | `interconnection-fyi-index` + `interconnection-fyi-region` — `adapters/datacenters/interconnection-fyi.ts` |
+| Pipeline endpoint | www.interconnection.fyi (GridTracker) — **no public API**, data is scraped from the site's own server-rendered Next.js `pageProps` JSON (`core/next-data.ts`), not HTML markup. robots.txt allows crawling (verified 2026-08-14) |
+| Pipeline coverage | ✅ verified live 2026-08-14 — 3,901 US/Canada records (2,321 Operational / 160 Construction / 916 Proposed / 59 Cancelled / 445 Unknown) across 48 regions. Most records carry only county/city, not a street address — this is inherent to early-stage (Proposed) projects, not a scrape gap |
+| Pipeline cache | 24h; region list fetched first (1 request), then one page per tracked region (~48 requests/day) |
+| Geocoding | `adapters/datacenters/geocode-county.ts` — Nominatim, county→centroid only (not per-project). Self-throttled to 1 req/sec per Nominatim's usage policy, 90-day cache (county centroids don't move), negative results cached too so an unresolvable name isn't retried every run |
+| Announcements | reuses the **already-shipped** Corporate Wire desk (GlobeNewswire/PR Newswire, see News/OSINT section above) — `adapters/datacenters/dc-keyword.ts` tags items as data-center-related, no new feeds |
+| Rate limit | Overpass: ~10k req/day, <1GB/day. interconnection.fyi: page-view-shaped traffic, no documented limit. Nominatim: 1 req/sec, heavy caching required |
+| Safety | SSRF allowlist enforced on all three hosts (`overpass-api.de`, `www.interconnection.fyi`, `nominatim.openstreetmap.org`) |
+
+**Deferred (not built this pass):** SEC EDGAR full-text search (capex/8-K signals),
+EIA plant-level generation data (corroborating power-buildout signal), county
+building-permit open-data portals (Socrata, per-jurisdiction) — see the web
+research this section was scoped from. Add one at a time if the fused
+facilities+pipeline view needs a stronger confirmatory signal.
+
+---
+
 ## Reusable patterns carried into `core/`
 
 - **Circuit breaker** (`core/circuit-breaker.ts`) — `createCircuitBreaker({name,cacheTtlMs}).execute(fn, fallback, {shouldCache})`.
 - **SSRF allowlist** (`core/ssrf-allowlist.ts`) — www-normalization + subdomain match; **non-negotiable for the RSS adapter**.
+- **Next.js page-data extraction** (`core/next-data.ts`) — pulls a server-rendered page's embedded `props.pageProps` JSON out of raw HTML via balanced-brace scanning, no DOM/HTML parser dependency. Use this before reaching for a full scraper when a target site is Next.js-rendered (check page source for `__NEXT_DATA__`) — it's a JSON read, not markup parsing.
 - **Budget guard** (planned) — AviationStack monthly/request ceilings so a freemium key can't be blown.
 - **Relay indirection** (optional, documented not baked in) — route AIS/OpenSky/RSS through a relay to keep keys server-side / turn AIS WS into snapshots.
 

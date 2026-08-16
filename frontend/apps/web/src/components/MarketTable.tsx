@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import type { CbRateInfo, MarketItem } from "@monysa/contracts";
 import { changeClass, fmtPct, fmtPrice, ProBlur } from "@monysa/ui";
 import { api } from "../lib/api";
+import { useIsPro } from "../lib/session";
 
 /** Base/quote rate-comparison label for a forex pair like EURUSD=X.
     Pro-gated: mirrors _FxDifferential in the Flutter app (teaser-only on web
@@ -13,6 +14,7 @@ function FxDifferential(props: {
   rates: Record<string, CbRateInfo> | undefined;
   forceReveal?: boolean;
 }) {
+  const isPro = useIsPro();
   const rates = props.rates;
   if (!rates) return null;
   const clean = props.symbol.replace("=X", "");
@@ -31,7 +33,7 @@ function FxDifferential(props: {
   );
   if (props.forceReveal) return label;
   return (
-    <ProBlur positive={diff >= 0} className="fx-diff-blur">
+    <ProBlur positive={diff >= 0} unlocked={isPro} className="fx-diff-blur">
       {label}
     </ProBlur>
   );

@@ -1,35 +1,45 @@
-# FinBrio — TestFlight Release Notes
-_Covers changes from 2026-07-17 to 2026-07-26_
+# FinBrio — Customer Release Notes
+_Covers changes since the last submitted build (1.1.1, build 202608150804, submitted 2026-08-15 08:04 AM)_
 
+---
+
+## Part 1 — Mobile app (iOS)
 Copy-paste ready text for App Store Connect → TestFlight → "What to Test" below the divider.
 
 ---
 
 **New**
-• **Manage Subscription** (Profile) — cancel, request a refund, restore a purchase, or reach support directly from the app via a new in-app Customer Center. No more emailing support to cancel.
-• **Delete Account** (Profile) — remove your account and its data from within the app.
-• Upgrade screen now shows a live, remotely-configured paywall (monthly or annual, whichever your offer includes) instead of a fixed in-app design — pricing/copy can now change without an app update, and it falls back gracefully if purchases are briefly unavailable.
-• Sign-up with email now asks for your name.
-• **Earnings Calendar** (Investing) — pick S&P 500, Nasdaq 100, or Dow Jones; filter to the next 7/15/30 days; toggle mega-caps only; filter by sector; search by symbol/name. Each entry now shows market cap, EPS estimate, a YoY growth badge, and a pre/after-market timing icon, grouped under sticky per-day headers with a "N reporting · Busiest day" summary.
-• **ETF Explorer** (Investing) — every ETF now shows a MoM / QoQ / YoY performance strip (Pro; one ETF is always shown free, moved to the top of the list).
-• **Country Detail** (Investing → Exposure → tap a country) — new "View Top Listed Stocks" button for every one of the 113+ countries (Pro; free users see a lock icon and a paywall prompt).
-• **Markets → Heatmap** — top tiles now show a gold ring when there's been strong buying pressure in the last 30 minutes during regular market hours.
-• Profile → About now shows your actual installed app version and build number instead of a fixed label.
+🌏 **Markets just went more global.** The CFTC positioning tracker (Markets → CFTC → Indices & Rates) now follows **Nikkei 225** right alongside the US benchmarks — same hedge-fund long/short data you already trust, one more major market covered. And it's joined by a brand-new **Regional Flows** section: India's daily foreign-vs-domestic institutional buying and selling, straight from the NSE, updated every trading day — free for every user, no Pro gate.
+_Please test:_ Markets → CFTC → tap "Regional Flows" and confirm the India card loads with today's buy/sell/net figures.
 
-**Improved**
-• **Markets → Heatmap tab is now completely free** — all 9 indices and the 1-Day view are open to everyone. Only the zoomed-out 1W/1M/YTD views require Pro (the whole tab used to be Pro-only).
-• Switching chart provider in Profile now applies instantly — removed the old "restart required" confirmation, which didn't actually restart anything.
-• Subscription plans simplified to **Free** and **Pro** only.
-• Google Sign-In now reliably shows your name on your profile even when Google doesn't hand it over automatically.
-• Loading skeletons for Multibaggers, Power Moves, Presidential, and Smart $ are more consistent (shared shimmer + filter-chip components across screens).
-
-**New Pro previews** _(existing content is now partially visible for Free, blurred/teased rather than fully hidden)_
-• Markets → Forex rows show a central-bank rate-comparison note (Pro; blurred preview for Free).
-• Markets → CFTC shows one asset per category free; the rest are Pro.
-• Investing → Presidential — the newest filing batch collapses into a single "N latest filings — Upgrade to Pro" row; every earlier filing stays free.
-• Macro → Dashboard performance heatmap — 1D/1W stay free; 1M/3M/6M/1Y/3Y/5Y require Pro.
-• Macro → Correlation — the 1M window stays free; 3M/6M/1Y require Pro.
+**Improved / Fixed**
+• **More room to breathe.** Filter chips on Trading → Signals and Markets → Heatmap now scroll away with your results instead of pinning a fixed strip across the top — less chrome, more chart.
+_Please test:_ scroll down either screen and confirm the chips move naturally with the list instead of staying stuck.
+• Fixed a keyboard-overlap bug on Multibaggers where searching for a stock could let the keyboard cover the field you were typing into.
+• The Backtest link from Multibaggers now correctly titles itself "Multibagger Backtest" when you open it (was showing a generic title).
+• Multibaggers' own version toggle and info sheet now say **"Early Setup"** / **"Confirmed Breakout"**, matching the naming used everywhere else in the app.
 
 ---
 
-_Also shipped this period, but on the web (not part of this TestFlight build):_ the finbrio.net marketing site went live, and the web app at app.finbrio.net picked up matching filter and Free/Pro preview fixes across Markets, Investing, and Macro.
+## Part 2 — Introducing FinBrio Terminal (web)
+_New this period on the web app (app.finbrio.net) — not part of the iOS TestFlight build, but worth telling every customer about._
+
+**FinBrio Terminal** is a new, full-bleed trading desk at **app.finbrio.net/terminal** — a Bloomberg-style, build-your-own multi-panel workspace. It's designed for desktop, laptop, and iPad; on a phone, Terminal points you back to the regular Markets/Trading/Investing/Macro/Wire tabs, which stay fully phone-ready. Free for every signed-in user.
+
+• **Build your own desk.** Add, remove, resize, and reorder panels from **17 live widgets**; save multiple named layouts and switch between them instantly — your layout is yours, not a fixed dashboard.
+• **Markets panels** — Chart, Watchlist, Treemap, Movers, Market Board (live quotes).
+• **Macro panels** — Macro dashboard, Correlation matrix, Economic Calendar, CFTC COT positioning.
+• **Trading panels** — Signals, Compare, and a Portfolio panel to paper-track your own positions.
+• **Intel panels** — Wire, Breaking, Geo-Intel (earthquakes, prediction markets, maritime and airspace activity), Institutional Flow, and Smart Money.
+• A live ticker tape runs across the top of every layout; a status bar at the bottom shows stream/poll connection state, the UTC clock, your live feed count, and whichever symbol you currently have focused.
+
+**New: Data Centers** — **app.finbrio.net/datacenters**
+A first-of-its-kind AI-infrastructure tracker, also free to everyone:
+• **Facilities layer** — roughly 4,500 existing data centers worldwide, mapped from OpenStreetMap.
+• **Pipeline layer** — US & Canada data-center buildout tracked through power-grid interconnection filings, grouped by county and colored by status (Proposed / Under Construction / Operational) — a forward-looking read on where AI capex is actually landing, ahead of it showing up in any earnings report.
+• **Announcements** — recent hyperscaler press releases, tagged with the tickers they mention.
+• Search by facility, operator, or county; click any pin or list row to fly the map straight to it.
+
+---
+
+_Also underway this period, on the web app (not covered above):_ mandatory sign-in and a server-verified Pro entitlement check for app.finbrio.net.

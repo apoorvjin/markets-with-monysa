@@ -12,6 +12,7 @@ import 'providers/alert_provider.dart';
 import 'providers/font_size_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/push_notification_service.dart';
+import 'services/remote_config_service.dart';
 
 final _scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
@@ -83,6 +84,7 @@ final _tabs = [
   (path: '/trading',   icon: Icons.candlestick_chart_rounded, label: 'Trading'),
   (path: '/investing', icon: Icons.trending_up_rounded,       label: 'Investing'),
   (path: '/macro',     icon: Icons.bolt_rounded,              label: 'Macro'),
+  (path: '/wire',      icon: Icons.newspaper_rounded,         label: 'Wire'),
   (path: '/profile',   icon: Icons.person_rounded,            label: 'Profile'),
 ];
 
@@ -102,7 +104,11 @@ class AppShell extends ConsumerWidget {
     final alerts = ref.watch(alertProvider);
     final lastTabIdx = ref.watch(lastMainTabProvider);
     final location = GoRouterState.of(context).uri.toString();
-    final tabFromLocation = _tabs.indexWhere((t) => location.startsWith(t.path));
+    // Wire is a remote-config kill-switch — drop the tab when disabled.
+    final tabs = RemoteConfigService.wireEnabled
+        ? _tabs
+        : _tabs.where((t) => t.path != '/wire').toList();
+    final tabFromLocation = tabs.indexWhere((t) => location.startsWith(t.path));
     final currentIndex = tabFromLocation >= 0 ? tabFromLocation : lastTabIdx;
 
     return Scaffold(
@@ -120,13 +126,14 @@ class AppShell extends ConsumerWidget {
         child: child,
       ),
       bottomNavigationBar: _BottomBar(
+        tabs: tabs,
         currentIndex: currentIndex,
         alertCount: alerts.length,
         onTap: (i) async {
           ref.read(lastMainTabProvider.notifier).state = i;
           final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('lastTab', _tabs[i].path);
-          if (context.mounted) context.go(_tabs[i].path);
+          await prefs.setString('lastTab', tabs[i].path);
+          if (context.mounted) context.go(tabs[i].path);
         },
       ),
     );
@@ -135,11 +142,13 @@ class AppShell extends ConsumerWidget {
 
 class _BottomBar extends ConsumerWidget {
   const _BottomBar({
+    required this.tabs,
     required this.currentIndex,
     required this.alertCount,
     required this.onTap,
   });
 
+  final List<({String path, IconData icon, String label})> tabs;
   final int currentIndex;
   final int alertCount;
   final ValueChanged<int> onTap;
@@ -191,7 +200,7 @@ class _BottomBar extends ConsumerWidget {
               height: _navBarPillHeight,
               child: Row(
                 children: [
-                  ..._tabs.asMap().entries.map((entry) {
+                  ...tabs.asMap().entries.map((entry) {
                     final i = entry.key;
                     final tab = entry.value;
                     final isActive = i == currentIndex;

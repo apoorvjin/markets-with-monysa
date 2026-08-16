@@ -32,6 +32,25 @@ import '../investing/best_setups_card.dart';
 final _quotesProvider = FutureProvider.autoDispose<List<QuoteItem>>(
     (_) => TradingRepository.instance.fetchQuotes());
 
+// Same endpoint Macro → Dashboard's regime section uses (that provider is
+// file-private to volatility_screen.dart, so this mirrors rather than
+// imports it); server-side cached, so a second client is cheap.
+final _dashboardRegimeProvider =
+    FutureProvider.autoDispose<Map<String, dynamic>>((ref) async {
+  ref.keepAlive();
+  final data = await ApiClient.instance.get(ApiEndpoints.regimeSummary);
+  return data as Map<String, dynamic>;
+});
+
+// v1/Commodities backtest — same data source as the 10X Backtest screen's
+// Early Setup version, used here for a "best proven track record" ranking
+// independent of whether an asset is actively signaling today.
+final _dashboardBacktestProvider =
+    FutureProvider.autoDispose<ScannerBacktestResponse>(
+  (_) => TradingRepository.instance
+      .fetchScannerBacktest(version: 'v1', type: 'assets'),
+);
+
 final _tenXAssetScannerProvider =
     FutureProvider.autoDispose<List<TenXScanResult>>(
   (_) => TradingRepository.instance.fetchTenXAssets(),
@@ -101,7 +120,6 @@ final _compareProvider = FutureProvider.autoDispose
 
 // ── Strategy definitions (fetched from server, fallback to hardcoded) ─────────
 
-
 // ── Screen ────────────────────────────────────────────────────────────────────
 
 class TradingScreen extends StatefulWidget {
@@ -156,13 +174,13 @@ class _TradingScreenState extends State<TradingScreen>
       body: MaxWidthLayout(
         child: TabBarView(
           controller: _tab,
-          children: const [
-            _DashboardTab(),
-            _DashboardzTab(),
-            _PowerMovesTab(),
-            _SignalsTab(),
-            _AlertsTab(),
-            _ComparisonTab(),
+          children: [
+            const _DashboardTab(),
+            _DashboardzTab(tabController: _tab),
+            const _PowerMovesTab(),
+            const _SignalsTab(),
+            const _AlertsTab(),
+            const _ComparisonTab(),
           ],
         ),
       ),
@@ -228,14 +246,18 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final quotesAsync = ref.watch(_quotesProvider);
+    final categoryCounts = _countByCategory(quotesAsync.valueOrNull);
 
-    // Stocks mode: bypass quotes provider and show search UI
+    // Stocks mode: skips quotesAsync for its own UI (still watched above so
+    // the rail's count badges stay populated when switching back)
     if (_category == 'Stocks') {
       return Column(
         children: [
           _CategoryFilter(
             selected: _category,
             categories: _categories,
+            counts: categoryCounts,
             onSelect: (cat) => setState(() => _category = cat),
           ),
           const Expanded(child: _StocksSearchView()),
@@ -252,6 +274,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
             _CategoryFilter(
               selected: _category,
               categories: _categories,
+              counts: categoryCounts,
               onSelect: (cat) => setState(() => _category = cat),
             ),
             Expanded(
@@ -308,8 +331,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
         );
       }
 
-      final async = ref.watch(_quotesProvider);
-      return async.when(
+      return quotesAsync.when(
         loading: () => const ShimmerList(count: 8, type: ShimmerRowType.signal),
         error: (e, _) => ErrorView(
           message: 'Failed to load quotes',
@@ -324,6 +346,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
               _CategoryFilter(
                 selected: _category,
                 categories: _categories,
+                counts: categoryCounts,
                 onSelect: (cat) => setState(() => _category = cat),
               ),
               FreshnessBar(lastUpdated: _lastQuotesUpdate.toIso8601String()),
@@ -347,8 +370,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
       );
     }
 
-    final async = ref.watch(_quotesProvider);
-    return async.when(
+    return quotesAsync.when(
       loading: () => const ShimmerList(count: 8, type: ShimmerRowType.signal),
       error: (e, _) => ErrorView(
         message: 'Failed to load quotes',
@@ -362,6 +384,7 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
             _CategoryFilter(
               selected: _category,
               categories: _categories,
+              counts: categoryCounts,
               onSelect: (cat) => setState(() => _category = cat),
             ),
             FreshnessBar(lastUpdated: _lastQuotesUpdate.toIso8601String()),
@@ -386,10 +409,23 @@ class _DashboardTabState extends ConsumerState<_DashboardTab>
   }
 }
 
+// Per-category live counts for the rail's count badges. Watchlist/Stocks are
+// deliberately excluded by _CategoryFilter regardless of what's in this map —
+// Watchlist has no fixed universe and Stocks is a search mode.
+Map<String, int>? _countByCategory(List<QuoteItem>? quotes) {
+  if (quotes == null) return null;
+  final counts = <String, int>{};
+  for (final q in quotes) {
+    counts[q.category] = (counts[q.category] ?? 0) + 1;
+  }
+  return counts;
+}
+
 // ── Dashboardz Tab (Best Setups — Assets) ─────────────────────────────────────
 
 class _DashboardzTab extends ConsumerStatefulWidget {
-  const _DashboardzTab();
+  const _DashboardzTab({required this.tabController});
+  final TabController tabController;
 
   @override
   ConsumerState<_DashboardzTab> createState() => _DashboardzTabState();
@@ -407,6 +443,11 @@ class _DashboardzTabState extends ConsumerState<_DashboardzTab> {
       TradingRepository.instance
           .fetchBestSetups(version: 'v1', type: _type)
           .ignore();
+      TradingRepository.instance.fetchQuotes().ignore();
+      TradingRepository.instance.fetchTenXAssets().ignore();
+      TradingRepository.instance
+          .fetchScannerBacktest(version: 'v1', type: 'assets')
+          .ignore();
     });
   }
 
@@ -420,6 +461,16 @@ class _DashboardzTabState extends ConsumerState<_DashboardzTab> {
         AppSpacing.s5 + MediaQuery.of(context).padding.bottom,
       ),
       children: [
+        const _WatchlistSnapshotCard(),
+        const SizedBox(height: AppSpacing.s4),
+        const _TopMoversCard(),
+        const SizedBox(height: AppSpacing.s4),
+        const _RegimeBreadthCard(),
+        const SizedBox(height: AppSpacing.s4),
+        _PowerMovesTeaserCard(tabController: widget.tabController),
+        const SizedBox(height: AppSpacing.s4),
+        const _WinRateLeaderboardCard(),
+        const SizedBox(height: AppSpacing.s4),
         BestSetupsCard(
           type: _type,
           version: _version,
@@ -430,56 +481,769 @@ class _DashboardzTabState extends ConsumerState<_DashboardzTab> {
   }
 }
 
+// ── Dashboard card helpers ──────────────────────────────────────────────────
+
+class _CardLoadingRow extends StatelessWidget {
+  const _CardLoadingRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.s4),
+      child: Center(
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2, color: c.accent),
+        ),
+      ),
+    );
+  }
+}
+
+class _CardErrorText extends StatelessWidget {
+  const _CardErrorText(this.message);
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Text(message, style: AppTypography.sm.copyWith(color: c.textMuted));
+  }
+}
+
+String _fmtPx(double? p) {
+  if (p == null) return '—';
+  if (p > 1000) return p.toStringAsFixed(0);
+  if (p < 1) return p.toStringAsFixed(4);
+  return p.toStringAsFixed(2);
+}
+
+String _fmtPct(double? p) {
+  if (p == null) return '—';
+  return '${p >= 0 ? '+' : ''}${p.toStringAsFixed(2)}%';
+}
+
+// ── Watchlist Snapshot Card ─────────────────────────────────────────────────
+
+class _WatchlistSnapshotCard extends ConsumerWidget {
+  const _WatchlistSnapshotCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final watchlist = ref.watch(watchlistProvider);
+    final quotesAsync = ref.watch(_quotesProvider);
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.star_rounded, size: 18, color: c.warning),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Your Watchlist',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          if (watchlist.isEmpty)
+            Text(
+              'Star assets on the Instruments tab to track them here.',
+              style: AppTypography.sm.copyWith(color: c.textMuted),
+            )
+          else
+            quotesAsync.when(
+              loading: () => const _CardLoadingRow(),
+              error: (_, __) =>
+                  const _CardErrorText('Unable to load watchlist prices'),
+              data: (quotes) {
+                final rows =
+                    quotes.where((q) => watchlist.contains(q.symbol)).toList();
+                if (rows.isEmpty) {
+                  return const _CardErrorText(
+                      'Your watchlist symbols aren\'t in the live feed right now.');
+                }
+                return Column(
+                  children: rows.take(6).map((q) => _WatchlistRow(q)).toList(),
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WatchlistRow extends StatelessWidget {
+  const _WatchlistRow(this.quote);
+  final QuoteItem quote;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final positive = (quote.changePercent ?? 0) >= 0;
+    return InkWell(
+      onTap: () => context.push(
+          '/asset/${Uri.encodeComponent(quote.symbol)}?name=${Uri.encodeComponent(quote.name)}'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
+        child: Row(
+          children: [
+            if (quote.flag.isNotEmpty) ...[
+              Text(quote.flag, style: AppTypography.sm),
+              const SizedBox(width: AppSpacing.s2),
+            ],
+            Expanded(
+              child: Text(quote.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.sm.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: AppSpacing.s2),
+            Text(_fmtPx(quote.price),
+                style: AppTypography.sm.copyWith(color: c.textSecondary)),
+            const SizedBox(width: AppSpacing.s3),
+            SizedBox(
+              width: 62,
+              child: Text(
+                _fmtPct(quote.changePercent),
+                textAlign: TextAlign.right,
+                style: AppTypography.sm.copyWith(
+                    color: positive ? c.positive : c.danger,
+                    fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Top Movers Card ─────────────────────────────────────────────────────────
+
+class _TopMoversCard extends ConsumerWidget {
+  const _TopMoversCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final quotesAsync = ref.watch(_quotesProvider);
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.swap_vert_rounded, size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Top Movers',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          quotesAsync.when(
+            loading: () => const _CardLoadingRow(),
+            error: (_, __) => const _CardErrorText('Unable to load movers'),
+            data: (quotes) {
+              final ranked = quotes
+                  .where((q) => q.changePercent != null)
+                  .toList()
+                ..sort((a, b) => b.changePercent!.compareTo(a.changePercent!));
+              if (ranked.isEmpty) {
+                return const _CardErrorText('No movers available');
+              }
+              final gainers = ranked.take(3).toList();
+              final losers = ranked.reversed.take(3).toList();
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: _MoversColumn(
+                        label: 'GAINERS', items: gainers, color: c.positive),
+                  ),
+                  const SizedBox(width: AppSpacing.s4),
+                  Expanded(
+                    child: _MoversColumn(
+                        label: 'LOSERS', items: losers, color: c.danger),
+                  ),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MoversColumn extends StatelessWidget {
+  const _MoversColumn(
+      {required this.label, required this.items, required this.color});
+  final String label;
+  final List<QuoteItem> items;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: AppTypography.labelSm
+                .copyWith(color: c.textMuted, letterSpacing: 0.5)),
+        const SizedBox(height: AppSpacing.s2),
+        ...items.map((q) => InkWell(
+              onTap: () => context.push(
+                  '/asset/${Uri.encodeComponent(q.symbol)}?name=${Uri.encodeComponent(q.name)}'),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(q.symbol,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTypography.xs.copyWith(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                    Text(_fmtPct(q.changePercent),
+                        style: AppTypography.xs.copyWith(
+                            color: color, fontWeight: FontWeight.w700)),
+                  ],
+                ),
+              ),
+            )),
+      ],
+    );
+  }
+}
+
+// ── Signal Breadth / Market Regime Card ─────────────────────────────────────
+
+class _RegimeBreadthCard extends ConsumerWidget {
+  const _RegimeBreadthCard();
+
+  static const _regimeLabels = {
+    'quiet_trend': 'Quiet Trend',
+    'quiet_range': 'Quiet Range',
+    'volatile_trend': 'Volatile Trend',
+    'chaotic': 'Chaotic',
+  };
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_dashboardRegimeProvider);
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.insights_rounded, size: 18, color: c.accent),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Signal Breadth',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          async.when(
+            loading: () => const _CardLoadingRow(),
+            error: (_, __) =>
+                const _CardErrorText('Unable to load market regime'),
+            data: (data) {
+              final bullish = data['bullish'] as int? ?? 0;
+              final neutral = data['neutral'] as int? ?? 0;
+              final bearish = data['bearish'] as int? ?? 0;
+              final breakdown =
+                  (data['regimeBreakdown'] as Map<String, dynamic>?) ?? {};
+              String? dominantRegime;
+              var dominantCount = -1;
+              for (final entry in breakdown.entries) {
+                final v = entry.value as int? ?? 0;
+                if (v > dominantCount) {
+                  dominantCount = v;
+                  dominantRegime = entry.key;
+                }
+              }
+              final topBullish =
+                  (data['topBullish'] as List?)?.cast<Map<String, dynamic>>() ??
+                      [];
+              final topBearish =
+                  (data['topBearish'] as List?)?.cast<Map<String, dynamic>>() ??
+                      [];
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _BreadthStat(
+                            label: 'BULLISH',
+                            value: bullish,
+                            color: c.positive),
+                      ),
+                      Expanded(
+                        child: _BreadthStat(
+                            label: 'NEUTRAL',
+                            value: neutral,
+                            color: c.textMuted),
+                      ),
+                      Expanded(
+                        child: _BreadthStat(
+                            label: 'BEARISH', value: bearish, color: c.danger),
+                      ),
+                    ],
+                  ),
+                  if (dominantRegime != null && dominantCount > 0) ...[
+                    const SizedBox(height: AppSpacing.s3),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.s3, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: c.accent.withAlpha(20),
+                        borderRadius: BorderRadius.circular(AppRadius.full),
+                      ),
+                      child: Text(
+                        'Regime: ${_regimeLabels[dominantRegime] ?? dominantRegime}',
+                        style: AppTypography.xs.copyWith(
+                            color: c.accent, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                  if (topBullish.isNotEmpty || topBearish.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.s3),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (topBullish.isNotEmpty)
+                          Expanded(
+                            child: _RegimeMiniList(
+                                label: 'TOP BUY',
+                                items: topBullish,
+                                color: c.positive),
+                          ),
+                        if (topBullish.isNotEmpty && topBearish.isNotEmpty)
+                          const SizedBox(width: AppSpacing.s4),
+                        if (topBearish.isNotEmpty)
+                          Expanded(
+                            child: _RegimeMiniList(
+                                label: 'TOP SELL',
+                                items: topBearish,
+                                color: c.danger),
+                          ),
+                      ],
+                    ),
+                  ],
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BreadthStat extends StatelessWidget {
+  const _BreadthStat(
+      {required this.label, required this.value, required this.color});
+  final String label;
+  final int value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      children: [
+        Text('$value',
+            style: AppTypography.headingMd
+                .copyWith(color: color, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 2),
+        Text(label,
+            style: AppTypography.xs
+                .copyWith(color: c.textMuted, letterSpacing: 0.5)),
+      ],
+    );
+  }
+}
+
+class _RegimeMiniList extends StatelessWidget {
+  const _RegimeMiniList(
+      {required this.label, required this.items, required this.color});
+  final String label;
+  final List<Map<String, dynamic>> items;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: AppTypography.labelSm
+                .copyWith(color: c.textMuted, letterSpacing: 0.5)),
+        const SizedBox(height: AppSpacing.s2),
+        ...items.map((item) {
+          final symbol = item['symbol'] as String? ?? '';
+          final name = item['name'] as String? ?? symbol;
+          final flag = item['flag'] as String? ?? '';
+          final confidence = (item['confidence'] as num?)?.toDouble() ?? 0;
+          return InkWell(
+            onTap: () => context.push(
+                '/asset/${Uri.encodeComponent(symbol)}?name=${Uri.encodeComponent(name)}'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                children: [
+                  if (flag.isNotEmpty) ...[
+                    Text(flag, style: AppTypography.xs),
+                    const SizedBox(width: 4),
+                  ],
+                  Expanded(
+                    child: Text(symbol,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.xs.copyWith(
+                            color: c.textPrimary, fontWeight: FontWeight.w600)),
+                  ),
+                  Text('${confidence.toStringAsFixed(0)}%',
+                      style: AppTypography.xs
+                          .copyWith(color: color, fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+}
+
+// ── Power Moves Teaser Card ─────────────────────────────────────────────────
+
+class _PowerMovesTeaserCard extends ConsumerWidget {
+  const _PowerMovesTeaserCard({required this.tabController});
+  final TabController tabController;
+
+  // TabBarView order in TradingScreen: Instruments, Dashboard, Power Moves,
+  // Signals, Alerts, Compare.
+  static const _powerMovesTabIndex = 2;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_tenXAssetScannerProvider);
+
+    return GestureDetector(
+      onTap: () => tabController.animateTo(_powerMovesTabIndex),
+      child: GlassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.bolt_rounded, size: 18, color: c.warning),
+                const SizedBox(width: AppSpacing.s2),
+                Expanded(
+                  child: Text('Power Moves',
+                      style: AppTypography.headingSm
+                          .copyWith(color: c.textPrimary)),
+                ),
+                Icon(Icons.chevron_right_rounded, size: 18, color: c.textMuted),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.s3),
+            async.when(
+              loading: () => const _CardLoadingRow(),
+              error: (_, __) => const _CardErrorText('Unable to load scanner'),
+              data: (results) {
+                // Matches what a tap-through actually lands on: Power Moves
+                // opens on Commodities by default with the "3 Signals" filter
+                // meaning signalsActive >= 3.
+                final hot = results
+                    .where((r) =>
+                        r.category == 'Commodities' && r.signalsActive >= 3)
+                    .toList()
+                  ..sort((a, b) => b.signalsActive.compareTo(a.signalsActive));
+                if (hot.isEmpty) {
+                  return Text(
+                    'No commodities showing 3+ signals right now.',
+                    style: AppTypography.sm.copyWith(color: c.textMuted),
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${hot.length} asset${hot.length == 1 ? '' : 's'} showing 3+ signals right now',
+                      style: AppTypography.sm.copyWith(color: c.textSecondary),
+                    ),
+                    const SizedBox(height: AppSpacing.s2),
+                    ...hot.take(3).map((r) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(
+                            children: [
+                              if (r.flag.isNotEmpty) ...[
+                                Text(r.flag, style: AppTypography.xs),
+                                const SizedBox(width: 4),
+                              ],
+                              Expanded(
+                                child: Text(r.name,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: AppTypography.xs.copyWith(
+                                        color: c.textPrimary,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                              Text('${r.signalsActive} signals',
+                                  style: AppTypography.xs.copyWith(
+                                      color: c.warning,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ),
+                        )),
+                  ],
+                );
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Win-Rate Leaderboard Card ───────────────────────────────────────────────
+
+typedef _LeaderboardEntry = ({
+  BacktestAssetResult asset,
+  String tier,
+  BacktestSummaryStats stats,
+});
+
+class _WinRateLeaderboardCard extends ConsumerWidget {
+  const _WinRateLeaderboardCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_dashboardBacktestProvider);
+
+    return GlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.emoji_events_rounded, size: 18, color: c.positive),
+              const SizedBox(width: AppSpacing.s2),
+              Expanded(
+                child: Text('Win-Rate Leaderboard',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Best 1-year historical win rate — proven track record, not tied to today\'s signals',
+            style: AppTypography.xs.copyWith(color: c.textMuted),
+          ),
+          const SizedBox(height: AppSpacing.s3),
+          async.when(
+            loading: () => const _CardLoadingRow(),
+            error: (_, __) =>
+                const _CardErrorText('Unable to load backtest data'),
+            data: (data) {
+              final ranked = <_LeaderboardEntry>[];
+              for (final asset in data.assets) {
+                BacktestSummaryStats? best;
+                String? bestTier;
+                for (final entry in asset.bySignalCount.entries) {
+                  // Ignore thin samples — a "100% win rate" off 2 events
+                  // isn't a track record.
+                  if (entry.value.events < 5) continue;
+                  if (best == null || entry.value.winRate1y > best.winRate1y) {
+                    best = entry.value;
+                    bestTier = entry.key;
+                  }
+                }
+                if (best != null && bestTier != null) {
+                  ranked.add((asset: asset, tier: bestTier, stats: best));
+                }
+              }
+              ranked.sort(
+                  (a, b) => b.stats.winRate1y.compareTo(a.stats.winRate1y));
+              final top = ranked.take(5).toList();
+              if (top.isEmpty) {
+                return const _CardErrorText('Not enough historical data yet.');
+              }
+              return Column(
+                children: top.map((r) => _LeaderboardRow(r)).toList(),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LeaderboardRow extends StatelessWidget {
+  const _LeaderboardRow(this.item);
+  final _LeaderboardEntry item;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return InkWell(
+      onTap: () => context.push(
+          '/asset/${Uri.encodeComponent(item.asset.symbol)}?name=${Uri.encodeComponent(item.asset.name)}'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
+        child: Row(
+          children: [
+            if (item.asset.flag.isNotEmpty) ...[
+              Text(item.asset.flag, style: AppTypography.sm),
+              const SizedBox(width: AppSpacing.s2),
+            ],
+            Expanded(
+              child: Text(item.asset.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.sm.copyWith(
+                      color: c.textPrimary, fontWeight: FontWeight.w600)),
+            ),
+            const SizedBox(width: AppSpacing.s2),
+            Text('${item.tier} sig${item.tier == '1' ? '' : 's'}',
+                style: AppTypography.xs.copyWith(color: c.textMuted)),
+            const SizedBox(width: AppSpacing.s3),
+            Text('${item.stats.winRate1y.toStringAsFixed(0)}%',
+                style: AppTypography.sm
+                    .copyWith(color: c.positive, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Underline-rail category selector: flat uppercase text tabs with a thin
+// accent underline on the active one (no filled chip background) — chosen
+// over the earlier solid pill-chip treatment, which read as an unstyled
+// default Material chip. Watchlist stays icon-only, same tab shape as the
+// rest. Counts are per-category live totals (null hides the badge).
 class _CategoryFilter extends StatelessWidget {
   const _CategoryFilter({
     required this.selected,
     required this.categories,
     required this.onSelect,
+    this.counts,
   });
 
   final String selected;
   final List<String> categories;
   final ValueChanged<String> onSelect;
+  final Map<String, int>? counts;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return SizedBox(
-      height: 44,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s5, vertical: AppSpacing.s2),
-        children: categories.map((cat) {
-          final isActive = cat == selected;
-          return GestureDetector(
-            onTap: () => onSelect(cat),
-            child: Container(
-              margin: const EdgeInsets.only(right: AppSpacing.s2),
-              padding: cat == 'Watchlist'
-                  ? const EdgeInsets.symmetric(horizontal: 10, vertical: 4)
-                  : const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(
-                color: isActive ? c.accent : c.surfaceCard,
-                borderRadius: BorderRadius.circular(AppRadius.full),
-                border: Border.all(color: isActive ? c.accent : c.border),
-              ),
-              child: cat == 'Watchlist'
-                  ? Icon(
-                      Icons.star_rounded,
-                      size: 16,
-                      color: isActive ? c.background : c.warning,
-                    )
-                  : Text(
-                      cat,
-                      style: AppTypography.sm.copyWith(
-                        color: isActive ? c.background : c.textSecondary,
-                        fontWeight: FontWeight.w600,
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: c.border)),
+      ),
+      child: SizedBox(
+        height: 42,
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5),
+          children: categories.map((cat) {
+            final isActive = cat == selected;
+            final count = cat == 'Watchlist' || cat == 'Stocks'
+                ? null
+                : counts?[cat];
+            return Padding(
+              padding: const EdgeInsets.only(right: AppSpacing.s6),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  if (!isActive) HapticFeedback.selectionClick();
+                  onSelect(cat);
+                },
+                child: Container(
+                  constraints:
+                      const BoxConstraints(minWidth: 32, minHeight: 32),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: isActive ? c.accent : c.transparent,
+                        width: 2,
                       ),
                     ),
-            ),
-          );
-        }).toList(),
+                  ),
+                  padding: cat == 'Watchlist'
+                      ? const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 12)
+                      : const EdgeInsets.only(bottom: 10, top: 12),
+                  child: cat == 'Watchlist'
+                      ? Icon(
+                          Icons.star_rounded,
+                          size: 15,
+                          color: isActive ? c.warning : c.textFaint,
+                        )
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            Text(
+                              cat.toUpperCase(),
+                              style: AppTypography.sm.copyWith(
+                                color: isActive ? c.textPrimary : c.textFaint,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.6,
+                              ),
+                            ),
+                            if (count != null) ...[
+                              const SizedBox(width: 4),
+                              Text(
+                                '$count',
+                                style: AppTypography.sm.copyWith(
+                                  color: isActive ? c.accent : c.textFaint,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0,
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures()
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
       ),
     );
   }
@@ -814,6 +1578,11 @@ class _AssetRowState extends State<_AssetRow> {
     final pctStr =
         pct == null ? '--' : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
 
+    // Edge-stripe repeats the up/down color as a second channel, readable
+    // scanning a long list without reading each %; neutral (border color)
+    // when there's no change to report.
+    final stripeColor = pct == null ? c.border : pctColor;
+
     return InkWell(
       onTap: () {
         HapticFeedback.selectionClick();
@@ -823,10 +1592,24 @@ class _AssetRowState extends State<_AssetRow> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 300),
         color: _flashColor ?? Colors.transparent,
-        padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.s5, vertical: AppSpacing.s4),
+        padding: const EdgeInsets.only(
+            left: AppSpacing.s3,
+            right: AppSpacing.s5,
+            top: AppSpacing.s4,
+            bottom: AppSpacing.s4),
         child: Row(
           children: [
+            SizedBox(
+              width: 3,
+              height: 28,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: stripeColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.s3),
             if (item.flag.isNotEmpty) ...[
               Text(item.flag, style: const TextStyle(fontSize: 18)),
               const SizedBox(width: AppSpacing.s3),
@@ -866,7 +1649,9 @@ class _AssetRowState extends State<_AssetRow> {
                 const SizedBox(height: 2),
                 Text(pctStr,
                     style: AppTypography.sm.copyWith(
-                        color: pctColor, fontWeight: FontWeight.w600)),
+                        color: pctColor,
+                        fontWeight: FontWeight.w600,
+                        fontFeatures: const [FontFeature.tabularFigures()])),
                 if (item.preMarketChangePercent != null) ...[
                   const SizedBox(height: 2),
                   Container(
@@ -1030,7 +1815,7 @@ class _SignalsTabState extends ConsumerState<_SignalsTab> {
   String _direction = 'ALL';
   String _type = 'ALL';
 
-  static const _timeframes = ['1m', '1h', '4h', '1d'];
+  static const _timeframes = ['1h', '4h', '1d'];
   static const _directions = ['ALL', 'BUY', 'HOLD', 'SELL'];
   static const _types = ['ALL', 'Commodities', 'Indices', 'Forex', 'Crypto'];
 
@@ -1042,84 +1827,100 @@ class _SignalsTabState extends ConsumerState<_SignalsTab> {
     final isS9 = strategy == TradingStrategy.s9;
     final effectiveType = isS9 ? 'Commodities' : _type;
 
-    return Column(
-      children: [
-        _SignalFilters(
-          type: effectiveType,
-          timeframe: _timeframe,
-          direction: _direction,
-          strategy: strategy,
-          onType: isS9 ? (_) {} : (t) => setState(() => _type = t),
-          onTimeframe: (t) => setState(() => _timeframe = t),
-          onDirection: (d) => setState(() => _direction = d),
-          onStrategy: (s) => ref.read(strategyProvider.notifier).setStrategy(s),
-          types: _types,
-          timeframes: _timeframes,
-          directions: _directions,
+    // Scroll-Away Filters pattern (see CLAUDE.md Known Pitfalls): filters
+    // live in the same scroll view as the results (not pinned above it) —
+    // they're fully expanded by default and simply scroll out of view as
+    // the user scrolls down to the signal cards.
+    return CustomScrollView(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _SignalFilters(
+            type: effectiveType,
+            timeframe: _timeframe,
+            direction: _direction,
+            strategy: strategy,
+            onType: isS9 ? (_) {} : (t) => setState(() => _type = t),
+            onTimeframe: (t) => setState(() => _timeframe = t),
+            onDirection: (d) => setState(() => _direction = d),
+            onStrategy: (s) =>
+                ref.read(strategyProvider.notifier).setStrategy(s),
+            types: _types,
+            timeframes: _timeframes,
+            directions: _directions,
+          ),
         ),
         if (isS9)
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
-            decoration: BoxDecoration(
-              color: const Color(0xFFC0C0C0).withAlpha(18),
-              border: Border(
-                  bottom:
-                      BorderSide(color: const Color(0xFFC0C0C0).withAlpha(50))),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.info_outline_rounded,
-                    size: 14, color: Color(0xFFC0C0C0)),
-                const SizedBox(width: AppSpacing.s2),
-                Expanded(
-                  child: Text(
-                    'S9 targets Silver (SI=F) on 1h — signals fire only during London (02:00–05:00 ET) or NY (07:00–10:00 ET) kill zones when a liquidity sweep, 9 EMA power candle, and Fibonacci confluence all align simultaneously.',
-                    style: AppTypography.xs.copyWith(
-                      color: const Color(0xFFC0C0C0),
-                      height: 1.5,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.1,
+          SliverToBoxAdapter(
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.s4, vertical: AppSpacing.s3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFC0C0C0).withAlpha(18),
+                border: Border(
+                    bottom: BorderSide(
+                        color: const Color(0xFFC0C0C0).withAlpha(50))),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline_rounded,
+                      size: 14, color: Color(0xFFC0C0C0)),
+                  const SizedBox(width: AppSpacing.s2),
+                  Expanded(
+                    child: Text(
+                      'S9 targets Silver (SI=F) on 1h — signals fire only during London (02:00–05:00 ET) or NY (07:00–10:00 ET) kill zones when a liquidity sweep, 9 EMA power candle, and Fibonacci confluence all align simultaneously.',
+                      style: AppTypography.xs.copyWith(
+                        color: const Color(0xFFC0C0C0),
+                        height: 1.5,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.1,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        Expanded(
-          child: quotesAsync.when(
-            loading: () =>
-                Center(child: CircularProgressIndicator(color: c.accent)),
-            error: (e, _) => const ErrorView(message: 'Failed to load assets'),
-            data: (quotes) {
-              final filtered = isS9
-                  ? quotes.where((q) => q.symbol == 'SI=F').toList()
-                  : (effectiveType == 'ALL'
-                      ? quotes
-                      : quotes
-                          .where((q) => q.category == effectiveType)
-                          .toList());
-
-              return ListView.builder(
-                padding: EdgeInsets.only(
-                    top: AppSpacing.s3,
-                    bottom:
-                        AppSpacing.s3 + MediaQuery.of(context).padding.bottom),
-                itemCount: filtered.length + 1,
-                itemBuilder: (ctx, i) {
-                  if (i == filtered.length) return const _DisclaimerBar();
-                  return _SignalCard(
-                    quote: filtered[i],
-                    timeframe: _timeframe,
-                    strategy: strategy.serverParam,
-                    directionFilter: _direction,
-                  );
-                },
-              );
-            },
+        quotesAsync.when(
+          loading: () => SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(child: CircularProgressIndicator(color: c.accent)),
           ),
+          error: (e, _) => const SliverFillRemaining(
+            hasScrollBody: false,
+            child: ErrorView(message: 'Failed to load assets'),
+          ),
+          data: (quotes) {
+            final filtered = isS9
+                ? quotes.where((q) => q.symbol == 'SI=F').toList()
+                : (effectiveType == 'ALL'
+                    ? quotes
+                    : quotes
+                        .where((q) => q.category == effectiveType)
+                        .toList());
+
+            return SliverPadding(
+              padding: EdgeInsets.only(
+                  top: AppSpacing.s3,
+                  bottom:
+                      AppSpacing.s3 + MediaQuery.of(context).padding.bottom),
+              sliver: SliverList(
+                delegate: SliverChildBuilderDelegate(
+                  (ctx, i) {
+                    if (i == filtered.length) return const _DisclaimerBar();
+                    return _SignalCard(
+                      quote: filtered[i],
+                      timeframe: _timeframe,
+                      strategy: strategy.serverParam,
+                      directionFilter: _direction,
+                    );
+                  },
+                  childCount: filtered.length + 1,
+                ),
+              ),
+            );
+          },
         ),
       ],
     );
@@ -2105,8 +2906,8 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
                 _version == 'v3f' ||
                 _version == 'v3crypto')
             ? null
-            : () => context
-                .push('/trading/10x-backtest?version=$_version&type=assets'),
+            : () => context.push(
+                '/trading/10x-backtest?version=$_version&type=assets&source=trading'),
       );
 
   @override
@@ -2174,7 +2975,6 @@ class _PowerMovesTabState extends ConsumerState<_PowerMovesTab> {
               if (sig == 'VOL' && !(r.volumeSpike && r.volumeGreen))
                 return false;
               if (sig == 'HEARTBEAT' && !r.heartbeat) return false;
-              if (sig == 'REC_QTR' && !r.recordQuarter) return false;
               if (sig == 'TREND' && !r.trendUp) return false;
             }
           }
@@ -2334,39 +3134,39 @@ class _PMFilterRow extends StatelessWidget {
             label: 'Ver:',
             children: [
               AppChip(
-                label: 'v1 Original',
+                label: 'Early Setup',
                 active: version == 'v1',
                 disabled:
                     type == 'Indices' || type == 'Forex' || type == 'Crypto',
                 onTap: () => onVersion('v1'),
               ),
               AppChip(
-                label: 'v2 Pine-Aligned',
+                label: 'Confirmed Breakout',
                 active: version == 'v2',
                 disabled:
                     type == 'Indices' || type == 'Forex' || type == 'Crypto',
                 onTap: () => onVersion('v2'),
               ),
               AppChip(
-                label: 'v3 Super Pine',
+                label: 'Index Regime',
                 active: version == 'v3',
                 disabled: type != 'Indices',
                 onTap: () => onVersion('v3'),
               ),
               AppChip(
-                label: 'v3 Pine Commodities',
+                label: 'Commodity Cycle',
                 active: version == 'v3c',
                 disabled: type != 'Commodities',
                 onTap: () => onVersion('v3c'),
               ),
               AppChip(
-                label: 'v3 Pine Forex',
+                label: 'FX Range Breakout',
                 active: version == 'v3f',
                 disabled: type != 'Forex',
                 onTap: () => onVersion('v3f'),
               ),
               AppChip(
-                label: 'v3 Pine Crypto',
+                label: 'Crypto Breakout',
                 active: version == 'v3crypto',
                 disabled: type != 'Crypto',
                 onTap: () => onVersion('v3crypto'),
@@ -2485,11 +3285,6 @@ class _PMFilterRow extends StatelessWidget {
                               onTap: () => onSignalToggle('HEARTBEAT'),
                             ),
                             AppChip(
-                              label: 'REC. QTR',
-                              active: signalFilter.contains('REC_QTR'),
-                              onTap: () => onSignalToggle('REC_QTR'),
-                            ),
-                            AppChip(
                               label: 'TREND ↑',
                               active: signalFilter.contains('TREND'),
                               disabled: version == 'v1',
@@ -2521,7 +3316,6 @@ class _PMFilterRow extends StatelessWidget {
     );
   }
 }
-
 
 // ── PM Card ───────────────────────────────────────────────────────────────────
 
@@ -2866,14 +3660,14 @@ List<Widget> _pmV3InfoChildren(AppPalette c, BuildContext ctx) => [
           Icon(Icons.auto_awesome_rounded, size: 20, color: c.warning),
           const SizedBox(width: AppSpacing.s3),
           Expanded(
-            child: Text('Super Pine — Index Regime Breakout',
+            child: Text('Index Regime — Breakout Signals',
                 style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
           ),
         ],
       ),
       const SizedBox(height: AppSpacing.s3),
       Text(
-        'v3 ports the "10X Power Moves — Indexes" Pine script (Felix Prehn / Goat Academy adaptation). It targets broad indices, not single stocks: outputs are regime / trend signals for core exposure, not multibagger hunts.',
+        'Index Regime ports the "10X Power Moves — Indexes" Pine script (Felix Prehn / Goat Academy adaptation). It targets broad indices, not single stocks: outputs are regime / trend signals for core exposure, not multibagger hunts.',
         style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -2974,14 +3768,14 @@ List<Widget> _pmV3cInfoChildren(AppPalette c, BuildContext ctx) => [
           Icon(Icons.local_fire_department_rounded, size: 20, color: c.warning),
           const SizedBox(width: AppSpacing.s3),
           Expanded(
-            child: Text('Pine Power Moves — Commodities',
+            child: Text('Commodity Cycle — Pine Power Moves',
                 style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
           ),
         ],
       ),
       const SizedBox(height: AppSpacing.s3),
       Text(
-        'v3 Pine Commodities ports the Felix Prehn / Goat Academy "10X Power Moves — Commodities" Pine Script. It targets commodity futures (gold, oil, wheat…) using three signals tuned for multi-year accumulation cycles.',
+        'Commodity Cycle ports the Felix Prehn / Goat Academy "10X Power Moves — Commodities" Pine Script. It targets commodity futures (gold, oil, wheat…) using three signals tuned for multi-year accumulation cycles.',
         style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3057,14 +3851,14 @@ List<Widget> _pmV3fInfoChildren(AppPalette c, BuildContext ctx) => [
           Icon(Icons.currency_exchange_rounded, size: 20, color: c.accent),
           const SizedBox(width: AppSpacing.s3),
           Expanded(
-            child: Text('Pine Power Moves — Forex',
+            child: Text('FX Range Breakout — Pine Power Moves',
                 style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
           ),
         ],
       ),
       const SizedBox(height: AppSpacing.s3),
       Text(
-        'v3 Pine Forex ports the "10X Power Moves — Forex Range Breakout" Pine Script. It identifies FX pairs in a tight range consolidation that then break out with tick-volume confirmation. Honest caveat: Forex "volume" is tick count, not real flow — treat it as a confirmation proxy, not institutional proof.',
+        'FX Range Breakout ports the "10X Power Moves — Forex Range Breakout" Pine Script. It identifies FX pairs in a tight range consolidation that then break out with tick-volume confirmation. Honest caveat: Forex "volume" is tick count, not real flow — treat it as a confirmation proxy, not institutional proof.',
         style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3139,14 +3933,14 @@ List<Widget> _pmV3cryptoInfoChildren(AppPalette c, BuildContext ctx) => [
           Icon(Icons.currency_bitcoin_rounded, size: 20, color: c.warning),
           const SizedBox(width: AppSpacing.s3),
           Expanded(
-            child: Text('Pine Power Moves — Crypto',
+            child: Text('Crypto Breakout — Pine Power Moves',
                 style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
           ),
         ],
       ),
       const SizedBox(height: AppSpacing.s3),
       Text(
-        'v3 Pine Crypto ports the "10X Power Moves — Crypto" Pine Script. Crypto fits the 10X workbook best of all asset classes — genuine multi-month dead ranges followed by violent breakouts. Big caveat: crypto 10X candidates also go to zero far more often than stocks. Position-size accordingly.',
+        'Crypto Breakout ports the "10X Power Moves — Crypto" Pine Script. Crypto fits the 10X workbook best of all asset classes — genuine multi-month dead ranges followed by violent breakouts. Big caveat: crypto 10X candidates also go to zero far more often than stocks. Position-size accordingly.',
         style: AppTypography.sm.copyWith(color: c.textSecondary, height: 1.55),
       ),
       const SizedBox(height: AppSpacing.s5),
@@ -3284,12 +4078,13 @@ List<Widget> _pmV1v2InfoChildren(AppPalette c, BuildContext ctx) => [
         icon: Icons.trending_up_rounded,
         color: c.accent,
         label: 'TREND ↑',
-        title: 'Trend Confirmation (v2 only)',
+        title: 'Trend Confirmation (Confirmed Breakout only)',
         rule:
             'Price closed above the 50-bar high, confirming a breakout from the accumulation range',
         explanation:
-            'v2 adds this 4th signal as a breakout confirmation gate — the asset has already started moving.',
-        examples: 'v2 scanner only. Not available in v1.',
+            'Confirmed Breakout adds this 4th signal as a breakout confirmation gate — the asset has already started moving.',
+        examples:
+            'Confirmed Breakout scanner only. Not available in Early Setup.',
         c: c,
       ),
       const SizedBox(height: AppSpacing.s5),

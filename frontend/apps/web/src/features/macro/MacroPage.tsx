@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import type { Sector } from "@monysa/contracts";
 import { PERF_TIMEFRAMES, perfFor, type PerfTimeframe } from "@monysa/contracts";
@@ -17,6 +17,7 @@ import {
   Stat,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
+import { useIsPro } from "../../lib/session";
 import { Gauge } from "../../components/Gauge";
 import { HeatmapGrid } from "../../components/HeatmapGrid";
 
@@ -479,23 +480,62 @@ function SectorRotationCard() {
   );
 }
 
-// Pro-gated on mobile (`analyst_notes_unlimited`). Web has no auth/purchase
-// flow, so free-tier is the permanent default — clicking "Generate briefing"
-// shows a blurred teaser instead of actually calling the (paid, GPT-4o-mini)
-// /api/volatility/briefing endpoint, since a locked feature shouldn't still
-// incur AI cost on every visitor's click.
+// Pro-gated on mobile (`analyst_notes_unlimited`). For free/signed-out users
+// clicking "Generate briefing" shows a blurred teaser and never calls the
+// (paid, GPT-4o-mini) /api/volatility/briefing endpoint, so a locked feature
+// can't incur AI cost. Signed-in Pro users get the real briefing.
 function AiBriefingCard() {
+  const isPro = useIsPro();
   const [requested, setRequested] = useState(false);
+
+  // Reuse the dashboard's cached VIX so the real briefing has market context.
+  const vol = useQuery({
+    queryKey: ["volatility-assets"],
+    queryFn: () => api.getVolatilityAssets(),
+    staleTime: 10 * 60_000,
+    enabled: isPro,
+  });
+
+  const briefing = useMutation({
+    mutationFn: () => {
+      const vix = vol.data?.vix?.price;
+      const vixBand = vol.data?.vix?.bandLabel ?? vol.data?.vix?.band ?? undefined;
+      return api.postBriefing({ vix, vixBand });
+    },
+  });
+
+  function generate() {
+    setRequested(true);
+    if (isPro) briefing.mutate();
+  }
 
   return (
     <Card>
       <div className="page-header">
         <strong>AI Macro Briefing</strong>
-        {!requested && (
-          <Chip label="Generate briefing" active onClick={() => setRequested(true)} />
-        )}
+        {!requested && <Chip label="Generate briefing" active onClick={generate} />}
       </div>
-      {requested && (
+
+      {requested && isPro && (
+        <>
+          {briefing.isPending && (
+            <SkeletonList rows={4} height={16} />
+          )}
+          {briefing.isError && (
+            <div className="cell-sub" style={{ marginTop: "var(--s3)" }}>
+              Couldn't generate a briefing right now.{" "}
+              <Chip label="Retry" active onClick={() => briefing.mutate()} />
+            </div>
+          )}
+          {briefing.data && (
+            <p style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", marginTop: "var(--s3)" }}>
+              {briefing.data.briefing}
+            </p>
+          )}
+        </>
+      )}
+
+      {requested && !isPro && (
         <ProBlur positive={true} className="briefing-blur">
           <p style={{ color: "var(--text-secondary)", whiteSpace: "pre-wrap", marginTop: "var(--s3)" }}>
             Markets are digesting mixed signals this week — volatility remains
@@ -912,6 +952,7 @@ function loadCustomSymbols(): string[] {
 }
 
 function AdvCorrelationTab() {
+  const isPro = useIsPro();
   const [window_, setWindow] = useState<AdvWindow>("3m");
   const [category, setCategory] = useState<AdvCategory>("All");
   const [customSymbols, setCustomSymbols] = useState<string[]>(() => loadCustomSymbols());
@@ -980,7 +1021,7 @@ function AdvCorrelationTab() {
   if (error) return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
   if (isLoading || !data) return <SkeletonList rows={10} />;
 
-  const showOverlay = ADV_GATED_WINDOWS.has(window_);
+  const showOverlay = ADV_GATED_WINDOWS.has(window_) && !isPro;
   const offDiag: number[] = [];
   for (const i of visibleIdx) {
     for (const j of visibleIdx) {
@@ -1045,7 +1086,7 @@ function AdvCorrelationTab() {
           {ADV_WINDOWS.map((w) => (
             <Chip
               key={w}
-              label={ADV_GATED_WINDOWS.has(w) ? `🔒 ${ADV_WINDOW_LABELS[w]}` : ADV_WINDOW_LABELS[w]}
+              label={ADV_GATED_WINDOWS.has(w) && !isPro ? `🔒 ${ADV_WINDOW_LABELS[w]}` : ADV_WINDOW_LABELS[w]}
               active={window_ === w}
               onClick={() => setWindow(w)}
             />

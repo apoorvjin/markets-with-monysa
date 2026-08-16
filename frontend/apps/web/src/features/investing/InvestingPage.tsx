@@ -25,6 +25,7 @@ import {
   SkeletonList,
 } from "@monysa/ui";
 import { api } from "../../lib/api";
+import { useIsPro } from "../../lib/session";
 import { BestSetupsCard } from "../../components/BestSetupsCard";
 import { InstitutionalFlowCard } from "../../components/InstitutionalFlowCard";
 
@@ -122,6 +123,7 @@ function SectorGroupList(props: { title: string; groups: SectorBestSetupsGroup[]
 }
 
 function SectorBestSetupsCard() {
+  const isPro = useIsPro();
   // Cold cache returns a cacheWarm:false skeleton — poll every 30s (max 10),
   // never block. Mirrors _sectorBestSetupsProvider in investing_screen.dart.
   const { data, isLoading, failureCount } = useQuery({
@@ -150,7 +152,7 @@ function SectorBestSetupsCard() {
           section refreshes automatically.
         </div>
       ) : (
-        <ProBlur positive={true} className="sector-setups-blur">
+        <ProBlur positive={true} unlocked={isPro} className="sector-setups-blur">
           <div className="grid-2">
             <SectorGroupList title="Leading sectors" groups={data.leading} />
             <SectorGroupList title="Improving sectors" groups={data.improving} />
@@ -303,8 +305,12 @@ function MultibaggersTab() {
       </ChipRow>
       <div className="toolbar">
         <ChipRow>
-          <Chip label="v1" active={version === "v1"} onClick={() => setVersion("v1")} />
-          <Chip label="v2" active={version === "v2"} onClick={() => setVersion("v2")} />
+          <Chip label="Early Setup" active={version === "v1"} onClick={() => setVersion("v1")} />
+          <Chip
+            label="Confirmed Breakout"
+            active={version === "v2"}
+            onClick={() => setVersion("v2")}
+          />
         </ChipRow>
         <ChipRow>
           {[0, 1, 2, 3].map((n) => (
@@ -798,6 +804,7 @@ function SmartMoneyTab() {
 // ── Presidential (OGE Form 278-T) ────────────────────────────────────────
 
 function PresidentialTab() {
+  const isPro = useIsPro();
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["oge"],
     queryFn: () => api.getOgeTransactions(),
@@ -817,8 +824,14 @@ function PresidentialTab() {
     (max, t) => (t.filingDate && (!max || t.filingDate > max) ? t.filingDate : max),
     null,
   );
-  const gatedCount = data.transactions.filter((t) => t.filingDate === latestFilingDate).length;
-  const visible = data.transactions.filter((t) => t.filingDate !== latestFilingDate);
+  // Pro users see every filing including the newest batch; free users get the
+  // collapsed teaser row and the earlier (free) filings only.
+  const gatedCount = isPro
+    ? 0
+    : data.transactions.filter((t) => t.filingDate === latestFilingDate).length;
+  const visible = isPro
+    ? data.transactions
+    : data.transactions.filter((t) => t.filingDate !== latestFilingDate);
 
   return (
     <Card>
@@ -978,6 +991,7 @@ function EtfPerfStrip({ item, revealed }: { item: EtfItem; revealed: boolean }) 
 
 function EtfListView(props: { category: EtfCategory | "" }) {
   const navigate = useNavigate();
+  const isPro = useIsPro();
   const [expanded, setExpanded] = useState<string | null>(null);
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ["etf", "list", props.category],
@@ -1045,7 +1059,7 @@ function EtfListView(props: { category: EtfCategory | "" }) {
                       LEV
                     </span>
                   )}
-                  <EtfPerfStrip item={item} revealed={item.symbol === revealSymbol} />
+                  <EtfPerfStrip item={item} revealed={isPro || item.symbol === revealSymbol} />
                 </td>
                 <td className="num cell-main">
                   {item.price != null ? `$${fmtPrice(item.price)}` : "—"}

@@ -28,6 +28,8 @@ import { fetchInsiderClusters, KNOWN_NAMES } from "./routes/quiver";
 import { fetchBatch } from "./routes/shared";
 import { isLeader } from "./lib/leader";
 import { getRemoteConfigFlag } from "./lib/remote-config-flags";
+import { checkExit } from "./lib/exit-detection";
+import { startSignalLedgerJobs } from "./lib/signal-ledger";
 import {
   CORRELATION_FIXED_ASSETS,
   CORRELATION_STOCK_POOLS,
@@ -920,7 +922,7 @@ function calculateIndicators(candles: OHLCV[]): Indicators {
 
 // ─── History Fetching ─────────────────────────────────────────────────────────
 
-type Timeframe = "1m" | "5m" | "1h" | "4h" | "1d" | "1w";
+export type Timeframe = "1m" | "5m" | "1h" | "4h" | "1d" | "1w";
 
 const TF_PARAMS: Record<Timeframe, { interval: string; range: string }> = {
   "1m": { interval: "1m",  range: "1d"  },
@@ -978,7 +980,7 @@ async function fetchHistoryBt(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
   }
 }
 
-async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
+export async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
   const cacheKey = `${symbol}|${tf}`;
   const cached = historyCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < HISTORY_TTL) return cached.data;
@@ -1018,7 +1020,7 @@ async function fetchHistory(symbol: string, tf: Timeframe): Promise<OHLCV[]> {
 type SignalDirection = "BUY" | "HOLD" | "SELL";
 type BaseStrategyId = "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
 type EnhancedStrategyId = "10" | "11" | "12" | "13" | "14" | "15" | "16" | "17" | "18";
-type StrategyId = BaseStrategyId | EnhancedStrategyId;
+export type StrategyId = BaseStrategyId | EnhancedStrategyId;
 type Regime5 = "quiet_trend" | "quiet_range" | "volatile_trend" | "chaotic";
 
 export interface SignalResult {
@@ -1887,7 +1889,7 @@ function buildRiskLevelsAPEX(
   };
 }
 
-const CROSS_ASSET_PAIRS: Record<string, { symbol: string; inverse: boolean }> = {
+export const CROSS_ASSET_PAIRS: Record<string, { symbol: string; inverse: boolean }> = {
   "GC=F":    { symbol: "DX-Y.NYB", inverse: true  },
   "SI=F":    { symbol: "GC=F",     inverse: false },
   "CL=F":    { symbol: "XLE",      inverse: false },
@@ -2701,7 +2703,7 @@ function strategyS6Plus(ind: Indicators, price: number, candles: OHLCV[], articl
 // ── S7+ (APEX Plus) ───────────────────────────────────────────────────────────
 
 // Expanded cross-asset map for more assets
-const CROSS_ASSET_PAIRS_PLUS: Record<string, { symbol: string; inverse: boolean }> = {
+export const CROSS_ASSET_PAIRS_PLUS: Record<string, { symbol: string; inverse: boolean }> = {
   ...CROSS_ASSET_PAIRS,
   "EURUSD=X": { symbol: "GBPUSD=X",  inverse: false },
   "GBPUSD=X": { symbol: "EURUSD=X",  inverse: false },
@@ -3113,7 +3115,7 @@ function buildRiskLevelsS9(
   };
 }
 
-async function generateSignal(
+export async function generateSignal(
   symbol: string,
   tf: Timeframe,
   strategy: StrategyId,
@@ -3388,7 +3390,7 @@ function btAnnFactor(tf: Timeframe): number {
   }
 }
 
-function btMaxHold(tf: Timeframe): number {
+export function btMaxHold(tf: Timeframe): number {
   switch (tf) {
     case "1w": return 8;    // ~2 months
     case "1d": return 20;   // ~4 trading weeks
@@ -3428,34 +3430,17 @@ function runBacktestWithSLTP(
     const entryPrice = entryBar.close;
     const date = new Date((entryBar.time as number) * 1000).toISOString().split('T')[0];
 
-    // Default exit: close of last hold bar (timeout — neither SL nor TP hit)
-    let exitPrice = testCandles[Math.min(i + maxHold, testCandles.length - 1)].close;
-    let exitReason: "SL" | "TP" | "TIMEOUT" = "TIMEOUT";
-    let holdBars = Math.min(maxHold, testCandles.length - 1 - i);
-
-    for (let j = i + 1; j <= Math.min(i + maxHold, testCandles.length - 1); j++) {
-      const bar = testCandles[j];
-      if (direction === "BUY") {
-        const slHit = bar.low  <= stopLoss;
-        const tpHit = bar.high >= takeProfit;
-        if (slHit || tpHit) {
-          // Both in same bar → conservative: assume SL first
-          exitPrice  = (tpHit && !slHit) ? takeProfit : stopLoss;
-          exitReason = (tpHit && !slHit) ? "TP" : "SL";
-          holdBars = j - i;
-          break;
-        }
-      } else {
-        const slHit = bar.high >= stopLoss;
-        const tpHit = bar.low  <= takeProfit;
-        if (slHit || tpHit) {
-          exitPrice  = (tpHit && !slHit) ? takeProfit : stopLoss;
-          exitReason = (tpHit && !slHit) ? "TP" : "SL";
-          holdBars = j - i;
-          break;
-        }
-      }
-    }
+    // checkExit walks the bars after entry looking for the first SL/TP touch.
+    // A finished historical series has no "still open" state, so a null result
+    // (fewer than maxHold bars remained with no hit) is forced to the same
+    // default-exit values the inline loop used to compute for that case —
+    // close of the last available bar.
+    const barsAfterEntry = testCandles.slice(i + 1);
+    const { exitPrice, exitReason, holdBars } = checkExit(barsAfterEntry, direction, stopLoss, takeProfit, maxHold) ?? {
+      exitPrice: testCandles[testCandles.length - 1].close,
+      exitReason: "TIMEOUT" as const,
+      holdBars: testCandles.length - 1 - i,
+    };
 
     const ret = direction === "BUY"
       ? (exitPrice - entryPrice) / entryPrice
@@ -7046,6 +7031,19 @@ setInterval(() => {
   }
 }, 7 * 24 * 60 * 60_000);
 
+// ── Shared strategy-id constants ──────────────────────────────────────────────
+// Module-level (not per-request) so both createTradingRouter()'s route handlers
+// and server/lib/signal-ledger.ts's capture/resolution jobs read one source of
+// truth. Values unchanged from their original inline/local declarations below —
+// this is a hoist, not a redefinition.
+export const VALID_STRAT: StrategyId[] = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18"];
+export const ADVANCED_STRATEGY_IDS = new Set(["4","5","6","7","8","9","10","11","12","13","14","15","16","17","18"]);
+export const NEWS_STRATEGY_IDS = ["3","6","12","15"];
+export const APEX_STRATEGY_IDS = ["7","8","16","17"];
+
+// Forward signal ledger — capture/resolution jobs. See server/lib/signal-ledger.ts.
+startSignalLedgerJobs();
+
 export function createTradingRouter(): Router {
   const router = Router();
 
@@ -7055,12 +7053,11 @@ export function createTradingRouter(): Router {
     res.json({ strategies: STRATEGY_DEFS, timestamp: new Date().toISOString() });
   });
 
-  // GET /api/trading/quotes — data refreshes via 20s background poll into latestPrices
-  router.get("/quotes", (_req: Request, res: Response) => {
-    // 15s edge cache absorbs concurrent device polls (Trading Dashboard auto-refreshes every 30s).
-    res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
-    ensureSpotFresh(); // background top-up if the spot feed is empty/stale (non-blocking)
-    const quotes = TRADING_ASSETS.map(asset => {
+  // Shared quote-snapshot builder — used by both /quotes and the SSE stream so
+  // they emit byte-identical shapes (web/mobile data parity). Pure read of the
+  // in-memory 20s poll + spot overlay; makes no new upstream calls.
+  const buildQuotesSnapshot = () =>
+    TRADING_ASSETS.map(asset => {
       const spot = spotPrices.get(asset.symbol);
       const p = latestPrices.get(asset.symbol);
       // Prefer the real spot price for overlay symbols; fall back to the Yahoo futures feed.
@@ -7081,11 +7078,39 @@ export function createTradingRouter(): Router {
         priceType: priceTypeFor(asset.symbol),
       };
     });
-    res.json({ quotes, timestamp: new Date().toISOString() });
+
+  // GET /api/trading/quotes — data refreshes via 20s background poll into latestPrices
+  router.get("/quotes", (_req: Request, res: Response) => {
+    // 15s edge cache absorbs concurrent device polls (Trading Dashboard auto-refreshes every 30s).
+    res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
+    ensureSpotFresh(); // background top-up if the spot feed is empty/stale (non-blocking)
+    res.json({ quotes: buildQuotesSnapshot(), timestamp: new Date().toISOString() });
+  });
+
+  // GET /api/trading/stream/quotes — Server-Sent Events push of the same snapshot
+  // every 5s. Deliberately NOT in SIGNED_ROUTES, so a browser EventSource (which
+  // cannot set X-Signature / X-Device-ID headers) can connect. It only re-serialises
+  // the in-memory poll — no new upstream calls — so it's free and safe for the shared
+  // server. The mobile app never opens this route (it polls /quotes), so it's untouched.
+  router.get("/stream/quotes", (req: Request, res: Response) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // stop any proxy from buffering the stream
+    res.flushHeaders();
+    ensureSpotFresh();
+
+    const send = () => {
+      res.write(
+        `data: ${JSON.stringify({ quotes: buildQuotesSnapshot(), timestamp: new Date().toISOString() })}\n\n`,
+      );
+    };
+    send(); // initial snapshot on connect
+    const timer = setInterval(send, 5000);
+    req.on("close", () => clearInterval(timer));
   });
 
   const VALID_TF: Timeframe[] = ["1m", "5m", "1h", "4h", "1d", "1w"];
-  const VALID_STRAT: StrategyId[] = ["1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18"];
 
   /** Resolve timeframe from `interval` (spec) or `timeframe` (alias), defaulting to "1d". */
   function resolveTimeframe(query: Request["query"]): Timeframe | null {
@@ -7116,14 +7141,13 @@ export function createTradingRouter(): Router {
     }
 
     // Strategies 4–9 and all enhanced (10–18) require Pro plan
-    const advancedStrategies = new Set(["4","5","6","7","8","9","10","11","12","13","14","15","16","17","18"]);
-    if (advancedStrategies.has(strategy) && !isPro(getDevicePlan(req))) {
+    if (ADVANCED_STRATEGY_IDS.has(strategy) && !isPro(getDevicePlan(req))) {
       return res.status(403).json({ error: "Strategy requires Pro plan.", code: "PLAN_REQUIRED" });
     }
 
     // Determine data requirements per strategy
-    const needsNews    = ["3","6","12","15"].includes(strategy);
-    const needsApexData = ["7","8","16","17"].includes(strategy);
+    const needsNews    = NEWS_STRATEGY_IDS.includes(strategy);
+    const needsApexData = APEX_STRATEGY_IDS.includes(strategy);
 
     let newsSentiment = 0;
     let newsArticles: NewsArticle[] = [];

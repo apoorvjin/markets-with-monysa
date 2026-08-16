@@ -103,123 +103,152 @@ class _TreemapTabState extends ConsumerState<TreemapTab> {
     final async = ref.watch(_treemapProvider(key));
     final mq = MediaQuery.of(context);
     final bottomInset = mq.padding.bottom;
-    return Column(
-      children: [
-        _Header(
-          selectedIndex: _index,
-          selectedTimeframe: _timeframe,
-          onSelectIndex: (id) => setState(() => _index = id),
-          onSelectTimeframe: _selectTimeframe,
-          onInfo: () => _showInfo(context),
-        ),
-        Expanded(
-          child: async.when(
-            loading: () => const _TreemapSkeleton(),
-            error: (e, _) => ErrorView(
-              message: 'Could not load heatmap.\n$e',
-              onRetry: () => ref.invalidate(_treemapProvider(key)),
+    // Scroll-Away Filters pattern (see CLAUDE.md Known Pitfalls): the header
+    // is the first item inside the same scroll view as the results, not a
+    // pinned sibling above it — it scrolls out of view with the content
+    // instead of permanently eating screen space. Built once so all three
+    // async branches below show the same live header (chips stay tappable
+    // through loading/error states too).
+    final header = _Header(
+      selectedIndex: _index,
+      selectedTimeframe: _timeframe,
+      onSelectIndex: (id) => setState(() => _index = id),
+      onSelectTimeframe: _selectTimeframe,
+      onInfo: () => _showInfo(context),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewportHeight = constraints.maxHeight;
+        return async.when(
+          loading: () => SingleChildScrollView(
+            padding: EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
+            child: Column(
+              children: [
+                header,
+                SizedBox(height: viewportHeight, child: const _TreemapSkeleton()),
+              ],
             ),
-            data: (data) {
-              if (data.stocks.isEmpty) {
-                return Center(
-                  child: Text(
-                    'No data available',
-                    style: AppTypography.md.copyWith(color: c.textSecondary),
+          ),
+          error: (e, _) => SingleChildScrollView(
+            padding: EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
+            child: Column(
+              children: [
+                header,
+                SizedBox(
+                  height: viewportHeight * 0.6,
+                  child: ErrorView(
+                    message: 'Could not load heatmap.\n$e',
+                    onRetry: () => ref.invalidate(_treemapProvider(key)),
                   ),
-                );
-              }
-              return RefreshIndicator(
-                color: c.accent,
-                backgroundColor: c.surface,
-                onRefresh: () async {
-                  ref.invalidate(_treemapProvider(key));
-                  await ref.read(_treemapProvider(key).future);
-                },
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final viewportHeight = constraints.maxHeight;
-                    // 500 stocks need ~2.5× viewport so tiles stay legible.
-                    final treemapHeight = viewportHeight * 2.5 - 60;
-                    return SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding:
-                          EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
-                      child: Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
-                                AppSpacing.s2, AppSpacing.s4, AppSpacing.s1),
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: _MarketStatusPill(state: data.marketState),
-                            ),
+                ),
+              ],
+            ),
+          ),
+          data: (data) {
+            if (data.stocks.isEmpty) {
+              return SingleChildScrollView(
+                padding: EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
+                child: Column(
+                  children: [
+                    header,
+                    SizedBox(
+                      height: viewportHeight * 0.6,
+                      child: Center(
+                        child: Text(
+                          'No data available',
+                          style:
+                              AppTypography.md.copyWith(color: c.textSecondary),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+            // 500 stocks need ~2.5× viewport so tiles stay legible.
+            final treemapHeight = viewportHeight * 2.5 - 60;
+            return RefreshIndicator(
+              color: c.accent,
+              backgroundColor: c.surface,
+              onRefresh: () async {
+                ref.invalidate(_treemapProvider(key));
+                await ref.read(_treemapProvider(key).future);
+              },
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: EdgeInsets.only(bottom: bottomInset + AppSpacing.s4),
+                child: Column(
+                  children: [
+                    header,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
+                          AppSpacing.s2, AppSpacing.s4, AppSpacing.s1),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: _MarketStatusPill(state: data.marketState),
+                      ),
+                    ),
+                    FreshnessBar(
+                        lastUpdated: data.lastUpdated.toIso8601String()),
+                    if (data.stocks.length < _kLimit)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
+                            AppSpacing.s2, AppSpacing.s4, 0),
+                        child: Text(
+                          'Showing ${data.stocks.length} of ${data.total} resolved',
+                          style: AppTypography.xs
+                              .copyWith(color: c.textSecondary),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(AppSpacing.s3,
+                          AppSpacing.s2, AppSpacing.s3, AppSpacing.s3),
+                      child: SizedBox(
+                        height: treemapHeight,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                          child: SectorTreemap(
+                            stocks: data.stocks,
+                            marketState: data.marketState,
+                            onSectorTap: (sector) =>
+                                _openSectorDrillIn(context, data, sector),
                           ),
-                          FreshnessBar(
-                              lastUpdated: data.lastUpdated.toIso8601String()),
-                          if (data.stocks.length < _kLimit)
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
-                                  AppSpacing.s2, AppSpacing.s4, 0),
+                        ),
+                      ),
+                    ),
+                    if (data.timeframe == '1d')
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(
+                            AppSpacing.s4, 0, AppSpacing.s4, AppSpacing.s3),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 12,
+                              height: 12,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(3),
+                                border: Border.all(
+                                    color: const Color(0xFFFFC107), width: 2),
+                              ),
+                            ),
+                            const SizedBox(width: AppSpacing.s2),
+                            Expanded(
                               child: Text(
-                                'Showing ${data.stocks.length} of ${data.total} resolved',
+                                'Gold ring = strong buying volume (last 30 min)',
                                 style: AppTypography.xs
                                     .copyWith(color: c.textSecondary),
                               ),
                             ),
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(AppSpacing.s3,
-                                AppSpacing.s2, AppSpacing.s3, AppSpacing.s3),
-                            child: SizedBox(
-                              height: treemapHeight,
-                              child: ClipRRect(
-                                borderRadius:
-                                    BorderRadius.circular(AppRadius.sm),
-                                child: SectorTreemap(
-                                  stocks: data.stocks,
-                                  marketState: data.marketState,
-                                  onSectorTap: (sector) =>
-                                      _openSectorDrillIn(context, data, sector),
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (data.timeframe == '1d')
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(AppSpacing.s4,
-                                  0, AppSpacing.s4, AppSpacing.s3),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 12,
-                                    height: 12,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(3),
-                                      border: Border.all(
-                                          color: const Color(0xFFFFC107),
-                                          width: 2),
-                                    ),
-                                  ),
-                                  const SizedBox(width: AppSpacing.s2),
-                                  Expanded(
-                                    child: Text(
-                                      'Gold ring = strong buying volume (last 30 min)',
-                                      style: AppTypography.xs
-                                          .copyWith(color: c.textSecondary),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    );
-                  },
+                  ],
                 ),
-              );
-            },
-          ),
-        ),
-      ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 

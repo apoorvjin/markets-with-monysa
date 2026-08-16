@@ -82,7 +82,7 @@ const gallery = [
 const faqItems = [
   {
     q: "What is FinBrio?",
-    a: "FinBrio is a global financial intelligence app for iOS and Android. It brings live markets, AI-generated trade signals, congressional and insider trade tracking, US tariff exposure, ETF analytics, and macro stress monitoring into one dashboard — the data professionals watch, without the terminal price tag.",
+    a: "FinBrio is a global financial intelligence app for iOS and Android. It brings live markets, AI-generated trade signals, smart-money tracking (presidential, insider and lobbying disclosures), US tariff exposure, ETF analytics, and macro stress monitoring into one dashboard — the data professionals watch, without the terminal price tag.",
   },
   {
     q: "What are AI trading signals?",
@@ -94,11 +94,11 @@ const faqItems = [
   },
   {
     q: "How does the smart-money tracking work?",
-    a: "FinBrio aggregates public disclosure filings — congressional STOCK Act trades, House PTR filings, presidential OGE Form 278-T transactions of $100K or more, SEC insider cluster buys, and Senate lobbying spend — and surfaces them ranked and searchable. There's even a copy-trades view that reconstructs a Congress member's disclosed portfolio.",
+    a: "FinBrio aggregates public disclosure filings — presidential OGE Form 278-T transactions of $100K or more, SEC EDGAR insider cluster buys, and US Senate lobbying-disclosure spend — and surfaces them ranked and searchable, so you can see what the smart money is actually doing.",
   },
   {
     q: "What is the tariff exposure tool?",
-    a: "A browsable ranking of 113+ countries by their US tariff rate, with per-sector breakdowns, debt-to-USA context, and plain-English explanations of what each rate means. Built for macro investors and trade-compliance teams who need exposure at a glance.",
+    a: "A browsable ranking of 113+ countries by their US tariff rate, with per-sector breakdowns, debt-to-USA context, and plain-English explanations of what each rate means. Made for anyone following how tariffs hit real companies and countries — exposure at a glance, without a spreadsheet.",
   },
   {
     q: "What can I find on the Multibaggers screen?",
@@ -114,27 +114,31 @@ const faqItems = [
   },
   {
     q: "Where does the data come from?",
-    a: "Market data comes from Yahoo Finance; hedge-fund positioning from the CFTC's Disaggregated COT report; the debt clock from the US Treasury's FiscalData API; tariff data from USTR Section 301 schedules; congressional and insider filings from official public disclosure sources including SEC EDGAR; and country statistics from the World Bank.",
+    a: "Market data comes from Yahoo Finance; hedge-fund positioning from the CFTC's Disaggregated COT report; the debt clock from the US Treasury's FiscalData API; tariff data from USTR Section 301 schedules; presidential (OGE Form 278-T), insider (SEC EDGAR) and lobbying (US Senate LDA) disclosures from official public sources; and country statistics from the World Bank.",
   },
   {
     q: "Is FinBrio financial advice?",
     a: "No. FinBrio is an information and analytics tool. Signals, backtests, and briefings are for informational purposes only and are not investment advice. Markets involve risk — always do your own research.",
   },
   {
-    q: "When can I download it?",
-    a: "FinBrio is in beta and coming soon to the App Store and Google Play. Check back here — this page will link to both stores at launch.",
+    q: "Where can I use FinBrio?",
+    a: "FinBrio is live now — on the App Store, and as a full web app at app.finbrio.net that works in any browser, no install required. Sign in once and your account, watchlist, and Pro plan follow you across both. Android is coming soon.",
   },
 ];
 
+const appStoreUrl = "https://apps.apple.com/app/finbrio/id6783981998";
 const appJsonLd = {
   "@context": "https://schema.org",
   "@type": "MobileApplication",
   name: "FinBrio",
-  operatingSystem: "iOS, Android",
+  operatingSystem: "iOS",
   applicationCategory: "FinanceApplication",
   description:
-    "Global financial intelligence: live markets, AI trading signals, congressional and insider trade tracking, tariff exposure, ETF analytics, and macro stress monitoring in one app.",
+    "Global market intelligence: live markets, AI trading signals, smart-money disclosures (presidential, insider and lobbying), tariff exposure, ETF analytics, and macro stress monitoring in one app.",
   url: "https://www.finbrio.net",
+  downloadUrl: appStoreUrl,
+  installUrl: appStoreUrl,
+  sameAs: [appStoreUrl],
   offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
@@ -165,8 +169,10 @@ const faqJsonLd = {
 ---
 
 <Base
-  title="FinBrio — Global Financial Intelligence App | Live Markets, AI Trading Signals, Smart Money Tracking"
-  description="One app for the whole market: 46 live indices, 23 commodities, 44 forex pairs, AI trade signals with entry/stop/target across 9 strategies, Congress & insider trade tracking, US tariff exposure for 113+ countries, ETF analytics and macro stress monitoring. Coming soon to iOS and Android."
+  title="FinBrio — Global Markets, AI Signals & Macro Intelligence"
+  description="One app for the whole market: 46 live indices, 23 commodities, 44 forex pairs, AI trade signals with entry/stop/target across 9 strategies, smart-money disclosures (presidential, insider and lobbying), US tariff exposure for 113+ countries, ETF analytics and macro stress monitoring. Live now on iOS and the web — Android coming soon."
+  ogTitle="The market's unfair advantage."
+  ogDescription="Live markets. AI trade signals. Macro intelligence. Smart money. Tariff exposure. One app."
 >
   <Fragment slot="head">
     <script is:inline type="application/ld+json" set:html={JSON.stringify(appJsonLd)} />
@@ -204,21 +210,22 @@ const faqJsonLd = {
       </div>
       <div class="hero__inner">
         <Reveal as="div" class="hero__copy">
-          <p class="eyebrow">Coming soon · iOS &amp; Android</p>
+          <p class="eyebrow">Live now · Web &amp; iOS</p>
           <h1 class="hero__title">
             The market's<br />
             <span class="hero__title-accent">unfair advantage.</span>
           </h1>
           <p class="hero__subtitle">
             Live global markets, AI trade signals with exact entry, stop and target,
-            the trades Congress and insiders just disclosed, and the macro picture —
+            the smart-money disclosures pros track, and the macro picture —
             all in one place.
           </p>
           <div class="hero__cta">
             <DownloadCta />
           </div>
           <p class="hero__audience">
-            Built for macro investors, professional traders, and trade-compliance teams.
+            For the macro-curious who follow tariffs, smart-money disclosures and the debt
+            clock — and the self-directed traders who act on them.
           </p>
         </Reveal>
         <Reveal as="div" class="hero__device">
@@ -311,7 +318,7 @@ const faqJsonLd = {
           <ul>
             <li>US tariff rates with per-sector breakdowns</li>
             <li>Sourced from USTR Section 301 schedules</li>
-            <li>Congressional &amp; insider disclosures, searchable</li>
+            <li>Presidential, insider &amp; lobbying disclosures, searchable</li>
             <li>Plain-English context for every rate</li>
           </ul>
         </Reveal>
@@ -442,18 +449,18 @@ const faqJsonLd = {
         <p class="eyebrow">Smart Money &amp; Exposure</p>
         <h2>See what they trade.<br />Not what they say.</h2>
         <p>
-          Public disclosures, surfaced the moment they land: congressional STOCK Act
-          trades, House PTR filings, presidential OGE transactions, SEC insider buys,
-          and lobbying spend. Plus a tariff-exposure browser ranking 113+ countries
-          by US tariff rate with per-sector breakdowns.
+          Public disclosures, surfaced the moment they land: presidential OGE
+          transactions, SEC insider cluster buys, and quarter-over-quarter lobbying
+          spend. Plus a tariff-exposure browser ranking 113+ countries by US tariff
+          rate with per-sector breakdowns.
         </p>
         <ul class="checklist">
-          <li>Congress &amp; House trades with member, chamber, amount and filing lag</li>
           <li>Presidential transactions ≥ $100K from OGE Form 278-T filings</li>
-          <li>Copy-trades view — reconstruct any Congress member's disclosed portfolio</li>
-          <li>Insider cluster buys and quarter-over-quarter lobbying growth</li>
+          <li>Insider cluster buys from SEC EDGAR — the last 90 days</li>
+          <li>Quarter-over-quarter lobbying-spend growth from US Senate LDA</li>
           <li>Tariff exposure: 113+ countries with sector detail and plain-English context</li>
         </ul>
+        <p class="feature__link"><a href="/tariffs">Browse US tariffs across 113+ countries →</a></p>
       </Reveal>
       <Reveal as="div" class="feature__media feature__media--duo">
         <DeviceFrame
@@ -488,6 +495,12 @@ const faqJsonLd = {
           <li>Live US debt clock and high-impact economic calendar (FOMC, CPI, NFP)</li>
           <li>AI macro briefings that explain the stress picture in plain English</li>
         </ul>
+        <p class="feature__link">
+          <a href="/indicators/yield-curve">Yield curve</a> ·
+          <a href="/indicators/vix">VIX</a> ·
+          <a href="/indicators/fear-and-greed">Fear &amp; Greed</a> ·
+          <a href="/us-debt-clock">US debt clock</a>
+        </p>
       </Reveal>
       <Reveal as="div" class="feature__media feature__media--duo">
         <DeviceFrame
@@ -591,7 +604,7 @@ const faqJsonLd = {
               <td class="compare__yes">✓</td>
             </tr>
             <tr>
-              <th scope="row">Congress, insider &amp; presidential trades</th>
+              <th scope="row">Presidential, insider &amp; lobbying disclosures</th>
               <td>If you know where to dig</td>
               <td>—</td>
               <td class="compare__yes">✓</td>
@@ -665,7 +678,7 @@ const faqJsonLd = {
         </Reveal>
       </div>
       <Reveal as="p" class="pricing__note">
-        Subscriptions are handled in-app at launch. Prices shown in the app store for your region.
+        Subscriptions are handled in-app. Prices shown in the app store for your region.
       </Reveal>
     </section>
 
@@ -677,7 +690,7 @@ const faqJsonLd = {
           The edge was never the data. It was having all of it in one place, fast enough to act on.
         </p>
         <p class="manifesto__body">
-          Congress files a trade. A tariff shifts. The VIX curve inverts. The macro regime turns.
+          An insider files a buy. A tariff shifts. The VIX curve inverts. The macro regime turns.
           Each of those lives on a different site, behind a different login, on a different delay —
           and by the time you've stitched them together, the move is already priced in. FinBrio
           started as one question: what if the whole picture fit on a single screen, in your pocket,
@@ -699,9 +712,12 @@ const faqJsonLd = {
 
     <!-- ── Final CTA + waitlist ─────────────────────────────────────────── -->
     <Reveal as="section" class="final-cta" id="download">
-      <h2>Be first through the door.</h2>
-      <p>FinBrio is in private beta. Get an email the moment it hits the App Store and Google Play.</p>
+      <h2>Start free, right now.</h2>
+      <p>FinBrio is live on iOS and the web. Get the app, or jump straight in at app.finbrio.net — no install required.</p>
 
+      <DownloadCta />
+
+      <div class="final-cta__divider"><span>Android is next — get notified</span></div>
       <form class="waitlist" id="waitlist" novalidate>
         <input
           class="waitlist__input"
@@ -716,9 +732,6 @@ const faqJsonLd = {
         <button class="waitlist__btn" type="submit">Notify me</button>
       </form>
       <p class="waitlist__msg" id="waitlist-msg" role="status" aria-live="polite" hidden></p>
-
-      <div class="final-cta__divider"><span>or grab it at launch</span></div>
-      <DownloadCta />
     </Reveal>
 
     <script is:inline>
@@ -777,7 +790,7 @@ const faqJsonLd = {
         <div class="site-footer__brand">
           <p class="site-footer__wordmark">Fin<span>Brio</span></p>
           <p class="site-footer__tagline">
-            Global financial intelligence.<br />Coming soon to iOS &amp; Android.
+            Global financial intelligence.<br />Live on iOS and the web. Android next.
           </p>
         </div>
         <nav class="site-footer__col" aria-label="Product">
@@ -796,6 +809,14 @@ const faqJsonLd = {
           <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>
           <a href="/terms" target="_blank" rel="noopener">Terms of Use</a>
           <a href="/support" target="_blank" rel="noopener">Contact &amp; Support</a>
+        </nav>
+        <nav class="site-footer__col" aria-label="Free tools">
+          <h3>Free tools</h3>
+          <a href="/tariffs">US Tariffs by Country</a>
+          <a href="/us-debt-clock">US Debt Clock</a>
+          <a href="/indicators/yield-curve">Yield Curve</a>
+          <a href="/indicators/fear-and-greed">Fear &amp; Greed Index</a>
+          <a href="/indicators/vix">VIX Today</a>
         </nav>
         <div class="site-footer__col">
           <h3>Data sources</h3>
@@ -1255,6 +1276,19 @@ const faqJsonLd = {
     line-height: 1.65;
     margin: 0 0 var(--s5);
     max-width: 56ch;
+  }
+
+  .feature__link {
+    font-size: 14.5px;
+    font-weight: 600;
+    margin: calc(var(--s5) * -0.5) 0 0;
+  }
+  .feature__link a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .feature__link a:hover {
+    text-decoration: underline;
   }
 
   .feature__media {
@@ -1788,7 +1822,7 @@ const faqJsonLd = {
 
   @media (min-width: 760px) {
     .site-footer__grid {
-      grid-template-columns: 1.4fr 1fr 1fr 1.4fr;
+      grid-template-columns: 1.4fr 1fr 1fr 1fr 1.1fr;
     }
   }
 

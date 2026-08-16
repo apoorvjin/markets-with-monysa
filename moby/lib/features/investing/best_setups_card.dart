@@ -7,6 +7,7 @@ import '../../core/theme/app_spacing.dart';
 import '../../data/models/trading_signal.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../services/entitlement_service.dart';
+import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 
 final _bestSetupsCardProvider = FutureProvider.autoDispose
@@ -74,6 +75,18 @@ class _BestSetupsCardState extends ConsumerState<BestSetupsCard> {
                     style: AppTypography.headingSm
                         .copyWith(color: c.textPrimary)),
               ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: c.accentDim18,
+                  borderRadius: BorderRadius.circular(AppRadius.full),
+                ),
+                child: Text('Pro',
+                    style: AppTypography.xs.copyWith(
+                        color: c.accent, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: AppSpacing.s2),
               GestureDetector(
                 onTap: () => showBestSetupsInfo(context),
                 child: Icon(Icons.info_outline_rounded,
@@ -86,43 +99,22 @@ class _BestSetupsCardState extends ConsumerState<BestSetupsCard> {
             'Signals firing today with ≥65% historical 1m win rate',
             style: AppTypography.xs.copyWith(color: c.textMuted),
           ),
-          const SizedBox(height: AppSpacing.s4),
+          const SizedBox(height: AppSpacing.s3),
           Row(
             children: [
-              GestureDetector(
-                onTap: () => widget.onVersionChanged(
-                    widget.version == 'v1' ? 'v2' : 'v1'),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: c.surfaceCard,
-                    borderRadius: BorderRadius.circular(AppRadius.full),
-                    border: Border.all(color: c.border),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      VersionDot(
-                          label: 'v1', active: widget.version == 'v1', c: c),
-                      const SizedBox(width: 6),
-                      VersionDot(
-                          label: 'v2', active: widget.version == 'v2', c: c),
-                    ],
-                  ),
-                ),
+              Text('Ver:',
+                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+              const SizedBox(width: AppSpacing.s2),
+              AppChip(
+                label: 'Early Setup',
+                active: widget.version == 'v1',
+                onTap: () => widget.onVersionChanged('v1'),
               ),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: c.accentDim18,
-                  borderRadius: BorderRadius.circular(AppRadius.full),
-                ),
-                child: Text('Pro',
-                    style: AppTypography.xs.copyWith(
-                        color: c.accent, fontWeight: FontWeight.w700)),
+              const SizedBox(width: AppSpacing.s2),
+              AppChip(
+                label: 'Confirmed Breakout',
+                active: widget.version == 'v2',
+                onTap: () => widget.onVersionChanged('v2'),
               ),
             ],
           ),
@@ -203,27 +195,6 @@ class _BestSetupsCardState extends ConsumerState<BestSetupsCard> {
                   ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// ── Version Dot ───────────────────────────────────────────────────────────────
-
-class VersionDot extends StatelessWidget {
-  const VersionDot(
-      {super.key, required this.label, required this.active, required this.c});
-  final String label;
-  final bool active;
-  final AppPalette c;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      label,
-      style: AppTypography.xs.copyWith(
-        color: active ? c.accent : c.textMuted,
-        fontWeight: active ? FontWeight.w700 : FontWeight.w400,
       ),
     );
   }

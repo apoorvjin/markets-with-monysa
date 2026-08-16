@@ -185,6 +185,9 @@ class MultibaggersScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Scaffold(
+      // See feedback_keyboard_squish memory: the stock-search field here
+      // needs this, same as TradingScreen/MacroScreen/Markets.
+      resizeToAvoidBottomInset: false,
       backgroundColor: c.background,
       appBar: AppBar(
         backgroundColor: c.surface,
@@ -291,7 +294,8 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
         // All other countries (india/uk/japan/hongkong/china/euronext) match
         // the server backtest route's type name directly.
         final btType = _country == 'us' ? 'stocks' : _country;
-        context.push('/trading/10x-backtest?version=$_version&type=$btType');
+        context.push(
+            '/trading/10x-backtest?version=$_version&type=$btType&source=investing');
       },
       onInfo: () => _showMultibaggersInfo(context),
     );
@@ -345,8 +349,9 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                   return ListView(
                     padding: EdgeInsets.only(
                       top: AppSpacing.s3,
-                      bottom:
-                          AppSpacing.s3 + MediaQuery.of(context).padding.bottom,
+                      bottom: AppSpacing.s3 +
+                          MediaQuery.of(context).padding.bottom +
+                          MediaQuery.of(context).viewInsets.bottom,
                     ),
                     children: [_StockCard(item: item, version: _version)],
                   );
@@ -398,6 +403,7 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                     padding: EdgeInsets.only(
                       top: AppSpacing.s2,
                       bottom: MediaQuery.of(context).padding.bottom +
+                          MediaQuery.of(context).viewInsets.bottom +
                           AppSpacing.s3,
                     ),
                     itemCount: filtered.length,
@@ -522,7 +528,8 @@ class _MultibaggersBodyState extends ConsumerState<MultibaggersBody> {
                           padding: EdgeInsets.only(
                             top: AppSpacing.s3,
                             bottom: AppSpacing.s3 +
-                                MediaQuery.of(context).padding.bottom,
+                                MediaQuery.of(context).padding.bottom +
+                                MediaQuery.of(context).viewInsets.bottom,
                           ),
                           itemCount: filtered.length,
                           itemBuilder: (_, i) =>
@@ -671,13 +678,13 @@ class _ControlRow extends StatelessWidget {
                   style: AppTypography.xs.copyWith(color: c.textMuted)),
               const SizedBox(width: AppSpacing.s2),
               AppChip(
-                label: 'v1 Original',
+                label: 'Early Setup',
                 active: version == 'v1',
                 onTap: () => onVersion('v1'),
               ),
               const SizedBox(width: AppSpacing.s2),
               AppChip(
-                label: 'v2 Pine-Aligned',
+                label: 'Confirmed Breakout',
                 active: version == 'v2',
                 onTap: () => onVersion('v2'),
               ),
@@ -1252,15 +1259,15 @@ void _showMultibaggersInfo(BuildContext context) {
             color: c.warning,
             c: c,
             description:
-                'VOL = volume spike ≥3× 20-day average on a green candle. HEARTBEAT = tight consolidation range. REC. QTR = record or near-record EPS quarter. TREND ↑ = MA50 flat or rising (v2 only).',
+                'VOL = volume spike ≥3× 20-day average on a green candle. HEARTBEAT = tight consolidation range. REC. QTR = record or near-record EPS quarter. TREND ↑ = MA50 flat or rising (Confirmed Breakout only).',
           ),
           const SizedBox(height: AppSpacing.s4),
           _InfoRow(
-            label: 'v1 vs v2',
+            label: 'Early Setup vs Confirmed Breakout',
             color: c.textSecondary,
             c: c,
             description:
-                'v1 Original: 30% consolidation range over 2 years. v2 Pine-Aligned: 35% range over the last 200 bars + MA50 trend signal, matching TradingView Pine Script logic.',
+                'Early Setup: 30% consolidation range over 2 years. Confirmed Breakout: 35% range over the last 200 bars + MA50 trend signal, matching TradingView Pine Script logic.',
           ),
           const SizedBox(height: AppSpacing.s4),
           _InfoRow(

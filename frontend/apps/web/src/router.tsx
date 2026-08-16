@@ -5,12 +5,18 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./components/AppShell";
+import { AuthPage } from "./features/auth/AuthPage";
+import { EmailVerificationPage } from "./features/auth/EmailVerificationPage";
 import { AssetPage } from "./features/asset/AssetPage";
 import { InvestingPage } from "./features/investing/InvestingPage";
 import { MacroPage } from "./features/macro/MacroPage";
 import { MarketsPage } from "./features/markets/MarketsPage";
 import { TradingPage } from "./features/trading/TradingPage";
+import { TerminalPage } from "./features/terminal/TerminalPage";
 import { WirePage } from "./features/wire/WirePage";
+import { SplcPage } from "./features/splc/SplcPage";
+import { DataCentersPage } from "./features/datacenters/DataCentersPage";
+import { TankersPage } from "./features/tankers/TankersPage";
 
 const rootRoute = createRootRoute({ component: AppShell });
 
@@ -52,6 +58,42 @@ const wireRoute = createRoute({
   component: WirePage,
 });
 
+const terminalRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/terminal",
+  component: TerminalPage,
+});
+
+const datacentersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/datacenters",
+  component: DataCentersPage,
+});
+
+const tankersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tankers",
+  component: TankersPage,
+});
+
+const splcRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/splc",
+  component: SplcPage,
+});
+
+const authRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/auth",
+  component: AuthPage,
+});
+
+const verifyEmailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/verify-email",
+  component: EmailVerificationPage,
+});
+
 const assetRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/asset/$symbol",
@@ -74,6 +116,12 @@ const routeTree = rootRoute.addChildren([
   investingRoute,
   macroRoute,
   wireRoute,
+  terminalRoute,
+  datacentersRoute,
+  tankersRoute,
+  splcRoute,
+  authRoute,
+  verifyEmailRoute,
   assetRoute,
 ]);
 

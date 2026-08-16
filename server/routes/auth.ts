@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { adminAuth } from "../lib/firebase-admin";
 import { isResendConfigured, sendEmail } from "../lib/email/resend";
+import { devicePlanMap, type DevicePlan } from "../plan-enforcement";
 
 function verificationEmailHtml(link: string): string {
   return `
@@ -22,6 +23,42 @@ function verificationEmailHtml(link: string): string {
 }
 
 export function registerAuthRoutes(app: Express): void {
+  // Resolves the signed-in user's identity + plan from a verified Firebase ID
+  // token. This is the web client's entitlement source — web can't sign HMAC
+  // requests, so instead of trusting a spoofable X-User-ID header it proves
+  // identity with the ID token and we look the plan up server-side. Mobile is
+  // unaffected (it gates client-side via RevenueCat + sends signed requests).
+  app.get("/api/me", async (req, res) => {
+    // Per-user response — never let a CDN/edge cache share it across devices.
+    res.set("Cache-Control", "private, no-store");
+
+    const auth = adminAuth();
+    if (!auth) {
+      return res.status(503).json({ error: "Firebase Admin not configured" });
+    }
+
+    const authHeader = req.headers["authorization"];
+    if (!authHeader?.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing bearer token" });
+    }
+
+    try {
+      const decoded = await auth.verifyIdToken(authHeader.slice("Bearer ".length));
+      // Plan is keyed by Firebase UID (RevenueCat app_user_id === uid; the
+      // billing webhook + Firestore seed populate devicePlanMap under it).
+      const plan: DevicePlan = devicePlanMap.get(decoded.uid) ?? "free";
+      return res.json({
+        uid: decoded.uid,
+        email: decoded.email ?? null,
+        emailVerified: decoded.email_verified ?? false,
+        displayName: decoded.name ?? null,
+        plan,
+      });
+    } catch {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+  });
+
   app.post("/api/auth/send-verification-email", async (req, res) => {
     const auth = adminAuth();
     if (!auth) {

@@ -81,6 +81,11 @@
   --fs-xl2: 18px;
   --fs-xl3: 20px;
   --fs-xl4: 24px;
+  /* Display sizes for the Terminal workspace — the mobile-parity scale stops at
+     24px; these add the larger headings a full-screen desktop terminal needs. */
+  --fs-xl5: 32px;
+  --fs-xl6: 40px;
+  --fs-xl7: 56px;
   --font-sans: "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: "Space Grotesk Variable", "Inter Variable", -apple-system, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;

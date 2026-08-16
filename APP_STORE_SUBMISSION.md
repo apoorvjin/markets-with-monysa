@@ -12,8 +12,23 @@ Markets, Signals & Macro Intel
 
 ## Promotional Text (170 chars max — editable anytime without a new review)
 ```
+NEW: FinBrio is now on the web at app.finbrio.net — sign in once and your account, watchlist, and Pro plan follow you across devices, no install required.
+```
+(156/170). This field is the fastest way to reach people who already have the app installed — Apple lets you change it anytime without a new build or review, so it doesn't have to wait for the next version to go live. Swap it back to the original markets/signals/macro copy (below) once the web-app announcement has had a couple of weeks of visibility:
+```
 Live global markets, AI trading signals, tariff exposure, and macro dashboards in one app. Track ETFs, smart money flows, and crisis playbooks in real time.
 ```
+
+## What's New in This Version (App Store Connect → version page → "What's New in This Version")
+```
+🌏 Markets just went more global. Our hedge-fund positioning tracker (Markets → CFTC) now follows Nikkei 225 right alongside the US benchmarks — plus a brand-new Regional Flows view: India's daily foreign-vs-domestic institutional buying and selling, updated every trading day. Free for everyone, no subscription required.
+
+Also in this update:
+• More room to see the data — filter chips on Signals and Heatmap now scroll away with your results instead of pinning a strip across the top.
+• Fixed a keyboard overlap on Multibaggers that could cover the search field while you typed.
+• Small naming and polish fixes throughout Multibaggers.
+```
+This mirrors [TESTFLIGHT_RELEASE_NOTES.md](TESTFLIGHT_RELEASE_NOTES.md)'s feature list, rewritten for customers rather than beta testers (benefit-first, no internal jargon like "Pro-gated," "FII/DII," or version numbers) — keep the two in sync when either changes before submission.
 
 ## Keywords (100 chars max, comma-separated)
 ```
@@ -41,6 +56,8 @@ MACRO
 Monitor the Market Stress Meter, VIX, Fear & Greed Index, yield curve, sector rotation, and a correlation matrix with rolling history. Read the historical crisis playbook, get an AI-generated macro briefing, and track the US federal debt clock with live Treasury and World Bank data.
 
 Built for macro-minded investors, active traders, and anyone who wants to understand what's actually moving markets — not just headlines.
+
+Also on the web — sign in at app.finbrio.net and your account, watchlist, and Pro plan carry over across devices.
 
 FinBrio is free to start. Pro unlocks advanced signal strategies, unlimited price alerts, deeper backtests, extended timeframes, and AI-driven analysis — manage or cancel your subscription anytime, right in the app.
 

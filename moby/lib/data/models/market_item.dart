@@ -22,6 +22,7 @@ class MarketItem {
     this.unit,
     this.base,
     this.quote,
+    this.sparkline,
   });
 
   final String symbol;
@@ -36,6 +37,9 @@ class MarketItem {
   final String? unit;
   final String? base;
   final String? quote;
+  /// 1-month daily-close trend (see WORLD_INDICES/COMMODITIES/fetchSparklineBatch
+  /// server-side) — indices and commodities only; null for forex, which doesn't fetch this.
+  final List<double>? sparkline;
 
   factory MarketItem.fromJson(Map<String, dynamic> j) => MarketItem(
         symbol: j['symbol'] as String,
@@ -50,6 +54,9 @@ class MarketItem {
         unit: j['unit'] as String?,
         base: j['base'] as String?,
         quote: j['quote'] as String?,
+        sparkline: (j['sparkline'] as List?)
+            ?.map((e) => (e as num).toDouble())
+            .toList(),
       );
 }
 
@@ -101,6 +108,69 @@ class CotMetal {
       );
 }
 
+// Not a COT category — CFTC has no jurisdiction outside US-regulated
+// exchanges, so this is a different metric entirely (NSE cash-market
+// FII/DII net buy/sell, in ₹ crores) kept in its own section rather than
+// folded into CotMetal's long/short-contract shape.
+class RegionalFlowItem {
+  const RegionalFlowItem({
+    required this.category,
+    required this.label,
+    required this.buyValue,
+    required this.sellValue,
+    required this.netValue,
+    required this.netBias,
+  });
+
+  final String category;
+  final String label;
+  final double buyValue;
+  final double sellValue;
+  final double netValue;
+  final String netBias;
+
+  factory RegionalFlowItem.fromJson(Map<String, dynamic> j) => RegionalFlowItem(
+        category: j['category'] as String,
+        label: j['label'] as String,
+        buyValue: (j['buyValue'] as num).toDouble(),
+        sellValue: (j['sellValue'] as num).toDouble(),
+        netValue: (j['netValue'] as num).toDouble(),
+        netBias: j['netBias'] as String,
+      );
+}
+
+class RegionalFlowGroup {
+  const RegionalFlowGroup({
+    required this.region,
+    required this.flag,
+    required this.market,
+    required this.date,
+    required this.unit,
+    required this.items,
+    this.source,
+  });
+
+  final String region;
+  final String? flag;
+  final String market;
+  final String? date;
+  final String unit;
+  final List<RegionalFlowItem> items;
+  final String? source;
+
+  factory RegionalFlowGroup.fromJson(Map<String, dynamic> j) => RegionalFlowGroup(
+        region: j['region'] as String,
+        flag: j['flag'] as String?,
+        market: j['market'] as String,
+        date: j['date'] as String?,
+        unit: j['unit'] as String,
+        items: (j['items'] as List? ?? [])
+            .map((e) => RegionalFlowItem.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        source: j['source'] as String?,
+      );
+}
+
 class CotData {
   const CotData({
     required this.metals,
@@ -108,6 +178,7 @@ class CotData {
     required this.currencies,
     required this.energy,
     required this.agriculture,
+    required this.regionalFlows,
     this.reportDate,
   });
 
@@ -116,6 +187,7 @@ class CotData {
   final List<CotMetal> currencies;
   final List<CotMetal> energy;
   final List<CotMetal> agriculture;
+  final List<RegionalFlowGroup> regionalFlows;
   final String? reportDate;
 
   static List<CotMetal> _parseList(dynamic raw) =>
@@ -127,6 +199,9 @@ class CotData {
         currencies: _parseList(j['currencies']),
         energy: _parseList(j['energy']),
         agriculture: _parseList(j['agriculture']),
+        regionalFlows: (j['regionalFlows'] as List? ?? [])
+            .map((e) => RegionalFlowGroup.fromJson(e as Map<String, dynamic>))
+            .toList(),
         reportDate: j['reportDate'] as String?,
       );
 }

@@ -1,0 +1,287 @@
+---
+import Base from "../../layouts/Base.astro";
+import Nav from "../../components/Nav.astro";
+import Faq from "../../components/Faq.astro";
+import type { FaqItem } from "../../components/Faq.astro";
+import DownloadCta from "../../components/DownloadCta.astro";
+import { getTariffs, slugify, yearOf, type CountryTariff } from "../../lib/api";
+
+export async function getStaticPaths() {
+  const { countries, dataAsOf } = await getTariffs();
+  const byImpact = [...countries].sort(
+    (a, b) => (b.impactScore ?? 0) - (a.impactScore ?? 0),
+  );
+  return countries.map((country) => ({
+    params: { country: slugify(country.countryName) },
+    props: {
+      country,
+      dataAsOf,
+      related: byImpact
+        .filter((x) => x.countryCode !== country.countryCode)
+        .slice(0, 6),
+    },
+  }));
+}
+
+interface Props {
+  country: CountryTariff;
+  dataAsOf: string;
+  related: CountryTariff[];
+}
+const { country, dataAsOf, related } = Astro.props as Props;
+
+const name = country.countryName;
+const slug = slugify(name);
+const rate = country.tariffRate;
+const impact = country.impactScore;
+const year = yearOf(dataAsOf);
+const sectors = [...(country.sectors ?? [])].sort(
+  (a, b) => b.tariffRate - a.tariffRate,
+);
+const site = "https://www.finbrio.net";
+
+const title = `US Tariffs on ${name} (${year}): Rate, Sectors & Impact | FinBrio`;
+const description = `The US effective tariff on ${name} is ${rate}%${
+  impact != null ? ` (impact score ${impact}/100)` : ""
+}. Full per-sector breakdown, trade exposure and a plain-English explanation. Updated ${dataAsOf}.`;
+const ogTitle = `US Tariffs on ${name}: ${rate}%`;
+const ogDescription = `${
+  impact != null ? `Impact score ${impact}/100. ` : ""
+}Per-sector breakdown + plain-English context. Updated ${dataAsOf}.`;
+
+const faqItems: FaqItem[] = [
+  {
+    q: `What is the US tariff rate on ${name}?`,
+    a: `${name} faces an effective US tariff of ${rate}%${
+      sectors[0]
+        ? `, with ${sectors[0].sectorName} seeing the highest sector rate at ${sectors[0].tariffRate}%`
+        : ""
+    }. Rates are drawn from USTR Section 301 schedules and recent Federal Register actions.`,
+  },
+  ...(sectors.length
+    ? [
+        {
+          q: `Which ${name} sectors are hit hardest by US tariffs?`,
+          a: `${sectors
+            .slice(0, 3)
+            .map((s) => `${s.sectorName} (${s.tariffRate}%)`)
+            .join(", ")}.`,
+        },
+      ]
+    : []),
+  ...(impact != null
+    ? [
+        {
+          q: `What does ${name}'s tariff impact score mean?`,
+          a: `${impact}/100 — FinBrio's impact score combines the headline tariff rate, how many sectors are affected, and the country's trade exposure to the US into a single 0–100 measure of how hard US trade policy hits it.`,
+        },
+      ]
+    : []),
+];
+
+const breadcrumbJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    { "@type": "ListItem", position: 1, name: "Home", item: `${site}/` },
+    { "@type": "ListItem", position: 2, name: "US Tariffs", item: `${site}/tariffs` },
+    { "@type": "ListItem", position: 3, name: `${name} tariffs`, item: `${site}/tariffs/${slug}` },
+  ],
+};
+const faqJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  mainEntity: faqItems.map((f) => ({
+    "@type": "Question",
+    name: f.q,
+    acceptedAnswer: { "@type": "Answer", text: f.a },
+  })),
+};
+---
+
+<Base
+  title={title}
+  description={description}
+  ogTitle={ogTitle}
+  ogDescription={ogDescription}
+  ogImage={`/og/tariffs/${slug}.png`}
+>
+  <Fragment slot="head">
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(breadcrumbJsonLd)} />
+    <script is:inline type="application/ld+json" set:html={JSON.stringify(faqJsonLd)} />
+  </Fragment>
+
+  <Nav />
+
+  <main id="main-content" class="wrap">
+    <nav class="crumbs" aria-label="Breadcrumb">
+      <a href="/">Home</a> <span>/</span>
+      <a href="/tariffs">US Tariffs</a> <span>/</span>
+      <span aria-current="page">{name}</span>
+    </nav>
+
+    <header class="head">
+      <p class="eyebrow">US Tariff Exposure</p>
+      <h1>US Tariffs on {name}</h1>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric__value">{rate}%</div>
+          <div class="metric__label">Effective US tariff rate</div>
+        </div>
+        {
+          impact != null && (
+            <div class="metric">
+              <div class="metric__value metric__value--warn">{impact}<span>/100</span></div>
+              <div class="metric__label">Impact score</div>
+            </div>
+          )
+        }
+      </div>
+      <p class="updated">Updated {dataAsOf} · source: USTR Section 301 &amp; Federal Register</p>
+    </header>
+
+    {
+      country.laymanExplanation && (
+        <section class="prose">
+          <p>{country.laymanExplanation}</p>
+        </section>
+      )
+    }
+
+    {
+      sectors.length > 0 && (
+        <section class="block">
+          <h2>{name} tariff rates by sector</h2>
+          <div class="tbl-scroll">
+            <table class="tbl">
+              <thead>
+                <tr><th scope="col">Sector</th><th scope="col">US tariff rate</th><th scope="col">Source</th></tr>
+              </thead>
+              <tbody>
+                {sectors.map((s) => (
+                  <tr>
+                    <th scope="row">{s.sectorName}</th>
+                    <td class="num">{s.tariffRate}%</td>
+                    <td>{s.sourceURL ? <a href={s.sourceURL} rel="nofollow noopener" target="_blank">USTR / official</a> : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )
+    }
+
+    {
+      country.debtToUSA && country.debtToUSA.length > 0 && (
+        <section class="block">
+          <h2>{name} trade &amp; debt exposure to the US</h2>
+          <ul class="exposure">
+            {country.debtToUSA.map((d) => (
+              <li>
+                <span class="exposure__cat">{d.category}</span>
+                <span class="exposure__amt">${d.amountBillions}B</span>
+                {d.notes && <span class="exposure__note">{d.notes}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )
+    }
+
+    <section class="block faq-block">
+      <h2>{name} tariffs — FAQ</h2>
+      <Faq items={faqItems} />
+    </section>
+
+    <section class="cta-block">
+      <h2>See {name}'s exposure — and 113+ more — live</h2>
+      <p>FinBrio ranks every country by US tariff rate with per-sector detail, impact scores and plain-English context. Free on iOS and the web.</p>
+      <DownloadCta />
+    </section>
+
+    {
+      related.length > 0 && (
+        <section class="block">
+          <h2>Highest-impact tariff exposures</h2>
+          <ul class="related">
+            {related.map((r) => (
+              <li>
+                <a href={`/tariffs/${slugify(r.countryName)}`}>
+                  <span>{r.countryName}</span>
+                  <span class="related__rate">{r.tariffRate}%</span>
+                </a>
+              </li>
+            ))}
+            <li class="related__all"><a href="/tariffs">All 113+ countries →</a></li>
+          </ul>
+        </section>
+      )
+    }
+  </main>
+
+  <footer class="foot">
+    <a href="/">FinBrio</a>
+    <nav>
+      <a href="/tariffs">Tariffs</a>
+      <a href="/us-debt-clock">US Debt Clock</a>
+      <a href="/#macro">Macro</a>
+      <a href="/#signals">Signals</a>
+    </nav>
+    <p>Informational only — not financial advice.</p>
+  </footer>
+</Base>
+
+<style>
+  .wrap { max-width: 860px; margin: 0 auto; padding: calc(var(--s8) * 1.5) var(--s5) var(--s8); }
+  .crumbs { font-size: 13px; color: var(--text-muted); display: flex; gap: var(--s2); align-items: center; margin-bottom: var(--s6); }
+  .crumbs a { color: var(--text-secondary); text-decoration: none; }
+  .crumbs a:hover { color: var(--accent); }
+  .crumbs span[aria-current] { color: var(--text-primary); }
+
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); font-weight: 600; margin: 0 0 var(--s3); }
+  h1 { font-size: clamp(30px, 6vw, 46px); line-height: 1.08; letter-spacing: -0.02em; margin: 0 0 var(--s5); color: var(--text-primary); }
+  h2 { font-size: clamp(20px, 3.5vw, 26px); letter-spacing: -0.01em; margin: 0 0 var(--s5); color: var(--text-primary); }
+
+  .metrics { display: flex; gap: var(--s5); flex-wrap: wrap; margin-bottom: var(--s4); }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: var(--s5) var(--s6); min-width: 200px; }
+  .metric__value { font-size: 48px; font-weight: 800; letter-spacing: -0.03em; color: var(--danger, #ff4d6a); font-variant-numeric: tabular-nums; }
+  .metric__value--warn { color: var(--warning, #ffb84d); }
+  .metric__value span { font-size: 22px; color: var(--text-muted); font-weight: 600; }
+  .metric__label { font-size: 13px; color: var(--text-secondary); margin-top: var(--s2); }
+  .updated { font-size: 13px; color: var(--text-muted); margin: 0; }
+
+  .prose { margin: var(--s7) 0; }
+  .prose p { font-size: 17px; line-height: 1.7; color: var(--text-secondary); max-width: 68ch; }
+
+  .block { margin: calc(var(--s8) * 1.2) 0; }
+  .tbl-scroll { overflow-x: auto; }
+  .tbl { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .tbl th, .tbl td { text-align: left; padding: var(--s4) var(--s4); border-bottom: 1px solid var(--border); }
+  .tbl thead th { font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-muted); }
+  .tbl tbody th { font-weight: 600; color: var(--text-primary); }
+  .tbl .num { font-variant-numeric: tabular-nums; color: var(--text-primary); font-weight: 700; }
+  .tbl a { color: var(--accent); text-decoration: none; font-size: 13px; }
+
+  .exposure { list-style: none; padding: 0; margin: 0; display: grid; gap: var(--s3); }
+  .exposure li { display: flex; gap: var(--s4); align-items: baseline; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: var(--s4) var(--s5); }
+  .exposure__cat { font-weight: 600; color: var(--text-primary); }
+  .exposure__amt { color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .exposure__note { color: var(--text-muted); font-size: 13px; }
+
+  .cta-block { text-align: center; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: var(--s8) var(--s6); margin: calc(var(--s8) * 1.2) 0; }
+  .cta-block p { color: var(--text-secondary); max-width: 52ch; margin: var(--s3) auto var(--s6); line-height: 1.6; }
+
+  .related { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--s3); }
+  .related a { display: flex; justify-content: space-between; gap: var(--s3); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: var(--s4) var(--s5); text-decoration: none; color: var(--text-primary); transition: border-color 0.15s ease; }
+  .related a:hover { border-color: var(--accent); }
+  .related__rate { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+  .related__all a { justify-content: center; color: var(--accent); }
+
+  .foot { max-width: 860px; margin: 0 auto; padding: var(--s7) var(--s5) var(--s8); border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; gap: var(--s4); align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-muted); }
+  .foot > a { font-weight: 800; color: var(--text-primary); text-decoration: none; }
+  .foot nav { display: flex; gap: var(--s5); }
+  .foot nav a { color: var(--text-secondary); text-decoration: none; }
+  .foot nav a:hover { color: var(--accent); }
+  .foot p { margin: 0; width: 100%; }
+</style>

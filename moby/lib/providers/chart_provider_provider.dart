@@ -22,7 +22,7 @@ class ChartProviderNotifier extends Notifier<ChartDataProvider> {
     final saved = prefs.getString(_key);
     final resolved = ChartDataProvider.values.firstWhere(
       (p) => p.value == saved,
-      orElse: () => ChartDataProvider.yahoo,
+      orElse: () => ChartDataProvider.inHouse,
     );
     currentChartRenderer = resolved.value;
     return resolved;

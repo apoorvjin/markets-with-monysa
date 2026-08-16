@@ -27,7 +27,7 @@ abstract final class FirestoreService {
       'preferences': {
         'theme': 'dark',
         'fontSize': 'regular',
-        'chartProvider': 'yahoo',
+        'chartProvider': 'inhouse',
       },
       'watchlist': <String>[],
     }, SetOptions(merge: true));

@@ -7,3 +7,6 @@ expo-env.d.ts
 
 # Local scraper output (downloaded HTML + generated CSVs) — not for version control
 scripts/out/
+
+# Marketing assets, motion-design skill, generated reels/videos — not for version control
+resources/

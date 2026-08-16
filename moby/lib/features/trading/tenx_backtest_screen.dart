@@ -11,6 +11,20 @@ import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/theme_toggle.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 
+String _versionLabel(String version) =>
+    version == 'v2' ? 'Confirmed Breakout' : 'Early Setup';
+
+String _screenTitle(String? source) {
+  switch (source) {
+    case 'trading':
+      return 'Power Moves Backtest';
+    case 'investing':
+      return 'Multibagger Backtest';
+    default:
+      return '10X Backtest';
+  }
+}
+
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 final _scannerBacktestProvider = FutureProvider.autoDispose
@@ -28,10 +42,15 @@ class TenXBacktestScreen extends ConsumerStatefulWidget {
     super.key,
     required this.version,
     required this.type,
+    this.source,
   });
 
   final String version;
   final String type;
+  // 'trading' (from Power Moves) locks out the Stocks type chip; 'investing'
+  // (from Multibaggers) locks out the Assets type chip. Null (e.g. deep link)
+  // leaves both enabled.
+  final String? source;
 
   @override
   ConsumerState<TenXBacktestScreen> createState() => _TenXBacktestScreenState();
@@ -150,7 +169,7 @@ class _TenXBacktestScreenState extends ConsumerState<TenXBacktestScreen> {
         backgroundColor: c.surface,
         surfaceTintColor: Colors.transparent,
         title: Text(
-          '10X Backtest · ${_version.toUpperCase()} · ${_type == 'assets' ? 'Assets' : 'Stocks'}',
+          '${_screenTitle(widget.source)} · ${_versionLabel(_version)} · ${_type == 'assets' ? 'Assets' : 'Stocks'}',
           style: AppTypography.headingSm.copyWith(color: c.textPrimary),
         ),
         actions: [
@@ -178,6 +197,8 @@ class _TenXBacktestScreenState extends ConsumerState<TenXBacktestScreen> {
             _ControlRow(
               version: _version,
               type: _type,
+              disableAssets: widget.source == 'investing',
+              disableStocks: widget.source == 'trading',
               onVersion: (v) => setState(() {
                 _version = v;
                 _sort = 'events';
@@ -191,6 +212,7 @@ class _TenXBacktestScreenState extends ConsumerState<TenXBacktestScreen> {
             ),
             _SignalFilterRow(
               version: _version,
+              type: _type,
               requiredSignals: _requiredSignals,
               isPro: EntitlementService.can('backtest_filter'),
               onToggle: (key) => setState(() {
@@ -227,12 +249,14 @@ class _TenXBacktestScreenState extends ConsumerState<TenXBacktestScreen> {
 class _SignalFilterRow extends StatelessWidget {
   const _SignalFilterRow({
     required this.version,
+    required this.type,
     required this.requiredSignals,
     required this.isPro,
     required this.onToggle,
   });
 
   final String version;
+  final String type;
   final Set<String> requiredSignals;
   final bool isPro;
   final void Function(String key) onToggle;
@@ -240,6 +264,10 @@ class _SignalFilterRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    // Rec. Qtr is EPS-based — the server never computes it for the asset
+    // scanner (Commodities/Indices/Forex/Crypto have no earnings data), so
+    // offering it as a filter there always returns zero results.
+    final showRecQtr = type != 'assets';
     return Container(
       color: c.surface,
       padding: const EdgeInsets.symmetric(
@@ -257,15 +285,17 @@ class _SignalFilterRow extends StatelessWidget {
             onToggle: onToggle,
             context: context,
           ),
-          const SizedBox(width: AppSpacing.s2),
-          _FilterChip(
-            label: 'Rec. Qtr',
-            chipKey: 'rec_quarter',
-            isActive: requiredSignals.contains('rec_quarter'),
-            isPro: isPro,
-            onToggle: onToggle,
-            context: context,
-          ),
+          if (showRecQtr) ...[
+            const SizedBox(width: AppSpacing.s2),
+            _FilterChip(
+              label: 'Rec. Qtr',
+              chipKey: 'rec_quarter',
+              isActive: requiredSignals.contains('rec_quarter'),
+              isPro: isPro,
+              onToggle: onToggle,
+              context: context,
+            ),
+          ],
           const SizedBox(width: AppSpacing.s2),
           Opacity(
             opacity: version == 'v2' ? 1.0 : 0.35,
@@ -354,12 +384,19 @@ class _ControlRow extends StatelessWidget {
     required this.type,
     required this.onVersion,
     required this.onType,
+    this.disableAssets = false,
+    this.disableStocks = false,
   });
 
   final String version;
   final String type;
   final ValueChanged<String> onVersion;
   final ValueChanged<String> onType;
+  // Locks out the type that doesn't match where this screen was opened from
+  // (Power Moves → assets only, Multibaggers → stocks/country only) so a tap
+  // can't silently swap you onto an unrelated backtest dataset.
+  final bool disableAssets;
+  final bool disableStocks;
 
   @override
   Widget build(BuildContext context) {
@@ -368,34 +405,47 @@ class _ControlRow extends StatelessWidget {
       color: c.surface,
       padding: const EdgeInsets.fromLTRB(
           AppSpacing.s5, AppSpacing.s3, AppSpacing.s5, AppSpacing.s3),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Ver:', style: AppTypography.xs.copyWith(color: c.textMuted)),
-          const SizedBox(width: AppSpacing.s2),
-          _Chip(
-            label: 'v1',
-            active: version == 'v1',
-            onTap: () => onVersion('v1'),
+          Row(
+            children: [
+              Text('Ver:',
+                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+              const SizedBox(width: AppSpacing.s2),
+              _Chip(
+                label: 'Early Setup',
+                active: version == 'v1',
+                onTap: () => onVersion('v1'),
+              ),
+              const SizedBox(width: AppSpacing.s2),
+              _Chip(
+                label: 'Confirmed Breakout',
+                active: version == 'v2',
+                onTap: () => onVersion('v2'),
+              ),
+            ],
           ),
-          const SizedBox(width: AppSpacing.s2),
-          _Chip(
-            label: 'v2',
-            active: version == 'v2',
-            onTap: () => onVersion('v2'),
-          ),
-          const SizedBox(width: AppSpacing.s5),
-          Text('Type:', style: AppTypography.xs.copyWith(color: c.textMuted)),
-          const SizedBox(width: AppSpacing.s2),
-          _Chip(
-            label: 'Assets',
-            active: type == 'assets',
-            onTap: () => onType('assets'),
-          ),
-          const SizedBox(width: AppSpacing.s2),
-          _Chip(
-            label: 'Stocks',
-            active: type == 'stocks',
-            onTap: () => onType('stocks'),
+          const SizedBox(height: AppSpacing.s2),
+          Row(
+            children: [
+              Text('Type:',
+                  style: AppTypography.xs.copyWith(color: c.textMuted)),
+              const SizedBox(width: AppSpacing.s2),
+              _Chip(
+                label: 'Assets',
+                active: type == 'assets',
+                disabled: disableAssets,
+                onTap: () => onType('assets'),
+              ),
+              const SizedBox(width: AppSpacing.s2),
+              _Chip(
+                label: 'Stocks',
+                active: type == 'stocks',
+                disabled: disableStocks,
+                onTap: () => onType('stocks'),
+              ),
+            ],
           ),
         ],
       ),
@@ -404,30 +454,38 @@ class _ControlRow extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({required this.label, required this.active, required this.onTap});
+  const _Chip({
+    required this.label,
+    required this.active,
+    required this.onTap,
+    this.disabled = false,
+  });
 
   final String label;
   final bool active;
   final VoidCallback onTap;
+  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
     return GestureDetector(
-      onTap: onTap,
+      onTap: disabled ? null : onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.s4, vertical: AppSpacing.s2),
         decoration: BoxDecoration(
-          color: active ? c.accent.withAlpha(25) : Colors.transparent,
+          color: active && !disabled ? c.accent.withAlpha(25) : Colors.transparent,
           borderRadius: BorderRadius.circular(AppRadius.full),
-          border: Border.all(color: active ? c.accent : c.border),
+          border: Border.all(
+              color: active && !disabled ? c.accent : c.border.withAlpha(disabled ? 80 : 255)),
         ),
         child: Text(
           label,
           style: AppTypography.xs.copyWith(
-            color: active ? c.accent : c.textSecondary,
-            fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+            color: disabled ? c.textFaint : (active ? c.accent : c.textSecondary),
+            fontWeight: active && !disabled ? FontWeight.w700 : FontWeight.w500,
+            decoration: disabled ? TextDecoration.lineThrough : null,
           ),
         ),
       ),

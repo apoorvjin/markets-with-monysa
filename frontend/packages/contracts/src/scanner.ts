@@ -215,6 +215,57 @@ export const RegimeSummaryResponse = z
   .passthrough();
 export type RegimeSummaryResponse = z.infer<typeof RegimeSummaryResponse>;
 
+/** Per signal-count-tier historical stats for GET /scanner/backtest/:type. */
+export const BacktestSummaryStats = z
+  .object({
+    events: z.number(),
+    winRate1m: z.number(),
+    winRate3m: z.number(),
+    winRate6m: z.number(),
+    winRate1y: z.number(),
+    winRate3y: z.number(),
+    avgReturn1m: z.number(),
+    avgReturn3m: z.number(),
+    avgReturn6m: z.number(),
+    avgReturn3y: z.number(),
+    sampleSize3y: z.number(),
+  })
+  .passthrough();
+export type BacktestSummaryStats = z.infer<typeof BacktestSummaryStats>;
+
+export const BacktestAssetResult = z
+  .object({
+    symbol: z.string(),
+    name: z.string(),
+    category: z.string(),
+    flag: z.string().nullish(),
+    totalEvents: z.number(),
+    // keyed by signal count as a string, e.g. "1", "2", "3"
+    bySignalCount: z.record(BacktestSummaryStats),
+  })
+  .passthrough();
+export type BacktestAssetResult = z.infer<typeof BacktestAssetResult>;
+
+export const ScannerBacktestResponse = z
+  .object({
+    version: z.string(),
+    type: z.string(),
+    fromDate: z.string().nullish(),
+    toDate: z.string().nullish(),
+    assets: z.array(BacktestAssetResult),
+    aggregate: z
+      .object({
+        totalEvents: z.number(),
+        // keyed by signal count as a string, e.g. "1", "2", "3"
+        bySignalCount: z.record(BacktestSummaryStats),
+      })
+      .passthrough()
+      .nullish(),
+    lastUpdated: z.string().nullish(),
+  })
+  .passthrough();
+export type ScannerBacktestResponse = z.infer<typeof ScannerBacktestResponse>;
+
 export const EarningsItem = z
   .object({
     symbol: z.string(),
@@ -273,6 +324,33 @@ export const CotItem = z
   .passthrough();
 export type CotItem = z.infer<typeof CotItem>;
 
+/** Non-COT regional capital-flow row (e.g. NSE FII/DII cash-market net buy/sell). */
+export const RegionalFlowItem = z
+  .object({
+    category: z.string(),
+    label: z.string(),
+    buyValue: z.number(),
+    sellValue: z.number(),
+    netValue: z.number(),
+    netBias: z.string(),
+  })
+  .passthrough();
+export type RegionalFlowItem = z.infer<typeof RegionalFlowItem>;
+
+export const RegionalFlowGroup = z
+  .object({
+    region: z.string(),
+    flag: z.string().nullish(),
+    market: z.string(),
+    date: z.string().nullish(),
+    unit: z.string(),
+    items: z.array(RegionalFlowItem).default([]),
+    source: z.string().nullish(),
+    sourceUrl: z.string().nullish(),
+  })
+  .passthrough();
+export type RegionalFlowGroup = z.infer<typeof RegionalFlowGroup>;
+
 export const CotResponse = z
   .object({
     metals: z.array(CotItem).default([]),
@@ -280,6 +358,7 @@ export const CotResponse = z
     currencies: z.array(CotItem).default([]),
     energy: z.array(CotItem).default([]),
     agriculture: z.array(CotItem).default([]),
+    regionalFlows: z.array(RegionalFlowGroup).default([]),
     lastUpdated: z.string().nullish(),
   })
   .passthrough();

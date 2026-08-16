@@ -10,6 +10,7 @@ import Anthropic from "@anthropic-ai/sdk";
 const CACHE_TTL_S  = 7 * 24 * 60 * 60;    // 7 d in seconds (Redis TTL)
 const CACHE_TTL_MS = CACHE_TTL_S * 1000;  // 7 d in ms (in-memory check)
 const REDIS_KEY    = "oge:trump-transactions";
+const META_KEY     = "oge:pipeline-meta"; // diagnostics: when/why the pipeline last actually ran
 
 const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
   ? new Redis({
@@ -18,8 +19,16 @@ const redis = process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_RE
     })
   : null;
 
+interface PipelineMeta {
+  lastRunAt: string;      // ISO timestamp — when the pipeline finished writing this data
+  triggerSource: string;  // "startup" | "admin-refresh" | "get-miss" | "worker" (spawnFlyWorker fallback)
+  durationMs: number;
+  txnCount: number;
+}
+
 // In-memory layer
 let memCache: { data: OgeTransaction[]; ts: number } | null = null;
+let memMeta: PipelineMeta | null = null;
 
 function getMemCached(): OgeTransaction[] | null {
   if (!memCache || Date.now() - memCache.ts > CACHE_TTL_MS) return null;
@@ -50,15 +59,32 @@ async function getCached(): Promise<OgeTransaction[] | null> {
   return null;
 }
 
-async function setCached(data: OgeTransaction[]) {
+async function setCached(data: OgeTransaction[], run: { triggerSource: string; durationMs: number }) {
   setMemCached(data);
+  const meta: PipelineMeta = { lastRunAt: new Date().toISOString(), txnCount: data.length, ...run };
+  memMeta = meta;
   if (redis) {
     try {
       await redis.set(REDIS_KEY, data, { ex: CACHE_TTL_S });
+      await redis.set(META_KEY, meta, { ex: CACHE_TTL_S });
     } catch (e) {
       console.warn("[oge] redis set failed:", (e as Error).message);
     }
   }
+}
+
+// Best-effort — only used to label the freshness timestamp, never blocks a response.
+async function getMeta(): Promise<PipelineMeta | null> {
+  if (memMeta) return memMeta;
+  if (redis) {
+    try {
+      const raw = await redis.get<PipelineMeta>(META_KEY);
+      if (raw) { memMeta = raw; return raw; }
+    } catch (e) {
+      console.warn("[oge] redis meta get failed:", (e as Error).message);
+    }
+  }
+  return null;
 }
 
 // ── Amount ranges (identical to STOCK Act ranges) ─────────────────────────────
@@ -305,10 +331,11 @@ async function releaseLock() {
 
 export async function bustCache() {
   memCache = null;
+  memMeta = null;
   _lockFailTs = 0;
   _fetching = false; // allow immediate re-trigger from /refresh endpoint
   if (redis) {
-    try { await redis.del(REDIS_KEY, LOCK_KEY); } catch {}
+    try { await redis.del(REDIS_KEY, META_KEY, LOCK_KEY); } catch {}
   }
 }
 
@@ -318,7 +345,7 @@ export async function bustCache() {
 
 let _lastWorkerMemoryMb: number | null = null;
 
-async function spawnFlyWorker(): Promise<boolean> {
+async function spawnFlyWorker(triggerSource: string): Promise<boolean> {
   const appName  = process.env.FLY_APP_NAME;
   const machineId = process.env.FLY_MACHINE_ID;
   const token    = process.env.FLY_API_TOKEN;
@@ -347,7 +374,7 @@ async function spawnFlyWorker(): Promise<boolean> {
         body: JSON.stringify({
           config: {
             image,
-            env: { OGE_WORKER_MODE: "1" },
+            env: { OGE_WORKER_MODE: "1", OGE_TRIGGER_SOURCE: triggerSource },
             guest: { memory_mb: 1024, cpu_kind: "shared", cpus: 1 },
             auto_destroy: true,
             restart: { policy: "no" },
@@ -380,12 +407,12 @@ let _fetching = false;
 let _lockFailTs = 0;
 const LOCK_COOLDOWN_MS = 5 * 60_000; // 5 min between retry attempts
 
-function triggerPipeline() {
+function triggerPipeline(triggerSource: string) {
   if (_fetching) return;
   if (Date.now() - _lockFailTs < LOCK_COOLDOWN_MS) return;
   _fetching = true;
 
-  spawnFlyWorker().then((spawned) => {
+  spawnFlyWorker(triggerSource).then((spawned) => {
     if (spawned) {
       // Ephemeral 512 MB worker owns the pipeline + Redis write.
       // Main machines keep returning loading:true until getCached() finds data.
@@ -411,9 +438,10 @@ function triggerPipeline() {
         return;
       }
       console.log("[oge] pipeline started (local in-process)");
+      const startedAt = Date.now();
       try {
         const txns = await fetchTrumpTransactions();
-        await setCached(txns);
+        await setCached(txns, { triggerSource, durationMs: Date.now() - startedAt });
         console.log(`[oge] pipeline complete — ${txns.length} transactions cached`);
       } catch (e) {
         console.error("[oge] pipeline failed:", (e as Error).message);
@@ -430,6 +458,8 @@ function triggerPipeline() {
 
 export async function runOgePipelineAndExit(): Promise<void> {
   console.log("[oge-worker] starting — 512 MB mode");
+  const triggerSource = process.env.OGE_TRIGGER_SOURCE ?? "worker";
+  const startedAt = Date.now();
   const acquired = await acquireLock();
   if (!acquired) {
     console.log("[oge-worker] lock held by another worker — exiting");
@@ -437,7 +467,7 @@ export async function runOgePipelineAndExit(): Promise<void> {
   }
   try {
     const txns = await fetchTrumpTransactions();
-    await setCached(txns);
+    await setCached(txns, { triggerSource, durationMs: Date.now() - startedAt });
     console.log(`[oge-worker] complete — ${txns.length} transactions written to Redis`);
     await releaseLock();
     process.exit(0);
@@ -457,12 +487,13 @@ export function registerOgeRoutes(app: Express) {
     if (cached) {
       console.log(`[oge] restored ${cached.length} transactions from Redis`);
     } else {
-      triggerPipeline();
+      triggerPipeline("startup");
     }
-  }).catch(() => triggerPipeline());
+  }).catch(() => triggerPipeline("startup"));
 
-  // Debug endpoint — shows env vars and tests Fly.io Machines API reachability.
+  // Debug endpoint — shows env vars, last pipeline run, and tests Fly.io Machines API reachability.
   app.get("/api/oge/trump-transactions/config", async (_req, res) => {
+    const meta = await getMeta();
     const appName   = process.env.FLY_APP_NAME;
     const machineId = process.env.FLY_MACHINE_ID;
     const token     = process.env.FLY_API_TOKEN;
@@ -498,6 +529,7 @@ export function registerOgeRoutes(app: Express) {
       lastWorkerMemoryMb:   _lastWorkerMemoryMb,
       machineApiStatus,
       machineApiImage,
+      lastRun: meta,
     });
   });
 
@@ -514,14 +546,17 @@ export function registerOgeRoutes(app: Express) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     await bustCache();
-    triggerPipeline();
+    triggerPipeline("admin-refresh");
     res.json({ ok: true, message: "Cache cleared — pipeline running in background" });
   });
 
   app.get("/api/oge/trump-transactions", async (_req, res) => {
     const cached = await getCached();
     if (cached) {
-      const pipelineRanAt = memCache ? new Date(memCache.ts).toISOString() : new Date().toISOString();
+      // meta is only absent for cache entries written before this field existed —
+      // falls back to the old (less accurate) "when this machine loaded it" timestamp.
+      const meta = await getMeta();
+      const pipelineRanAt = meta?.lastRunAt ?? (memCache ? new Date(memCache.ts).toISOString() : new Date().toISOString());
       res.set("Cache-Control", "public, max-age=302400, stale-while-revalidate=604800"); // 3.5d / 7d SWR
       return res.json({ transactions: cached, total: cached.length, lastUpdated: pipelineRanAt });
     }
@@ -531,7 +566,7 @@ export function registerOgeRoutes(app: Express) {
     }
 
     // Should not reach here normally — startup already triggered the pipeline.
-    triggerPipeline();
+    triggerPipeline("get-miss");
     res.json({ transactions: [], total: 0, loading: true, lastUpdated: null });
   });
 }

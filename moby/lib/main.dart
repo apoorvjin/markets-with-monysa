@@ -51,10 +51,23 @@ void main() async {
     PushNotificationService.init().catchError((_) {});
   }
 
+  // One-time migration: force every existing user onto the In-House renderer,
+  // overriding a previously saved Yahoo/TradingView choice. Guarded by a flag
+  // so it fires exactly once — users remain free to switch back afterward.
+  if (!(prefs.getBool('chart_provider_inhouse_migrated') ?? false)) {
+    await prefs.setString('chart_provider', 'inhouse');
+    await prefs.setBool('chart_provider_inhouse_migrated', true);
+    // Push to Firestore too so the cloud copy (restored by
+    // seedPrefsFromFirestore on launch) doesn't re-apply a stale choice.
+    FirestoreService.updatePrefs({'chartProvider': 'inhouse'});
+  }
+
   // Seed the chart renderer so the Dio interceptor stamps the correct
   // X-Chart-Renderer header on the very first request.
   final savedRenderer = prefs.getString('chart_provider');
-  if (savedRenderer == 'tradingview' || savedRenderer == 'inhouse') {
+  if (savedRenderer == 'yahoo' ||
+      savedRenderer == 'tradingview' ||
+      savedRenderer == 'inhouse') {
     currentChartRenderer = savedRenderer!;
   }
 

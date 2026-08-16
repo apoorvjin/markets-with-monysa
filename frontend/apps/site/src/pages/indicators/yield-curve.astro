@@ -1,0 +1,57 @@
+---
+import DataPage from "../../layouts/DataPage.astro";
+import { fetchJson } from "../../lib/api";
+import type { FaqItem } from "../../components/Faq.astro";
+
+interface Bonds {
+  us3m: number; us5y: number; us10y: number; us30y: number;
+  spread3m10y: number; curveStatus: string; lastUpdated?: string;
+}
+const b = await fetchJson<Bonds>("/api/bonds");
+const status = b.curveStatus.charAt(0).toUpperCase() + b.curveStatus.slice(1);
+const inverted = b.curveStatus.toLowerCase() === "inverted";
+const spreadStr = `${b.spread3m10y > 0 ? "+" : ""}${b.spread3m10y.toFixed(2)}%`;
+const updated = b.lastUpdated ? new Date(b.lastUpdated).toISOString().slice(0, 10) : undefined;
+
+const title = `Is the Yield Curve Inverted? Live US Treasury Curve (${status}) | FinBrio`;
+const description = `The US Treasury yield curve is currently ${status.toLowerCase()} — 3-month ${b.us3m}%, 10-year ${b.us10y}%, 3M/10Y spread ${spreadStr}. What an inverted curve signals for recession risk, updated live.`;
+
+const faqItems: FaqItem[] = [
+  { q: "Is the yield curve inverted right now?", a: `No — the US yield curve is currently ${status.toLowerCase()}. The 3-month yield is ${b.us3m}% and the 10-year is ${b.us10y}%, a spread of ${spreadStr}. ${inverted ? "An inverted curve (short rates above long rates) has preceded most US recessions." : "The curve inverts when short-term rates rise above long-term rates — historically a recession warning."}` },
+  { q: "What is the 3-month/10-year spread?", a: `The 3M/10Y spread is the 10-year Treasury yield minus the 3-month yield — currently ${spreadStr}. It's the spread the Federal Reserve watches most closely as a recession signal; a negative value means the curve is inverted.` },
+  { q: "Why does an inverted yield curve matter?", a: "An inversion means investors expect the Fed to cut rates in the future — usually because they see a slowdown coming. It has preceded nearly every US recession in modern history, though the lag between inversion and recession varies widely." },
+];
+---
+
+<DataPage
+  title={title}
+  description={description}
+  ogTitle={`US Yield Curve: ${status}`}
+  ogDescription={`3M ${b.us3m}% · 10Y ${b.us10y}% · 3M/10Y spread ${spreadStr}. The recession signal, live.`}
+  ogImage="/og/yield-curve.png"
+  eyebrow="Macro Indicator"
+  h1="Is the yield curve inverted?"
+  lead={`The US Treasury yield curve is the market's clearest recession barometer. Right now it is ${status.toLowerCase()}.`}
+  updated={updated ? `Updated ${updated} · source: US Treasury` : "Source: US Treasury"}
+  crumbLabel="Yield Curve"
+  crumbPath="/indicators/yield-curve"
+  faqItems={faqItems}
+  ctaHeading="Track the yield curve — and what it means — live"
+  ctaBody="FinBrio charts the full curve with a year of inversion history, plus the stress meter and crisis playbook that put it in context. Free on iOS and the web."
+>
+  <div class="dp-metrics">
+    <div class="dp-metric"><div class="dp-metric__value">{b.us3m}%</div><div class="dp-metric__label">3-month</div></div>
+    <div class="dp-metric"><div class="dp-metric__value">{b.us5y}%</div><div class="dp-metric__label">5-year</div></div>
+    <div class="dp-metric"><div class="dp-metric__value">{b.us10y}%</div><div class="dp-metric__label">10-year</div></div>
+    <div class="dp-metric"><div class="dp-metric__value">{b.us30y}%</div><div class="dp-metric__label">30-year</div></div>
+  </div>
+  <div class="dp-metrics">
+    <div class="dp-metric"><div class={`dp-metric__value ${inverted ? "dp-metric__value--danger" : "dp-metric__value--accent"}`}>{spreadStr}</div><div class="dp-metric__label">3M / 10Y spread</div></div>
+    <div class="dp-metric"><div class={`dp-metric__value ${inverted ? "dp-metric__value--danger" : "dp-metric__value--accent"}`}>{status}</div><div class="dp-metric__label">Curve status</div></div>
+  </div>
+
+  <section class="dp-prose dp-block">
+    <p>The yield curve plots US Treasury interest rates from 3 months to 30 years. Normally longer bonds pay more (an upward slope). When short-term yields rise <em>above</em> long-term yields, the curve "inverts" — a sign the market expects rate cuts, usually because a slowdown is coming.</p>
+    <p>The 3-month/10-year spread is the version the Fed's own research favours as a recession predictor. FinBrio tracks it live with a full year of history, so you can see not just today's reading but the trend into it.</p>
+  </section>
+</DataPage>

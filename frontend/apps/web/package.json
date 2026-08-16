@@ -22,6 +22,8 @@
     "@tanstack/react-query-persist-client": "^5.62.0",
     "@tanstack/react-router": "^1.95.0",
     "cmdk": "^1.0.4",
+    "firebase": "^11.1.0",
+    "maplibre-gl": "^6.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

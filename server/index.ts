@@ -7,6 +7,13 @@ import { join } from "node:path";
 import { registerRoutes } from "./routes";
 import { parseChartRenderer } from "./lib/chart-renderer";
 import { startLeaderElection, machineId } from "./lib/leader";
+// Static (not dynamic import()) so these share the SAME plan-enforcement module
+// instance — and thus the SAME devicePlanMap — as the statically-imported routes
+// (auth `/api/me`, billing webhook). Under tsx, a dynamic import() resolves into a
+// separate module registry, which previously created a second devicePlanMap that
+// the boot seed + admin override wrote while `/api/me` read the (empty) static one.
+import { loadPlansFromFirestore } from "./plan-enforcement";
+import { registerAdminRoutes } from "./routes/admin";
 
 const app = express();
 const log = console.log;
@@ -164,10 +171,20 @@ function setupRateLimiting(app: express.Application) {
     message: { error: "Too many verification email requests. Please wait." },
   });
 
+  // Verifies a Firebase ID token per call — cheap but should not be hammered.
+  const meLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many identity requests. Please slow down." },
+  });
+
   app.use("/api", generalLimiter);
   app.use("/api/trading/signals", signalsLimiter);
   app.use("/api/volatility/briefing", briefingLimiter);
   app.use("/api/auth/send-verification-email", verificationEmailLimiter);
+  app.use("/api/me", meLimiter);
 }
 
 // Routes protected by HMAC signing — the expensive / AI-backed endpoints.
@@ -401,10 +418,8 @@ function setupErrorHandler(app: express.Application) {
   });
 
   // Seed in-process plan cache from Firestore so plans survive server restarts.
-  const { loadPlansFromFirestore } = await import("./plan-enforcement");
   await loadPlansFromFirestore();
 
-  const { registerAdminRoutes } = await import("./routes/admin");
   registerAdminRoutes(app);
 
   const { registerSocialBuzzRoutes } = await import("./routes/social-buzz");
@@ -446,6 +461,10 @@ function setupErrorHandler(app: express.Application) {
   // Start VIX term-structure regime-change notifier (leader-only; sends FCM topic push).
   const { startRegimeChangeNotifier } = await import("./lib/regime-change-notifier");
   startRegimeChangeNotifier();
+
+  // Start SPLC (Supply Chain Analysis) nightly batch (leader-only; requires Firestore).
+  const { startSplcJobs } = await import("./lib/splc/derivation-batch");
+  startSplcJobs();
 
   // Start the "market buzz" social-posting poller (leader-only; Instagram
   // auto-publish gated behind SOCIAL_BUZZ_AUTO_PUBLISH_ENABLED, X is always

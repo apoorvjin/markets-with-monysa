@@ -1,0 +1,82 @@
+---
+import DataPage from "../layouts/DataPage.astro";
+import { fetchJson } from "../lib/api";
+import type { FaqItem } from "../components/Faq.astro";
+
+interface Debt {
+  recordDate?: string;
+  totalDebtFormatted?: string;
+  debtPerCitizen?: string;
+  debtToGdpRatio?: string | null;
+  dailyIncrease?: string;
+  debtGrowth20yr?: string;
+  annualDeficit?: string;
+  interestPayments?: string;
+  fiscalYtdLabel?: string;
+}
+const d = await fetchJson<Debt>("/api/usa-debt");
+const total = d.totalDebtFormatted ?? "—";
+const perCitizen = d.debtPerCitizen ?? "—";
+const daily = d.dailyIncrease ?? "—";
+
+const title = `US National Debt Clock — Live Total (${total}) | FinBrio`;
+const description = `The US national debt is ${total} (${perCitizen} per citizen), changing ${daily} today. Live from the US Treasury — deficit, interest and 20-year growth, explained.`;
+
+const faqItems: FaqItem[] = [
+  { q: "What is the US national debt right now?", a: `The total US national debt is ${total}${d.recordDate ? ` as of ${d.recordDate}` : ""}, sourced live from the US Treasury's FiscalData API.` },
+  { q: "How much is the US debt per citizen?", a: `About ${perCitizen} per citizen. Over the last 20 years the debt has grown by ${d.debtGrowth20yr ?? "—"}.` },
+  { q: "Where does FinBrio's debt data come from?", a: "The debt total and daily change come from the US Treasury's FiscalData 'Debt to the Penny' dataset; deficit, spending and interest figures come from the Treasury's Monthly Treasury Statement (fiscal-year-to-date)." },
+];
+---
+
+<DataPage
+  title={title}
+  description={description}
+  ogTitle={`US National Debt: ${total}`}
+  ogDescription={`${perCitizen} per citizen · ${daily} today · live from the US Treasury.`}
+  ogImage="/og/us-debt-clock.png"
+  eyebrow="US Debt Clock"
+  h1="US National Debt Clock"
+  lead="The total US federal debt, live from the US Treasury's own data — with the context most debt clocks skip: per-citizen share, 20-year growth, and the fiscal-year deficit and interest bill."
+  updated={d.recordDate ? `Updated ${d.recordDate} · source: US Treasury FiscalData` : "Source: US Treasury FiscalData"}
+  crumbLabel="US Debt Clock"
+  crumbPath="/us-debt-clock"
+  faqItems={faqItems}
+  ctaHeading="Watch the debt clock tick — live, free"
+  ctaBody="FinBrio's US debt clock updates from the Treasury in real time, alongside the macro dashboard pros watch. Free on iOS and the web."
+>
+  <div class="dp-metrics">
+    <div class="dp-metric">
+      <div class="dp-metric__value dp-metric__value--danger">{total}</div>
+      <div class="dp-metric__label">Total national debt</div>
+    </div>
+    <div class="dp-metric">
+      <div class="dp-metric__value">{perCitizen}</div>
+      <div class="dp-metric__label">Per citizen</div>
+    </div>
+    <div class="dp-metric">
+      <div class="dp-metric__value dp-metric__value--warn">{daily}</div>
+      <div class="dp-metric__label">Change today</div>
+    </div>
+  </div>
+
+  <div class="dp-metrics">
+    {d.debtToGdpRatio && (
+      <div class="dp-metric"><div class="dp-metric__value">{d.debtToGdpRatio}</div><div class="dp-metric__label">Debt-to-GDP</div></div>
+    )}
+    {d.annualDeficit && (
+      <div class="dp-metric"><div class="dp-metric__value">{d.annualDeficit}</div><div class="dp-metric__label">Deficit ({d.fiscalYtdLabel ?? "fiscal YTD"})</div></div>
+    )}
+    {d.interestPayments && (
+      <div class="dp-metric"><div class="dp-metric__value">{d.interestPayments}</div><div class="dp-metric__label">Interest paid (fiscal YTD)</div></div>
+    )}
+    {d.debtGrowth20yr && (
+      <div class="dp-metric"><div class="dp-metric__value">{d.debtGrowth20yr}</div><div class="dp-metric__label">20-year growth</div></div>
+    )}
+  </div>
+
+  <section class="dp-prose dp-block">
+    <p>The US national debt is the total the federal government owes to bondholders — from individual savers to foreign central banks. It grows whenever the government spends more than it collects, and the gap (the deficit) is financed by issuing Treasury securities.</p>
+    <p>Two numbers matter more than the headline total: the <strong>interest bill</strong> (rising fast as older, cheaper debt rolls into higher rates) and <strong>debt-to-GDP</strong> (the debt relative to the size of the economy). FinBrio tracks all of them live, with the yield curve and macro-stress context that explains <em>why</em> they're moving.</p>
+  </section>
+</DataPage>

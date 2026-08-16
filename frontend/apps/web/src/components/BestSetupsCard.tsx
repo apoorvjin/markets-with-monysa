@@ -12,12 +12,14 @@ import {
   SkeletonList,
 } from "@monysa/ui";
 import { api } from "../lib/api";
+import { useIsPro } from "../lib/session";
 
 /** Best Setups (scanner backtest win-rate filter) — mirrors
     best_setups_card.dart. cacheWarm:false → keep polling every 30s.
-    Pro-gated on mobile (`best_setups`); web has no auth/purchase flow, so
-    this renders as a permanent blurred teaser for every visitor. */
+    Pro-gated on mobile (`best_setups`); web reveals it to signed-in Pro users
+    and shows a blurred teaser to everyone else. */
 export function BestSetupsCard() {
+  const isPro = useIsPro();
   const [version, setVersion] = useState<"v1" | "v2">("v1");
 
   const { data, isLoading } = useQuery({
@@ -32,8 +34,12 @@ export function BestSetupsCard() {
       <div className="page-header">
         <strong>Best Setups</strong>
         <ChipRow>
-          <Chip label="v1" active={version === "v1"} onClick={() => setVersion("v1")} />
-          <Chip label="v2" active={version === "v2"} onClick={() => setVersion("v2")} />
+          <Chip label="Early Setup" active={version === "v1"} onClick={() => setVersion("v1")} />
+          <Chip
+            label="Confirmed Breakout"
+            active={version === "v2"}
+            onClick={() => setVersion("v2")}
+          />
         </ChipRow>
       </div>
       {isLoading || !data ? (
@@ -43,7 +49,7 @@ export function BestSetupsCard() {
           Computing setups on the server — this refreshes automatically.
         </div>
       ) : (
-        <ProBlur positive={(data.setups[0]?.avgReturn3m ?? 0) >= 0} className="best-setups-blur">
+        <ProBlur positive={(data.setups[0]?.avgReturn3m ?? 0) >= 0} unlocked={isPro} className="best-setups-blur">
           <div className="tbl-wrap" style={{ marginTop: "var(--s3)" }}>
             <table className="tbl">
               <thead>

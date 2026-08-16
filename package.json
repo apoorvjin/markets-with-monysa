@@ -20,12 +20,14 @@
     "p-limit": "^7.3.0",
     "pdf-parse": "^2.4.5",
     "tsx": "^4.20.6",
+    "unzipper": "^0.12.5",
     "ws": "^8.18.0",
     "zod": "^3.25.76",
     "zod-validation-error": "^3.5.4"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
+    "@types/unzipper": "^0.10.11",
     "eslint": "^9.31.0",
     "typescript": "~5.9.2"
   },

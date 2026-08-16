@@ -9,12 +9,14 @@ import '../../features/markets/markets_screen.dart';
 import '../../features/trading/trading_screen.dart';
 import '../../features/investing/investing_screen.dart';
 import '../../features/volatility/volatility_screen.dart';
+import '../../features/wire/wire_screen.dart';
 import '../../features/country/country_detail_screen.dart';
 import '../../features/country/country_stocks_screen.dart';
 import '../../features/asset/asset_detail_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/trading/tenx_backtest_screen.dart';
 import '../../features/investing/multibaggers_screen.dart';
+import '../../services/remote_config_service.dart';
 import '../../app.dart';
 
 final appRouter = GoRouter(
@@ -50,6 +52,10 @@ final appRouter = GoRouter(
     if (loc == '/volatility') return '/macro';
     if (loc == '/exposure') return '/investing';
     if (loc == '/debt') return '/macro';
+
+    // Wire is a remote-config kill-switch — bounce away when disabled
+    // (covers restored lastTab='/wire' and stale deep links).
+    if (loc == '/wire' && !RemoteConfigService.wireEnabled) return '/markets';
 
     return null;
   },
@@ -96,6 +102,10 @@ final appRouter = GoRouter(
           builder: (_, __) => const MacroScreen(),
         ),
         GoRoute(
+          path: '/wire',
+          builder: (_, __) => const WireScreen(),
+        ),
+        GoRoute(
           path: '/profile',
           builder: (_, __) => const ProfileScreen(),
         ),
@@ -124,6 +134,7 @@ final appRouter = GoRouter(
           builder: (_, state) => TenXBacktestScreen(
             version: state.uri.queryParameters['version'] ?? 'v1',
             type: state.uri.queryParameters['type'] ?? 'assets',
+            source: state.uri.queryParameters['source'],
           ),
         ),
         GoRoute(

@@ -18,6 +18,12 @@ import { usgsQuakesAdapter } from "../adapters/hazards/usgs-quakes.js";
 import { polymarketAdapter } from "../adapters/hazards/polymarket.js";
 import { ngaMsiAdapter } from "../adapters/maritime/nga-msi.js";
 import { faaNasAdapter } from "../adapters/aviation/faa-nas.js";
+import { osmOverpassAdapter } from "../adapters/datacenters/osm-overpass.js";
+import {
+  interconnectionFyiIndexAdapter,
+  interconnectionFyiRegionAdapter,
+} from "../adapters/datacenters/interconnection-fyi.js";
+import { geocodeCounty } from "../adapters/datacenters/geocode-county.js";
 
 // Adapters that take no params.
 const NO_PARAM: Record<string, SourceAdapter<Record<string, never>, unknown>> = {
@@ -25,6 +31,8 @@ const NO_PARAM: Record<string, SourceAdapter<Record<string, never>, unknown>> = 
   polymarket: polymarketAdapter,
   "nga-msi": ngaMsiAdapter,
   "faa-nas": faaNasAdapter,
+  "osm-datacenters": osmOverpassAdapter,
+  "interconnection-index": interconnectionFyiIndexAdapter,
 };
 
 function arg(name: string): string | undefined {
@@ -61,6 +69,29 @@ async function main() {
     return;
   }
 
+  if (cmd === "interconnection-region") {
+    const region = arg("region");
+    if (!region) {
+      console.error("usage: try.ts interconnection-region --region VA");
+      process.exit(1);
+    }
+    const items = await runAdapter(interconnectionFyiRegionAdapter, { region });
+    console.log(JSON.stringify(items.slice(0, 8), null, 2));
+    console.log(`\n${items.length} projects from ${region}`);
+    return;
+  }
+
+  if (cmd === "geocode-county") {
+    const county = arg("county");
+    const region = arg("region");
+    if (!county || !region) {
+      console.error("usage: try.ts geocode-county --county Loudoun --region VA");
+      process.exit(1);
+    }
+    console.log(await geocodeCounty(county, region));
+    return;
+  }
+
   if (cmd && NO_PARAM[cmd]) {
     const items = await runAdapter(NO_PARAM[cmd]!, {});
     console.log(JSON.stringify(items.slice(0, 8), null, 2));
@@ -69,7 +100,7 @@ async function main() {
   }
 
   console.error(
-    `unknown command: ${cmd ?? "(none)"} — try: rss | feeds | ${Object.keys(NO_PARAM).join(" | ")}`,
+    `unknown command: ${cmd ?? "(none)"} — try: rss | feeds | interconnection-region | geocode-county | ${Object.keys(NO_PARAM).join(" | ")}`,
   );
   process.exit(1);
 }
