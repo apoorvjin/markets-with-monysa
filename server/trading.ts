@@ -251,6 +251,28 @@ function priceTypeFor(symbol: string): "spot" | "futures" | null {
   return null; // indices / crypto / forex — no tag
 }
 
+/** Which series a signal's candles came from. */
+export type CandleSource = "spot" | "yahoo";
+
+/**
+ * The candle series a signal is computed on, plus which source it came from. For
+ * spot-overlay symbols on the daily timeframe this is real SPOT history rather than Yahoo
+ * futures, so the signal stays internally consistent with the spot entry price; every
+ * other case falls back to the Yahoo series.
+ *
+ * Exported because the signal ledger must capture AND resolve a trade against the same
+ * source — scoring a spot-priced entry against futures candles silently corrupts every
+ * exit it detects.
+ */
+export async function resolveSignalCandles(
+  symbol: string,
+  tf: Timeframe,
+): Promise<{ candles: OHLCV[]; source: CandleSource }> {
+  const spotCandles = tf === "1d" ? spotDailyCandles.get(symbol) : undefined;
+  if (spotCandles && spotCandles.length >= 30) return { candles: spotCandles, source: "spot" };
+  return { candles: await fetchHistory(symbol, tf), source: "yahoo" };
+}
+
 let _lastPollAt: number | null = null;
 let _finnhubConnected = false;
 
@@ -3130,13 +3152,7 @@ export async function generateSignal(
   const cached = signalCache.get(cacheKey);
   if (!bypassCache && cached && Date.now() - cached.ts < SIGNAL_TTL) return cached.data;
 
-  // For spot-overlay symbols on the daily timeframe, compute on real SPOT candles (not
-  // Yahoo futures) so the signal is internally consistent with the spot entry price.
-  // Other timeframes lack a pre-fetched spot series → fall back to the futures candles.
-  const spotCandles = tf === "1d" ? spotDailyCandles.get(symbol) : undefined;
-  const candles = spotCandles && spotCandles.length >= 30
-    ? spotCandles
-    : await fetchHistory(symbol, tf);
+  const { candles } = await resolveSignalCandles(symbol, tf);
   if (candles.length < 30) return null;
 
   const ind = calculateIndicators(candles);

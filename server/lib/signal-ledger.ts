@@ -19,6 +19,7 @@ import {
   TRADING_ASSETS,
   generateSignal,
   fetchHistory,
+  resolveSignalCandles,
   btMaxHold,
   CROSS_ASSET_PAIRS,
   CROSS_ASSET_PAIRS_PLUS,
@@ -26,8 +27,11 @@ import {
   APEX_STRATEGY_IDS,
   type Timeframe,
   type StrategyId,
+  type CandleSource,
   type OHLCV,
 } from "../trading";
+
+const r4 = (n: number) => Math.round(n * 10000) / 10000;
 
 // ── Versioning ─────────────────────────────────────────────────────────────
 // Bump for a strategy id whenever its scoring/threshold/SL-TP logic changes
@@ -37,9 +41,13 @@ import {
 // never blended in. The resolution job never reads this constant — it only
 // ever acts on whatever seriesKey is already stored on each open entry, so a
 // bump needs no migration step anywhere else.
+// v2 (2026-08-19): entries are now anchored to the entry bar's close rather than the live
+// quote, and are resolved against the same candle source they were captured on. v1 is not
+// comparable — ~15% of its entries priced the trade off a bar it was never measured against
+// (24h futures moved on before the daily bar closed) and resolved at a 0% win rate.
 export const STRATEGY_LOGIC_VERSION: Record<StrategyId, number> = {
-  "1": 1, "2": 1, "3": 1, "4": 1, "5": 1, "6": 1, "7": 1, "8": 1, "9": 1,
-  "10": 1, "11": 1, "12": 1, "13": 1, "14": 1, "15": 1, "16": 1, "17": 1, "18": 1,
+  "1": 2, "2": 2, "3": 2, "4": 2, "5": 2, "6": 2, "7": 2, "8": 2, "9": 2,
+  "10": 2, "11": 2, "12": 2, "13": 2, "14": 2, "15": 2, "16": 2, "17": 2, "18": 2,
 };
 
 const LEDGER_TF: Timeframe = "1d"; // V1 scope — see plan for reasoning
@@ -70,6 +78,7 @@ interface SignalLedgerEntry {
   confidence: number;
   barDate: string;
   capturedAt: string;
+  candleSource: CandleSource;
   maxHoldBars: number;
   status: "open" | "resolved";
   resolvedAt: string | null;
@@ -129,18 +138,32 @@ export async function captureSignalsForLedger(): Promise<void> {
         );
         if (!signal || signal.direction === "HOLD") { skipped++; continue; }
 
-        const candles = await fetchHistory(symbol, LEDGER_TF); // cache hit after the first strategy for this symbol
+        // Same helper generateSignal used, so the trade is measured against the exact
+        // series it was decided on. Cache hit after the first strategy for this symbol.
+        const { candles, source } = await resolveSignalCandles(symbol, LEDGER_TF);
         if (candles.length === 0) { skipped++; continue; }
-        const barDate = new Date(candles[candles.length - 1].time * 1000).toISOString().slice(0, 10);
+        const lastBar = candles[candles.length - 1];
+        const barDate = new Date(lastBar.time * 1000).toISOString().slice(0, 10);
         const version = STRATEGY_LOGIC_VERSION[strategyId];
+
+        // Anchor the trade to the entry bar's close instead of signal.entry (the live
+        // quote). For 24h-traded futures the live quote at capture time can sit well
+        // outside the last daily bar, leaving SL/TP misaligned with the very candles the
+        // resolver scans — in v1 that hit ~15% of entries and every one of them lost.
+        // SL/TP are absolute ATR offsets (buildRiskLevels), so shifting all three by the
+        // same delta re-anchors the trade while preserving its R:R exactly.
+        const shift = lastBar.close - signal.entry;
 
         const entry: SignalLedgerEntry = {
           symbol, strategyId, strategyVersion: version, timeframe: LEDGER_TF,
           seriesKey: ledgerSeriesKey(strategyId, LEDGER_TF, version),
           direction: signal.direction as "BUY" | "SELL",
-          entryPrice: signal.entry, stopLoss: signal.stopLoss, takeProfit: signal.takeProfit,
+          entryPrice: r4(lastBar.close),
+          stopLoss: r4(signal.stopLoss + shift),
+          takeProfit: r4(signal.takeProfit + shift),
           confidence: signal.confidence,
           barDate, capturedAt: new Date().toISOString(),
+          candleSource: source,
           maxHoldBars: btMaxHold(LEDGER_TF),
           status: "open",
           resolvedAt: null, exitPrice: null, exitReason: null, holdBars: null, returnPct: null, win: null,
@@ -188,8 +211,9 @@ export async function resolveOpenLedgerEntries(): Promise<void> {
 
   for (const [symbol, docs] of bySymbol) {
     let candles: OHLCV[];
+    let source: CandleSource;
     try {
-      candles = await fetchHistory(symbol, LEDGER_TF);
+      ({ candles, source } = await resolveSignalCandles(symbol, LEDGER_TF));
     } catch {
       errored += docs.length;
       continue;
@@ -202,6 +226,9 @@ export async function resolveOpenLedgerEntries(): Promise<void> {
     for (const doc of docs) {
       try {
         const d = doc.data() as SignalLedgerEntry;
+        // Never score a trade against a series it wasn't priced on. Legacy v1 entries
+        // predate this field and stay on the old behaviour so they can still close out.
+        if (d.candleSource && d.candleSource !== source) { stillOpen++; continue; }
         const idx = dateIndex.get(d.barDate);
         if (idx === undefined) { stillOpen++; continue; } // entry's bar not in this fetch's window yet
 
@@ -227,10 +254,23 @@ export async function resolveOpenLedgerEntries(): Promise<void> {
           returnPct,
           win,
         });
+        // Commutative counters only — everything here must survive arriving in any order.
+        // Win rate, avg return, avg win/loss and profit factor all derive from these.
+        // Max drawdown deliberately does NOT live here: it is path-dependent, so it has to
+        // be computed at read time over signal_ledger ordered by resolvedAt.
+        // exitTIMEOUT === 0 means no cohort has run its full maxHoldBars yet, i.e. the
+        // sample is still censored toward whichever barrier sits nearer the entry.
         await db.collection("signal_ledger_stats").doc(d.seriesKey).set({
           trades: FieldValue.increment(1),
           wins: FieldValue.increment(win ? 1 : 0),
+          losses: FieldValue.increment(win ? 0 : 1),
           sumReturnPct: FieldValue.increment(returnPct),
+          sumWinPct: FieldValue.increment(win ? returnPct : 0),
+          sumLossPct: FieldValue.increment(win ? 0 : returnPct),
+          sumHoldBars: FieldValue.increment(result.holdBars),
+          exitSL: FieldValue.increment(result.exitReason === "SL" ? 1 : 0),
+          exitTP: FieldValue.increment(result.exitReason === "TP" ? 1 : 0),
+          exitTIMEOUT: FieldValue.increment(result.exitReason === "TIMEOUT" ? 1 : 0),
           lastResolvedAt: new Date().toISOString(),
         }, { merge: true });
         resolved++;
