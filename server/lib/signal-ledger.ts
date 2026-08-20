@@ -143,6 +143,14 @@ export async function captureSignalsForLedger(): Promise<void> {
         const { candles, source } = await resolveSignalCandles(symbol, LEDGER_TF);
         if (candles.length === 0) { skipped++; continue; }
         const lastBar = candles[candles.length - 1];
+
+        // Yahoo occasionally serves a malformed in-progress bar — observed on CT=F, where
+        // the live price is stitched onto stale H/L, leaving close above high and open
+        // below low. Anchoring to a bar that violates its own OHLC invariant would put
+        // SL/TP on levels the series never supports, so skip rather than record a trade
+        // we cannot honestly resolve later.
+        if (!(lastBar.low <= lastBar.close && lastBar.close <= lastBar.high)) { skipped++; continue; }
+
         const barDate = new Date(lastBar.time * 1000).toISOString().slice(0, 10);
         const version = STRATEGY_LOGIC_VERSION[strategyId];
 
