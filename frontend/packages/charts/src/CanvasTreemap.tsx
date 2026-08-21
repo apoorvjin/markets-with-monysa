@@ -112,8 +112,10 @@ const NEUTRAL: [number, number, number] = [42, 46, 57];
 const UP = hexToRgb("#00d4aa");
 const DOWN = hexToRgb("#ff4d6a");
 
-/** Diverging color: clamp change to ±3% like Finviz-style maps. */
-function tileColor(change: number): string {
+/** Diverging color: clamp change to ±3% like Finviz-style maps. Exported so a
+    legend can be built from the same function the tiles are painted with — a
+    hand-copied swatch list silently lies the moment this scale changes. */
+export function tileColor(change: number): string {
   const t = Math.max(-1, Math.min(1, change / 3));
   if (t >= 0) return mix(NEUTRAL, UP, t * 0.85);
   return mix(NEUTRAL, DOWN, -t * 0.85);

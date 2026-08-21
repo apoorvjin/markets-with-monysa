@@ -4,8 +4,12 @@ export function Sparkline(props: {
   points: number[];
   width?: number;
   height?: number;
-  /** defaults to positive/danger token by trend */
+  /** Concrete CSS color. Canvas strokeStyle cannot resolve `var(--token)`, so
+      pass `positive` instead of a variable reference to tint by token. */
   color?: string;
+  /** Overrides the trend-derived tint with an explicit gain/loss, for callers
+      that colour by today's % change rather than the window's own direction. */
+  positive?: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const w = props.width ?? 96;
@@ -27,7 +31,7 @@ export function Sparkline(props: {
 
     const first = pts[0]!;
     const last = pts[pts.length - 1]!;
-    const trendUp = last >= first;
+    const trendUp = props.positive ?? last >= first;
     const styles = getComputedStyle(document.documentElement);
     const color =
       props.color ??
@@ -49,7 +53,7 @@ export function Sparkline(props: {
     ctx.lineWidth = 1.5;
     ctx.lineJoin = "round";
     ctx.stroke();
-  }, [props.points, props.color, w, h]);
+  }, [props.points, props.color, props.positive, w, h]);
 
   return <canvas ref={ref} style={{ width: w, height: h, display: "block" }} />;
 }

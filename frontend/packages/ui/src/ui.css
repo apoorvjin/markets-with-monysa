@@ -110,6 +110,46 @@
   align-items: center;
   padding: var(--s2) var(--s4);
 }
+/* Row- and label-width teasers get a light scrim + a small lock chip instead
+   of the 55% colour wash the inline chips use. Across a 40-row forex table or
+   a COT category, the saturated fill turned every gated row into what looked
+   like a solid button, and the page read as a stack of CTAs rather than data.
+   Scoped to these two Markets classes — the inline ETF/correlation teasers
+   elsewhere keep the original treatment. */
+.pro-blur.best-setups-blur .pro-blur-overlay,
+.pro-blur.sector-setups-blur .pro-blur-overlay,
+.pro-blur.signals-advanced-blur .pro-blur-overlay,
+.pro-blur.cftc-row-blur .pro-blur-overlay,
+.pro-blur.fx-diff-blur .pro-blur-overlay {
+  justify-content: flex-start;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  color: var(--text-secondary);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.pro-blur.best-setups-blur .pro-blur-overlay::before,
+.pro-blur.sector-setups-blur .pro-blur-overlay::before,
+.pro-blur.signals-advanced-blur .pro-blur-overlay::before,
+.pro-blur.cftc-row-blur .pro-blur-overlay::before,
+.pro-blur.fx-diff-blur .pro-blur-overlay::before {
+  content: "\1F512";
+  margin-right: 5px;
+  font-size: 10px;
+}
+.pro-blur.cftc-row-blur .pro-blur-overlay,
+.pro-blur.best-setups-blur .pro-blur-overlay,
+.pro-blur.sector-setups-blur .pro-blur-overlay,
+.pro-blur.signals-advanced-blur .pro-blur-overlay {
+  justify-content: center;
+}
+/* These three sit over tall blocks, so the label must ride near the top
+   rather than centring somewhere down the blurred content. */
+.pro-blur.best-setups-blur .pro-blur-overlay,
+.pro-blur.sector-setups-blur .pro-blur-overlay,
+.pro-blur.signals-advanced-blur .pro-blur-overlay {
+  align-items: flex-start;
+  padding-top: var(--s7);
+}
 .pro-blur.treemap-blur {
   display: flex;
   width: 100%;
@@ -229,36 +269,6 @@
 
 /* ── Shimmer primitives (shared brand polish, ported from the marketing site) ── */
 
-/* Opt-in gradient surface + ambient glow, for featured panels/cards. */
-.ui-glow-card {
-  position: relative;
-  overflow: visible; /* the ::before glow bleeds outside the box — must not be clipped */
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--text-primary) 5%, transparent),
-    color-mix(in srgb, var(--text-primary) 2%, transparent)
-  );
-  backdrop-filter: blur(8px);
-  transition: transform 150ms ease, box-shadow 150ms ease;
-}
-.ui-glow-card::before {
-  content: "";
-  position: absolute;
-  inset: -14%;
-  z-index: -1;
-  background: radial-gradient(
-    ellipse at 50% 20%,
-    color-mix(in srgb, var(--accent) 22%, transparent),
-    transparent 68%
-  );
-  filter: blur(26px);
-  pointer-events: none;
-}
-.ui-glow-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
 /* Pulsing live-data dot. */
 .ui-live-dot {
   display: inline-block;
@@ -305,7 +315,6 @@
 @media (prefers-reduced-motion: reduce) {
   .ui-live-dot { animation: none; }
   .ui-enter { animation: none; }
-  .ui-glow-card { transition: none; }
 }
 
 /* ── Dashboard metric card ─────────────────────────────────────────────── */

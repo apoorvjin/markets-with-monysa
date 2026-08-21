@@ -359,6 +359,8 @@ export const CotResponse = z
     energy: z.array(CotItem).default([]),
     agriculture: z.array(CotItem).default([]),
     regionalFlows: z.array(RegionalFlowGroup).default([]),
+    /** Week of the CFTC report every COT row in this payload came from. */
+    reportDate: z.string().nullish(),
     lastUpdated: z.string().nullish(),
   })
   .passthrough();

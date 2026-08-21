@@ -10,6 +10,16 @@ export const MarketItem = z
     openTime: z.string().nullish(),
     tz: z.string().nullish(),
     currency: z.string().nullish(),
+    /** MSCI-style broad region tier (indices) / group (commodities, forex) —
+        drives the grouped-by-category list, mirroring the Flutter tabs. */
+    category: z.string().nullish(),
+    /** Quote unit, commodities only (e.g. "per troy oz"). */
+    unit: z.string().nullish(),
+    base: z.string().nullish(),
+    quote: z.string().nullish(),
+    /** 1-month daily closes — indices and commodities only; forex never
+        fetches this server-side, so the row falls back to a flat layout. */
+    sparkline: z.array(z.number()).nullish(),
     price: z.number().nullish(),
     change: z.number().nullish(),
     changePercent: z.number().nullish(),

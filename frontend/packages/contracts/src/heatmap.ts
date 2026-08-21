@@ -47,27 +47,29 @@ export const TreemapResponse = z.object({
 });
 export type TreemapResponse = z.infer<typeof TreemapResponse>;
 
+/** `region` groups the selector chips on web; mobile keeps a flat list. */
 export const TREEMAP_INDICES = [
-  { param: "sp500", label: "S&P 500" },
-  { param: "ndx", label: "NASDAQ 100" },
-  { param: "dji", label: "Dow Jones" },
-  { param: "russell2000", label: "Russell 2000" },
-  { param: "ftse100", label: "FTSE 100" },
-  { param: "dax40", label: "DAX 40" },
-  { param: "nikkei225", label: "Nikkei 225" },
-  { param: "hsi", label: "Hang Seng" },
-  { param: "nifty50", label: "Nifty 50" },
+  { param: "sp500", label: "🇺🇸 S&P 500", region: "Americas" },
+  { param: "ndx", label: "🇺🇸 NASDAQ 100", region: "Americas" },
+  { param: "dji", label: "🇺🇸 Dow Jones", region: "Americas" },
+  { param: "russell2000", label: "🇺🇸 Russell 2000", region: "Americas" },
+  { param: "ftse100", label: "🇬🇧 FTSE 100", region: "Europe" },
+  { param: "dax40", label: "🇩🇪 DAX 40", region: "Europe" },
+  { param: "nikkei225", label: "🇯🇵 Nikkei 225", region: "Asia-Pacific" },
+  { param: "hsi", label: "🇭🇰 Hang Seng", region: "Asia-Pacific" },
+  { param: "nifty50", label: "🇮🇳 Nifty 50", region: "Asia-Pacific" },
   // Wave 2 additions — see server/data/index_constituents.ts for sourcing notes.
-  { param: "tsx60", label: "🇨🇦 TSX 60" },
-  { param: "asx50", label: "🇦🇺 ASX 50" },
-  { param: "ibovespa", label: "🇧🇷 Ibovespa" },
-  { param: "ipc", label: "🇲🇽 IPC Mexico" },
-  { param: "kospi200", label: "🇰🇷 KOSPI" },
-  { param: "taiex", label: "🇹🇼 TAIEX" },
-  { param: "jsetop40", label: "🇿🇦 JSE Top 40" },
-  { param: "sti", label: "🇸🇬 STI" },
+  { param: "tsx60", label: "🇨🇦 TSX 60", region: "Americas" },
+  { param: "asx50", label: "🇦🇺 ASX 50", region: "Asia-Pacific" },
+  { param: "ibovespa", label: "🇧🇷 Ibovespa", region: "Americas" },
+  { param: "ipc", label: "🇲🇽 IPC Mexico", region: "Americas" },
+  { param: "kospi200", label: "🇰🇷 KOSPI", region: "Asia-Pacific" },
+  { param: "taiex", label: "🇹🇼 TAIEX", region: "Asia-Pacific" },
+  { param: "jsetop40", label: "🇿🇦 JSE Top 40", region: "Africa" },
+  { param: "sti", label: "🇸🇬 STI", region: "Asia-Pacific" },
 ] as const;
 export type TreemapIndexParam = (typeof TREEMAP_INDICES)[number]["param"];
+export const TREEMAP_REGIONS = ["Americas", "Europe", "Asia-Pacific", "Africa"] as const;
 
 export const TREEMAP_TIMEFRAMES = ["1d", "1w", "1m", "ytd"] as const;
 export type TreemapTimeframe = (typeof TREEMAP_TIMEFRAMES)[number];

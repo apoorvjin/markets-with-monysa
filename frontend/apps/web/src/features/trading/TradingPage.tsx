@@ -1,4 +1,4 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -35,33 +35,83 @@ import {
 import { toggleWatchlist, useWatchlist } from "../../lib/watchlist";
 import { useIsPro } from "../../lib/session";
 import { BestSetupsCard } from "../../components/BestSetupsCard";
+import { TRADING_TABS, type TradingTab } from "../../router";
+import { isActionable, riskReward } from "../../lib/riskReward";
 
-const TABS = ["Instruments", "Dashboard", "Power Moves", "Signals", "Alerts"] as const;
-type Tab = (typeof TABS)[number];
+/** The four steps, in the order the work actually happens. Numbering is not
+    decoration here — it encodes a real sequence, and the context bar carries
+    the chosen symbol forward through it. */
+const STEPS = [
+  { id: "scan", n: "01", label: "Scan", hint: "Find candidates" },
+  { id: "evaluate", n: "02", label: "Evaluate", hint: "Judge the signal" },
+  { id: "track", n: "03", label: "Track", hint: "Watch it" },
+  { id: "act", n: "04", label: "Act", hint: "Set alerts" },
+] as const satisfies readonly { id: TradingTab; n: string; label: string; hint: string }[];
 
 export function TradingPage() {
-  const [tab, setTab] = useState<Tab>("Instruments");
+  const search = useSearch({ from: "/trading" });
+  const navigate = useNavigate({ from: "/trading" });
+  // Lands on Evaluate, not Scan: a returning trader's job is today's signals,
+  // and the step numbers make the entry point legible either way.
+  const tab: TradingTab = TRADING_TABS.includes(search.tab as TradingTab)
+    ? (search.tab as TradingTab)
+    : "evaluate";
+  const focus = search.sym ?? null;
   const alerts = useAlerts();
+
+  const go = (next: TradingTab, sym?: string | null) =>
+    void navigate({
+      search: {
+        tab: next === "evaluate" ? undefined : next,
+        sym: (sym === undefined ? focus : sym) ?? undefined,
+      },
+    });
+
   return (
     <div className="page">
       <div className="page-header ui-enter">
         <h1 className="page-title">Trading</h1>
-        <ChipRow>
-          {TABS.map((t) => (
-            <Chip
-              key={t}
-              label={t === "Alerts" && alerts.length > 0 ? `Alerts (${alerts.length})` : t}
-              active={tab === t}
-              onClick={() => setTab(t)}
-            />
-          ))}
-        </ChipRow>
       </div>
-      {tab === "Instruments" && <InstrumentsTab />}
-      {tab === "Dashboard" && <DashboardTab onJumpToPowerMoves={() => setTab("Power Moves")} />}
-      {tab === "Power Moves" && <PowerMovesTab />}
-      {tab === "Signals" && <SignalsTab />}
-      {tab === "Alerts" && <AlertsTab />}
+      <nav className="fn-steps" role="tablist" aria-label="Trading workflow">
+        {STEPS.map((st, i) => (
+          <div className="fn-step-wrap" key={st.id}>
+            <button
+              type="button"
+              role="tab"
+              className="fn-step"
+              data-active={tab === st.id ? "true" : "false"}
+              data-done={STEPS.findIndex((x) => x.id === tab) > i ? "true" : "false"}
+              aria-selected={tab === st.id}
+              onClick={() => go(st.id)}
+            >
+              <span className="fn-step-n" aria-hidden="true">{st.n}</span>
+              <span className="fn-step-t">
+                {st.label}
+                {st.id === "act" && alerts.length > 0 ? ` (${alerts.length})` : ""}
+              </span>
+              <span className="fn-step-h">{st.hint}</span>
+            </button>
+            {i < STEPS.length - 1 && <span className="fn-arrow" aria-hidden="true">→</span>}
+          </div>
+        ))}
+      </nav>
+      {/* On focused Evaluate the step renders its own header for the same
+          symbol, so the carrying bar would duplicate it (twice over — both
+          offered "Open chart"). It stays on Track and Act, where the symbol is
+          context rather than the subject. */}
+      {!(tab === "evaluate" && focus) && (
+        <FocusBar symbol={focus} onClear={() => go(tab, null)} onStep={go} />
+      )}
+      {tab === "scan" && <ScanStep onEvaluate={(sym) => go("evaluate", sym)} />}
+      {tab === "evaluate" && (
+        <EvaluateStep
+          focus={focus}
+          onTrack={(sym) => go("track", sym)}
+          onClearFocus={() => go("evaluate", null)}
+        />
+      )}
+      {tab === "track" && <TrackStep />}
+      {tab === "act" && <ActStep />}
     </div>
   );
 }
@@ -156,19 +206,6 @@ function QuoteRows(props: { quotes: QuoteItem[]; watchlist: string[] }) {
 
 // ── Dashboard (mirrors _DashboardzTab in trading_screen.dart) ─────────────
 
-function DashboardTab(props: { onJumpToPowerMoves: () => void }) {
-  return (
-    <>
-      <WatchlistSnapshotCard />
-      <TopMoversCard />
-      <RegimeBreadthCard />
-      <PowerMovesTeaserCard onJumpToPowerMoves={props.onJumpToPowerMoves} />
-      <WinRateLeaderboardCard />
-      <BestSetupsCard />
-    </>
-  );
-}
-
 function WinRateLeaderboardCard() {
   const navigate = useNavigate();
   const { data, isLoading, error } = useQuery({
@@ -238,58 +275,6 @@ function WinRateLeaderboardCard() {
         </div>
       )}
     </Card>
-  );
-}
-
-function PowerMovesTeaserCard(props: { onJumpToPowerMoves: () => void }) {
-  // Fixed to v1/Commodities — matches what a tap-through actually lands on
-  // (Power Moves opens on Commodities by default).
-  const { data, isLoading, error } = useQuery({
-    queryKey: ["scanner", "v1"],
-    queryFn: () => api.getScannerAssets("v1"),
-    staleTime: 30 * 60_000,
-  });
-
-  const hot = useMemo(
-    () =>
-      (data?.assets ?? [])
-        .filter((a) => a.category === "Commodities" && a.signalsActive >= 3)
-        .sort((a, b) => b.signalsActive - a.signalsActive),
-    [data],
-  );
-
-  return (
-    <div style={{ cursor: "pointer" }} onClick={props.onJumpToPowerMoves}>
-      <Card>
-        <div className="page-header">
-          <strong>⚡ Power Moves</strong>
-          <span className="cell-sub">›</span>
-        </div>
-        {error ? (
-          <ErrorView message={(error as Error).message} />
-        ) : isLoading || !data ? (
-          <SkeletonList rows={2} height={20} />
-        ) : hot.length === 0 ? (
-          <div className="cell-sub" style={{ marginTop: "var(--s2)" }}>
-            No commodities showing 3+ signals right now.
-          </div>
-        ) : (
-          <div style={{ marginTop: "var(--s2)" }}>
-            <div className="cell-sub" style={{ marginBottom: "var(--s2)" }}>
-              {hot.length} asset{hot.length === 1 ? "" : "s"} showing 3+ signals right now
-            </div>
-            {hot.slice(0, 3).map((a) => (
-              <div key={a.symbol} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-                <span className="cell-main">
-                  {a.flag ?? ""} {a.name}
-                </span>
-                <span className="cell-sub">{a.signalsActive} signals</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-    </div>
   );
 }
 
@@ -641,7 +626,7 @@ const V3_SIGNALS: Array<{ key: keyof ScannerAsset; label: string }> = [
   { key: "regimeBreakout", label: "Regime breakout" },
 ];
 
-function PowerMovesTab() {
+function PowerMovesTab(props: { onEvaluate?: (sym: string) => void }) {
   const [type, setType] = useState<PowerMovesType>("Indices");
   const [version, setVersion] = useState<ScannerVersion>("v3");
   const [minSignals, setMinSignals] = useState(0);
@@ -719,6 +704,7 @@ function PowerMovesTab() {
                   <th className="num">Vol ratio</th>
                   <th className="num">Active</th>
                   <th>Signals</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -748,6 +734,17 @@ function PowerMovesTab() {
                           ))}
                       </div>
                     </td>
+                    <td className="num">
+                      {props.onEvaluate && (
+                        <button
+                          type="button"
+                          className="mt-cat"
+                          onClick={() => props.onEvaluate?.(a.symbol)}
+                        >
+                          Evaluate →
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -762,137 +759,6 @@ function PowerMovesTab() {
 // ── Signals (S1–S9; S9 = Silver only) ─────────────────────────────────────
 
 const SIGNAL_TYPES = ["ALL", "Commodities", "Indices", "Forex", "Crypto"] as const;
-
-function SignalsTab() {
-  const isPro = useIsPro();
-  const [type, setType] = useState<string>("ALL");
-  const [strategy, setStrategy] = useState(STRATEGIES[0]!);
-  const { data, isLoading, error, refetch } = useQuotes();
-  // Mobile locks any strategy with serverParam >= 4 (S4–S9 base + all S1+–S9+
-  // enhanced) behind `signals_advanced`. Chips stay clickable; for free users
-  // the result table renders as a blurred teaser, Pro users see it in full.
-  const isAdvanced = Number(strategy.serverParam) >= 4 && !isPro;
-
-  const symbols = useMemo(() => {
-    const quotes = data?.quotes ?? [];
-    if (strategy.serverParam === "9")
-      return quotes.filter((q) => q.symbol === "SI=F");
-    if (type === "ALL") return quotes;
-    return quotes.filter((q) => q.category === type);
-  }, [data, type, strategy]);
-
-  const signalQueries = useQueries({
-    queries: symbols.map((q) => ({
-      queryKey: ["signal", q.symbol, strategy.serverParam],
-      queryFn: () => api.getSignal(q.symbol, strategy.serverParam),
-      staleTime: 60_000,
-      retry: 0,
-    })),
-  });
-
-  if (error)
-    return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
-
-  const table = (
-    <table className="tbl">
-      <thead>
-        <tr>
-          <th>Asset</th>
-          <th>Signal</th>
-          <th className="num">Confidence</th>
-          <th className="num">Entry</th>
-          <th className="num">Stop</th>
-          <th className="num">Target</th>
-        </tr>
-      </thead>
-      <tbody>
-        {symbols.map((q, i) => {
-          const sq = signalQueries[i];
-          const sig = sq?.data;
-          return <SignalRow key={q.symbol} quote={q} loading={!!sq?.isLoading} signal={sig} />;
-        })}
-      </tbody>
-    </table>
-  );
-
-  return (
-    <>
-      <div className="toolbar">
-        <ChipRow>
-          {SIGNAL_TYPES.map((t) => (
-            <Chip key={t} label={t} active={type === t} onClick={() => setType(t)} />
-          ))}
-        </ChipRow>
-        <ChipRow>
-          {STRATEGIES.map((s) => (
-            <Chip
-              key={s.serverParam}
-              label={
-                <span style={{ display: "flex", flexDirection: "column", alignItems: "center", lineHeight: 1.12, gap: 1 }}>
-                  <span>{Number(s.serverParam) >= 4 ? `${s.label} 🔒` : s.label}</span>
-                  <span style={{ fontSize: "0.72em", fontWeight: 400, opacity: 0.66 }}>{s.name}</span>
-                </span>
-              }
-              active={strategy.serverParam === s.serverParam}
-              onClick={() => setStrategy(s)}
-            />
-          ))}
-        </ChipRow>
-      </div>
-      {strategy.serverParam === "9" && (
-        <div className="cell-sub">
-          S9 Silver Liquidity Sweep — optimised for Silver (SI=F) intraday only.
-        </div>
-      )}
-      {isAdvanced && (
-        <div className="cell-sub">S4–S9 and enhanced (+) strategies require Pro.</div>
-      )}
-      {isLoading || !data ? (
-        <SkeletonList rows={12} />
-      ) : (
-        <div className="tbl-wrap" style={{ maxHeight: "70vh" }}>
-          {isAdvanced ? (
-            <ProBlur positive={true} className="signals-advanced-blur">
-              {table}
-            </ProBlur>
-          ) : (
-            table
-          )}
-        </div>
-      )}
-    </>
-  );
-}
-
-function SignalRow(props: {
-  quote: QuoteItem;
-  loading: boolean;
-  signal?: { direction: string; confidence?: number | null; entry?: number | null; stopLoss?: number | null; takeProfit?: number | null };
-}) {
-  const navigate = useNavigate();
-  const { quote: q, signal: sig } = props;
-  return (
-    <tr
-      className="clickable"
-      onClick={() =>
-        void navigate({ to: "/asset/$symbol", params: { symbol: q.symbol }, search: { name: q.name } })
-      }
-    >
-      <td>
-        <span style={{ marginRight: 8 }}>{q.flag ?? ""}</span>
-        <span className="cell-main">{q.name}</span>{" "}
-        <span className="cell-sub">{q.symbol}</span>
-      </td>
-      <td>{props.loading ? <Skeleton width={52} height={18} /> : <SignalBadge direction={sig?.direction} />}</td>
-      <td className="num">
-        {sig?.confidence != null ? `${Math.round(sig.confidence)}%` : "—"}
-      </td>
-      <td className="num">{fmtPrice(sig?.entry)}</td>
-      <td className="num num-down">{fmtPrice(sig?.stopLoss)}</td>
-      <td className="num num-up">{fmtPrice(sig?.takeProfit)}</td>
-    </tr>
-  );
-}
 
 // ── Alerts (localStorage, evaluated against 10s-polled quotes) ────────────
 
@@ -1035,5 +901,656 @@ function AlertsTab() {
         </div>
       )}
     </div>
+  );
+}
+
+// ── Funnel: the symbol carried between steps ─────────────────────────────
+
+/** The connective tissue of the workflow. Pick a candidate in Scan and it
+    stays with you through Evaluate, Track and Act instead of being re-found
+    at every step. Renders nothing until a symbol is chosen. */
+function FocusBar(props: {
+  symbol: string | null;
+  onClear: () => void;
+  onStep: (t: TradingTab, sym?: string | null) => void;
+}) {
+  const navigate = useNavigate();
+  const { data } = useQuotes(60_000);
+  const symbol = props.symbol;
+  if (!symbol) return null;
+  const q = data?.quotes.find((x) => x.symbol === symbol);
+
+  return (
+    <div className="fn-focus">
+      <span className="lbl-mini">Carrying</span>
+      <span className="fn-focus-name">
+        {q?.flag ? <span aria-hidden="true">{q.flag} </span> : null}
+        <strong>{q?.name ?? props.symbol}</strong>{" "}
+        <span className="cell-sub">{props.symbol}</span>
+      </span>
+      {q && (
+        <span className="fn-focus-px mono-nums">
+          {fmtPrice(q.price, q.currency)}{" "}
+          <span className={changeClass(q.changePercent)}>{fmtPct(q.changePercent)}</span>
+        </span>
+      )}
+      <span className="fn-focus-actions">
+        <button
+          type="button"
+          className="mt-cat"
+          onClick={() =>
+            void navigate({
+              to: "/asset/$symbol",
+              params: { symbol },
+              search: { name: q?.name ?? symbol },
+            })
+          }
+        >
+          Open chart
+        </button>
+        <button type="button" className="mt-cat" onClick={props.onClear}>
+          Clear
+        </button>
+      </span>
+    </div>
+  );
+}
+
+// ── ② Evaluate — the triage queue ────────────────────────────────────────
+
+type QueueSort = "rr" | "confidence" | "name";
+
+/** The heart of the rebuild. The old Signals tab rendered all 49 assets as
+    equal rows — roughly three quarters of them HOLD — with no ordering and no
+    reward-to-risk, so finding the handful worth acting on meant reading the
+    whole sheet. This leads with the actionable ones, ranked. */
+function EvaluateStep(props: {
+  focus: string | null;
+  onTrack: (sym: string) => void;
+  onClearFocus: () => void;
+}) {
+  // Carrying a symbol here means "judge this one". Scoring the other 48 to
+  // answer that would be 49 requests against a 60/min limiter for one answer,
+  // so the focused case asks a different, cheaper question instead: how do the
+  // strategies rate THIS symbol.
+  if (props.focus) {
+    return (
+      <FocusedEvaluation
+        symbol={props.focus}
+        onTrack={() => props.onTrack(props.focus as string)}
+        onClearFocus={props.onClearFocus}
+      />
+    );
+  }
+  return <TriageQueue focus={null} onTrack={props.onTrack} />;
+}
+
+function TriageQueue(props: { focus: string | null; onTrack: (sym: string) => void }) {
+  const isPro = useIsPro();
+  const navigate = useNavigate();
+  const [type, setType] = useState<string>("ALL");
+  const [strategy, setStrategy] = useState(STRATEGIES[0]!);
+  const [showAll, setShowAll] = useState(false);
+  const [sort, setSort] = useState<QueueSort>("confidence");
+  const { data, isLoading, error, refetch } = useQuotes();
+  const isAdvanced = Number(strategy.serverParam) >= 4 && !isPro;
+
+  const symbols = useMemo(() => {
+    const quotes = data?.quotes ?? [];
+    if (strategy.serverParam === "9") return quotes.filter((q) => q.symbol === "SI=F");
+    if (type === "ALL") return quotes;
+    return quotes.filter((q) => q.category === type);
+  }, [data, type, strategy]);
+
+  // One request per asset — 49 of the signals limiter's 60/min budget on a
+  // single load, and this step is now the landing tab. A bounded retry with
+  // backoff lets a transient 429 recover instead of silently dropping the
+  // asset from the queue. The real fix is a batch endpoint; see below.
+  const signalQueries = useQueries({
+    queries: symbols.map((q) => ({
+      queryKey: ["signal", q.symbol, strategy.serverParam],
+      queryFn: () => api.getSignal(q.symbol, strategy.serverParam),
+      staleTime: 60_000,
+      retry: 2,
+      retryDelay: (attempt: number) => 1500 * 2 ** attempt,
+    })),
+  });
+
+  const loadingCount = signalQueries.filter((s) => s.isLoading).length;
+  // Never let a failed fetch quietly shrink the actionable count: "7 setups"
+  // and "7 setups, 12 unscored" are very different claims to make to someone
+  // deciding what to trade.
+  const failedCount = signalQueries.filter((s) => s.isError).length;
+  const refetchFailed = () =>
+    signalQueries.forEach((sq) => {
+      if (sq.isError) void sq.refetch();
+    });
+
+  const rows = useMemo(() => {
+    const merged = symbols.map((q, i) => {
+      const sig = signalQueries[i]?.data;
+      const entry = sig?.entry ?? q.price ?? null;
+      return {
+        quote: q,
+        signal: sig,
+        loading: !!signalQueries[i]?.isLoading,
+        rr: riskReward(sig?.direction, entry, sig?.stopLoss, sig?.takeProfit),
+        entry,
+      };
+    });
+    // The carried symbol is lifted out of whichever bucket it belongs to and
+    // shown first, always. Most scanner hits come back HOLD, so leaving it in
+    // `held` meant arriving from Scan and seeing nothing about the very
+    // symbol you were sent here to evaluate.
+    const pinned = props.focus ? merged.find((r) => r.quote.symbol === props.focus) ?? null : null;
+    const rest = pinned ? merged.filter((r) => r !== pinned) : merged;
+    const actionable = rest.filter((r) => isActionable(r.signal?.direction));
+    const held = rest.filter((r) => !isActionable(r.signal?.direction));
+    const rank = (a: typeof merged[number], b: typeof merged[number]) => {
+      if (sort === "name") return a.quote.name.localeCompare(b.quote.name);
+      if (sort === "rr") return (b.rr ?? 0) - (a.rr ?? 0);
+      return (b.signal?.confidence ?? 0) - (a.signal?.confidence ?? 0);
+    };
+    actionable.sort(rank);
+    held.sort(rank);
+    // The server currently derives stop and target as fixed bands around
+    // entry, so reward-to-risk comes back a constant 2.5 on every signal.
+    // Ranking by it would sort on rounding noise, and printing it per row
+    // would imply a difference between setups that does not exist — so it is
+    // shown once as a property of the strategy instead. This checks at
+    // runtime rather than hard-coding the assumption: the moment the bands
+    // vary, the per-row column and the sort option come back on their own.
+    const seen = new Set(
+      actionable.map((r) => (r.rr == null ? "x" : r.rr.toFixed(1))).filter((v) => v !== "x"),
+    );
+    const rrVaries = seen.size > 1;
+    const rrFixed = !rrVaries && actionable.length > 0 ? (actionable.find((r) => r.rr != null)?.rr ?? null) : null;
+    return { pinned, actionable, held, rrVaries, rrFixed };
+    // signalQueries is a new array each render; its data is captured via symbols+strategy.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbols, strategy, sort, props.focus, loadingCount]);
+
+  if (error)
+    return <ErrorView message={(error as Error).message} onRetry={() => void refetch()} />;
+
+  const queue = (
+    <div className="tq">
+      {rows.actionable.length === 0 && !rows.pinned && !isLoading && loadingCount === 0 && (
+        <p className="tq-empty">
+          No BUY or SELL signals on {strategy.label} · {strategy.name} right now — every tracked asset is on HOLD.
+          <button type="button" className="tq-link" onClick={() => setShowAll(true)}>
+            Show all {rows.held.length}
+          </button>
+        </p>
+      )}
+      {rows.pinned && (
+        <TriageRow
+          key={rows.pinned.quote.symbol}
+          row={rows.pinned}
+          showRr={rows.rrVaries}
+          focused
+          onOpen={() =>
+            void navigate({
+              to: "/asset/$symbol",
+              params: { symbol: rows.pinned!.quote.symbol },
+              search: { name: rows.pinned!.quote.name },
+            })
+          }
+          onTrack={() => props.onTrack(rows.pinned!.quote.symbol)}
+        />
+      )}
+      {rows.actionable.map((r) => (
+        <TriageRow
+          key={r.quote.symbol}
+          row={r}
+          showRr={rows.rrVaries}
+          focused={props.focus === r.quote.symbol}
+          onOpen={() =>
+            void navigate({
+              to: "/asset/$symbol",
+              params: { symbol: r.quote.symbol },
+              search: { name: r.quote.name },
+            })
+          }
+          onTrack={() => props.onTrack(r.quote.symbol)}
+        />
+      ))}
+      {showAll &&
+        rows.held.map((r) => (
+          <TriageRow
+            key={r.quote.symbol}
+            row={r}
+            muted
+            showRr={rows.rrVaries}
+            focused={props.focus === r.quote.symbol}
+            onOpen={() =>
+              void navigate({
+                to: "/asset/$symbol",
+                params: { symbol: r.quote.symbol },
+                search: { name: r.quote.name },
+              })
+            }
+            onTrack={() => props.onTrack(r.quote.symbol)}
+          />
+        ))}
+    </div>
+  );
+
+  return (
+    <>
+      <div className="tq-bar">
+        <div className="tq-counts">
+          <button
+            type="button"
+            className="mt-cat"
+            data-active={!showAll ? "true" : "false"}
+            aria-pressed={!showAll}
+            onClick={() => setShowAll(false)}
+          >
+            Actionable {rows.actionable.length}
+          </button>
+          <button
+            type="button"
+            className="mt-cat"
+            data-active={showAll ? "true" : "false"}
+            aria-pressed={showAll}
+            onClick={() => setShowAll(true)}
+          >
+            All {rows.actionable.length + rows.held.length}
+          </button>
+        </div>
+        <label className="tq-select">
+          <span className="lbl-mini">Sort</span>
+          <select value={sort} onChange={(e) => setSort(e.target.value as QueueSort)}>
+            <option value="confidence">Confidence</option>
+            {rows.rrVaries && <option value="rr">Reward : risk</option>}
+            <option value="name">Name</option>
+          </select>
+        </label>
+        {loadingCount > 0 && <span className="cell-sub">Scoring {loadingCount}…</span>}
+        {rows.rrFixed != null && (
+          <span className="cell-sub tq-rrnote" title="Stop and target are derived as fixed bands around entry, so this ratio is the same for every setup on this strategy.">
+            Every setup targets {rows.rrFixed.toFixed(1)} : 1 reward-to-risk
+          </span>
+        )}
+      </div>
+
+      <div className="tq-filters">
+        <ChipRow>
+          {SIGNAL_TYPES.map((t) => (
+            <Chip key={t} label={t} active={type === t} onClick={() => setType(t)} />
+          ))}
+        </ChipRow>
+      </div>
+      <div className="tq-filters">
+        <ChipRow>
+          {STRATEGIES.map((s) => (
+            <Chip
+              key={s.serverParam}
+              label={
+                <span className="tq-strat">
+                  <span>
+                    {s.label}
+                    {Number(s.serverParam) >= 4 && !isPro ? " 🔒" : ""}
+                  </span>
+                  <span className="tq-strat-sub">{s.name}</span>
+                </span>
+              }
+              active={strategy.serverParam === s.serverParam}
+              onClick={() => setStrategy(s)}
+            />
+          ))}
+        </ChipRow>
+      </div>
+
+      {failedCount > 0 && (
+        <p className="tq-warn" role="status">
+          Couldn&rsquo;t score {failedCount} of {symbols.length} assets — the count below is
+          incomplete.{" "}
+          <button type="button" className="tq-link" onClick={refetchFailed}>
+            Retry
+          </button>
+        </p>
+      )}
+
+      {isLoading ? (
+        <SkeletonList rows={8} height={54} />
+      ) : isAdvanced ? (
+        <ProBlur positive className="signals-advanced-blur">
+          {queue}
+        </ProBlur>
+      ) : (
+        queue
+      )}
+
+      {!showAll && rows.held.length > 0 && (
+        <p className="tq-foot">
+          {rows.held.length} HOLD signals hidden —{" "}
+          <button type="button" className="tq-link" onClick={() => setShowAll(true)}>
+            show all
+          </button>
+        </p>
+      )}
+    </>
+  );
+}
+
+function TriageRow(props: {
+  row: {
+    quote: QuoteItem;
+    signal?: { direction: string; confidence?: number | null; stopLoss?: number | null; takeProfit?: number | null };
+    loading: boolean;
+    rr: number | null;
+    entry: number | null;
+  };
+  focused?: boolean;
+  muted?: boolean;
+  /** Only true when reward-to-risk actually varies between setups. */
+  showRr?: boolean;
+  onOpen: () => void;
+  onTrack: () => void;
+}) {
+  const { quote: q, signal: sig, rr, entry } = props.row;
+  const dir = (sig?.direction ?? "").toUpperCase();
+  const watchlist = useWatchlist();
+  const watched = watchlist.includes(q.symbol);
+
+  if (props.row.loading) {
+    return (
+      <div className="tq-row" aria-busy="true">
+        <Skeleton height={38} />
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="tq-row"
+      data-muted={props.muted ? "true" : "false"}
+      data-focused={props.focused ? "true" : "false"}
+    >
+      <SignalBadge direction={sig?.direction} />
+      <div className="tq-main">
+        <div className="tq-title">
+          {q.flag && <span aria-hidden="true">{q.flag}</span>}
+          <button type="button" className="tq-name" onClick={props.onOpen}>
+            {q.name}
+          </button>
+          <span className="cell-sub">{q.symbol}</span>
+          {sig?.confidence != null && (
+            <>
+              <span className="tq-meter" aria-hidden="true">
+                <i
+                  data-dir={dir === "SELL" ? "down" : "up"}
+                  style={{ width: `${Math.min(100, Math.max(0, sig.confidence))}%` }}
+                />
+              </span>
+            </>
+          )}
+        </div>
+        <div className="tq-levels mono-nums">
+          {fmtPrice(entry, q.currency)} → target{" "}
+          <span className="num-up">{fmtPrice(sig?.takeProfit, q.currency)}</span> · stop{" "}
+          <span className="num-down">{fmtPrice(sig?.stopLoss, q.currency)}</span>
+        </div>
+      </div>
+      {props.showRr ? (
+        <div className="tq-rr">
+          <span className="lbl-mini">R : R</span>
+          <span className={`tq-rr-v ${rr != null && rr >= 1 ? "num-up" : "num-flat"}`}>
+            {rr != null ? rr.toFixed(1) : "—"}
+          </span>
+        </div>
+      ) : (
+        <div className="tq-rr">
+          <span className="lbl-mini">Conf</span>
+          <span className={`tq-rr-v ${dir === "SELL" ? "num-down" : "num-up"}`}>
+            {sig?.confidence != null ? `${Math.round(sig.confidence)}%` : "—"}
+          </span>
+        </div>
+      )}
+      <div className="tq-actions">
+        <button
+          type="button"
+          className="tq-ico"
+          aria-pressed={watched}
+          aria-label={watched ? `Remove ${q.name} from watchlist` : `Add ${q.name} to watchlist`}
+          title={watched ? "In your watchlist" : "Add to watchlist"}
+          onClick={() => toggleWatchlist(q.symbol)}
+        >
+          {watched ? "★" : "☆"}
+        </button>
+        <button
+          type="button"
+          className="tq-ico"
+          aria-label={`Carry ${q.name} to Track`}
+          title="Carry to Track"
+          onClick={props.onTrack}
+        >
+          →
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── ① Scan — find candidates ─────────────────────────────────────────────
+
+/** Everything that answers "what is worth a look today": the Pine scanner,
+    the server's best setups, the historical win-rate leaderboard, and the
+    day's movers. All four previously lived on a Dashboard tab that sat
+    outside any workflow. */
+function ScanStep(props: { onEvaluate: (sym: string) => void }) {
+  return (
+    <div className="fn-pane">
+      <PowerMovesTab onEvaluate={props.onEvaluate} />
+      <div className="fn-split">
+        <BestSetupsCard />
+        <WinRateLeaderboardCard />
+      </div>
+      <TopMoversCard />
+    </div>
+  );
+}
+
+// ── ③ Track — watch it ───────────────────────────────────────────────────
+
+function TrackStep() {
+  return (
+    <div className="fn-pane">
+      <WatchlistSnapshotCard />
+      <InstrumentsTab />
+    </div>
+  );
+}
+
+// ── ④ Act — set alerts ───────────────────────────────────────────────────
+
+function ActStep() {
+  return (
+    <div className="fn-pane">
+      <AlertsTab />
+    </div>
+  );
+}
+
+// ── ② Evaluate, focused on one carried symbol ────────────────────────────
+
+/** One symbol, rated by every strategy the viewer can actually see.
+ *
+ *  This is the cheap half of the funnel: N strategy calls for one symbol
+ *  (3 on free, 9 on Pro) instead of the queue's one call per asset. It also
+ *  answers a better question — "do the strategies agree on this?" — than
+ *  re-listing 49 assets you did not ask about. */
+function FocusedEvaluation(props: {
+  symbol: string;
+  onTrack: () => void;
+  onClearFocus: () => void;
+}) {
+  const isPro = useIsPro();
+  const navigate = useNavigate();
+  const watchlist = useWatchlist();
+  const watched = watchlist.includes(props.symbol);
+  const { data: quotes } = useQuotes();
+  const quote = quotes?.quotes.find((q) => q.symbol === props.symbol);
+
+  // Base strategies only — the "+" variants are refinements of the same nine,
+  // and 18 rows reads as noise. Gated ones are skipped rather than fetched and
+  // blurred: no point spending a request on a row the viewer cannot read.
+  const visible = useMemo(
+    () =>
+      STRATEGIES.filter(
+        (st) => !st.isEnhanced && (isPro || Number(st.serverParam) <= 3),
+      ),
+    [isPro],
+  );
+
+  const queries = useQueries({
+    queries: visible.map((st) => ({
+      queryKey: ["signal", props.symbol, st.serverParam],
+      queryFn: () => api.getSignal(props.symbol, st.serverParam),
+      staleTime: 60_000,
+      retry: 2,
+      retryDelay: (attempt: number) => 1500 * 2 ** attempt,
+    })),
+  });
+
+  const loading = queries.some((q) => q.isLoading);
+  const failed = queries.filter((q) => q.isError).length;
+
+  const tally = { BUY: 0, SELL: 0, HOLD: 0 };
+  queries.forEach((q) => {
+    const d = (q.data?.direction ?? "").toUpperCase();
+    if (d === "BUY" || d === "SELL" || d === "HOLD") tally[d] += 1;
+  });
+  const scored = tally.BUY + tally.SELL + tally.HOLD;
+  const lean =
+    tally.BUY > tally.SELL && tally.BUY > tally.HOLD
+      ? "BUY"
+      : tally.SELL > tally.BUY && tally.SELL > tally.HOLD
+        ? "SELL"
+        : "HOLD";
+
+  return (
+    <>
+      <div className="fe-head">
+        <div>
+          <span className="lbl-mini">Evaluating</span>
+          <h2 className="fe-title">
+            {quote?.flag && <span aria-hidden="true">{quote.flag} </span>}
+            {quote?.name ?? props.symbol}{" "}
+            <span className="cell-sub">{props.symbol}</span>
+          </h2>
+        </div>
+        {quote && (
+          <span className="fe-px mono-nums">
+            {fmtPrice(quote.price, quote.currency)}{" "}
+            <span className={changeClass(quote.changePercent)}>
+              {fmtPct(quote.changePercent)}
+            </span>
+          </span>
+        )}
+        <button type="button" className="mt-cat fe-back" onClick={props.onClearFocus}>
+          ← Full queue
+        </button>
+      </div>
+
+      {!loading && scored > 0 && (
+        <div className="fe-consensus" data-lean={lean}>
+          <SignalBadge direction={lean} />
+          <span className="fe-consensus-txt">
+            <strong>
+              {lean === "HOLD" ? tally.HOLD : lean === "BUY" ? tally.BUY : tally.SELL} of {scored}
+            </strong>{" "}
+            {visible.length === scored ? "strategies" : "scored strategies"} say {lean}
+          </span>
+          <span className="fe-tally">
+            <span className="num-up">{tally.BUY} buy</span>
+            <span className="num-flat">{tally.HOLD} hold</span>
+            <span className="num-down">{tally.SELL} sell</span>
+          </span>
+          {!isPro && (
+            <span className="cell-sub fe-note">
+              Free tier rates {visible.length} of 9 strategies
+            </span>
+          )}
+        </div>
+      )}
+
+      {failed > 0 && (
+        <p className="tq-warn" role="status">
+          Couldn&rsquo;t score {failed} of {visible.length} strategies.
+        </p>
+      )}
+
+      <div className="tbl-wrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Signal</th>
+              <th className="num">Confidence</th>
+              <th className="num">Entry</th>
+              <th className="num">Stop</th>
+              <th className="num">Target</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visible.map((st, i) => {
+              const q = queries[i];
+              const sig = q?.data;
+              return (
+                <tr key={st.serverParam}>
+                  <td>
+                    <span className="cell-main">{st.label}</span>{" "}
+                    <span className="cell-sub">{st.name}</span>
+                  </td>
+                  <td>
+                    {q?.isLoading ? (
+                      <Skeleton width={52} height={18} />
+                    ) : (
+                      <SignalBadge direction={sig?.direction} />
+                    )}
+                  </td>
+                  <td className="num">
+                    {sig?.confidence != null ? `${Math.round(sig.confidence)}%` : "—"}
+                  </td>
+                  <td className="num">{fmtPrice(sig?.entry ?? quote?.price, quote?.currency)}</td>
+                  <td className="num num-down">{fmtPrice(sig?.stopLoss, quote?.currency)}</td>
+                  <td className="num num-up">{fmtPrice(sig?.takeProfit, quote?.currency)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="fe-actions">
+        <button
+          type="button"
+          className="mt-cat"
+          aria-pressed={watched}
+          onClick={() => toggleWatchlist(props.symbol)}
+        >
+          {watched ? "★ In watchlist" : "☆ Add to watchlist"}
+        </button>
+        <button
+          type="button"
+          className="mt-cat"
+          onClick={() =>
+            void navigate({
+              to: "/asset/$symbol",
+              params: { symbol: props.symbol },
+              search: { name: quote?.name ?? props.symbol },
+            })
+          }
+        >
+          Open chart
+        </button>
+        <button type="button" className="mt-cat" data-active="true" onClick={props.onTrack}>
+          Track this →
+        </button>
+      </div>
+    </>
   );
 }

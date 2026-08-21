@@ -28,15 +28,56 @@ const indexRoute = createRoute({
   },
 });
 
+/** Markets sub-tab lives in the URL so a tab is shareable, survives refresh,
+    and answers the back button — `useState` did none of those. */
+export const MARKET_TABS = [
+  "overview",
+  "heatmap",
+  "indices",
+  "commodities",
+  "forex",
+  "cftc",
+] as const;
+export type MarketTab = (typeof MARKET_TABS)[number];
+
 const marketsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/markets",
+  // Return type is annotated with an OPTIONAL key (and `{}` when absent) rather
+  // than `{ tab: undefined }` — otherwise every existing navigate({to:"/markets"})
+  // in the app is forced to pass `tab` explicitly.
+  // Sub-tab state rides along too, so "the DAX heatmap" or "the Energy COT
+  // table" is a shareable link rather than four clicks. Values are validated
+  // by their own tabs, so they stay loose strings here.
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: MarketTab; index?: string; tf?: string; cot?: string } => {
+    const out: { tab?: MarketTab; index?: string; tf?: string; cot?: string } = {};
+    if (MARKET_TABS.includes(search.tab as MarketTab)) out.tab = search.tab as MarketTab;
+    if (typeof search.index === "string") out.index = search.index;
+    if (typeof search.tf === "string") out.tf = search.tf;
+    if (typeof search.cot === "string") out.cot = search.cot;
+    return out;
+  },
   component: MarketsPage,
 });
+
+/** Trading is a four-step funnel: scan for candidates, evaluate the signal,
+    track it, act on it. `sym` is the symbol carried between steps. */
+export const TRADING_TABS = ["scan", "evaluate", "track", "act"] as const;
+export type TradingTab = (typeof TRADING_TABS)[number];
 
 const tradingRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/trading",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { tab?: TradingTab; sym?: string } => {
+    const out: { tab?: TradingTab; sym?: string } = {};
+    if (TRADING_TABS.includes(search.tab as TradingTab)) out.tab = search.tab as TradingTab;
+    if (typeof search.sym === "string" && search.sym) out.sym = search.sym;
+    return out;
+  },
   component: TradingPage,
 });
 
