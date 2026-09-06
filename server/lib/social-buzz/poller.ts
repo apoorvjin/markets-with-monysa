@@ -11,6 +11,7 @@ import {
 import { generatePostCopy } from "./copywriter";
 import { enqueueCandidate, updateCandidate, countPublishedOrPendingToday } from "./queue";
 import { publishToInstagram, PLACEHOLDER_IMAGE_URL } from "./meta-client";
+import { killSwitchActive, dailyCap } from "./config-override";
 import type { BuzzEvent, CandidatePost, SocialChannel } from "./types";
 
 // Small deliberate watchlist for signal-flip checks, not the full ~39-asset
@@ -73,13 +74,12 @@ async function processEvent(event: BuzzEvent): Promise<void> {
 }
 
 export async function tick(): Promise<void> {
-  if (process.env.SOCIAL_BUZZ_KILL_SWITCH === "true") return;
+  if (killSwitchActive()) return;
 
   // Counts channel-rows, not distinct market events (each event yields up to
   // 2 rows, one per channel) — the effective daily event count is roughly
   // half the configured cap. Simple and transparent over precise.
-  const cap = Number(process.env.SOCIAL_BUZZ_MAX_POSTS_PER_DAY) || 3;
-  if ((await countPublishedOrPendingToday()) >= cap) return;
+  if ((await countPublishedOrPendingToday()) >= dailyCap()) return;
 
   const events: BuzzEvent[] = [];
 

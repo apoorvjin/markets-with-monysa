@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AdminLeaderSchema, AdminOkSchema } from "@monysa/contracts";
+import { AdminLeaderSchema, AdminOkSchema, CacheTargetsListSchema } from "@monysa/contracts";
 import { z } from "zod";
 
 const BroadcastResultSchema = AdminOkSchema.extend({ sent: z.number().optional(), failed: z.number().optional() });
@@ -13,20 +13,6 @@ const EarningsRefreshResultSchema = AdminOkSchema.extend({
 import { useState } from "react";
 import { adminApi } from "../lib/api";
 import { queryClient } from "../lib/query";
-
-type CacheTarget = "bonds" | "sectors" | "tariffs" | "briefing" | "fear-greed" | "oge" | "heatmap" | "treemap" | "market-quotes";
-
-const CACHE_TARGETS: { key: CacheTarget; label: string }[] = [
-  { key: "market-quotes", label: "Indices / Commodities / Forex" },
-  { key: "heatmap",       label: "Heatmap (regions + assets)" },
-  { key: "treemap",       label: "Treemap (all indices)" },
-  { key: "sectors",       label: "Sector ETFs + RRG" },
-  { key: "bonds",         label: "Bonds / Yield Curve" },
-  { key: "tariffs",       label: "Tariffs" },
-  { key: "briefing",      label: "AI Briefing" },
-  { key: "fear-greed",    label: "Fear & Greed" },
-  { key: "oge",           label: "OGE Cache + Redis" },
-];
 
 export function OpsPage() {
   const [bustResult, setBustResult] = useState<Record<string, string>>({});
@@ -43,8 +29,14 @@ export function OpsPage() {
     refetchInterval: 30_000,
   });
 
+  const cacheTargetsQ = useQuery({
+    queryKey: ["admin", "cache-targets"],
+    queryFn: () => adminApi.get("/api/admin/cache/targets", CacheTargetsListSchema),
+    staleTime: 5 * 60_000,
+  });
+
   const bustMutation = useMutation({
-    mutationFn: (target: CacheTarget) =>
+    mutationFn: (target: string) =>
       adminApi.post("/api/admin/cache/bust", { target }, AdminOkSchema),
     onSuccess: (_data, target) => {
       setBustResult((prev) => ({ ...prev, [target]: `Busted at ${new Date().toLocaleTimeString()}` }));
@@ -126,8 +118,9 @@ export function OpsPage() {
         <div className="section">
           <div className="section-header">Cache Busting</div>
           <div className="section-body">
+            {cacheTargetsQ.isLoading && <div className="empty">Loading targets…</div>}
             <div className="bust-grid">
-              {CACHE_TARGETS.map(({ key, label }) => (
+              {(cacheTargetsQ.data?.targets ?? []).map(({ key, label }) => (
                 <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                   <button
                     className="btn btn-ghost"

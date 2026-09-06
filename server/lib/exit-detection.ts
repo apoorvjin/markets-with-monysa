@@ -65,3 +65,29 @@ export function checkExit(
 
   return null;
 }
+
+/**
+ * Percentage return of a trade, already in percent units (e.g. -2.30 means
+ * -2.30%, not a 0-1 fraction). Shared by the signal ledger's resolution job
+ * and its reporting layer so this formula exists in exactly one place.
+ */
+/**
+ * Yahoo occasionally serves a malformed in-progress bar (observed on CT=F: the
+ * live price stitched onto stale high/low, leaving close above high and open
+ * below low). A bar that violates its own OHLC invariant can't be honestly
+ * anchored to — SL/TP would sit on levels the series never supports.
+ */
+export function isValidOhlcBar(bar: ExitBar): boolean {
+  return bar.low <= bar.close && bar.close <= bar.high;
+}
+
+export function computeReturnPct(
+  direction: "BUY" | "SELL",
+  entryPrice: number,
+  exitPrice: number,
+): number {
+  const raw = direction === "BUY"
+    ? (exitPrice - entryPrice) / entryPrice
+    : (entryPrice - exitPrice) / entryPrice;
+  return Math.round(raw * 10000) / 100;
+}

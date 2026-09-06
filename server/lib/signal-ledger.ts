@@ -14,7 +14,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { adminFirestore } from "./firebase-admin";
 import { isLeader } from "./leader";
 import { getRemoteConfigFlag } from "./remote-config-flags";
-import { checkExit } from "./exit-detection";
+import { checkExit, computeReturnPct, isValidOhlcBar } from "./exit-detection";
 import {
   TRADING_ASSETS,
   generateSignal,
@@ -64,6 +64,7 @@ function ledgerSeriesKey(id: StrategyId, tf: Timeframe, v: number): string {
 function ledgerDocId(symbol: string, id: StrategyId, tf: Timeframe, barDate: string): string {
   return `${symbol.replace(/\//g, "_")}|${id}|${tf}|${barDate}`;
 }
+
 
 interface SignalLedgerEntry {
   symbol: string;
@@ -149,7 +150,7 @@ export async function captureSignalsForLedger(): Promise<void> {
         // below low. Anchoring to a bar that violates its own OHLC invariant would put
         // SL/TP on levels the series never supports, so skip rather than record a trade
         // we cannot honestly resolve later.
-        if (!(lastBar.low <= lastBar.close && lastBar.close <= lastBar.high)) { skipped++; continue; }
+        if (!isValidOhlcBar(lastBar)) { skipped++; continue; }
 
         const barDate = new Date(lastBar.time * 1000).toISOString().slice(0, 10);
         const version = STRATEGY_LOGIC_VERSION[strategyId];
@@ -243,10 +244,7 @@ export async function resolveOpenLedgerEntries(): Promise<void> {
         const result = checkExit(candles.slice(idx + 1), d.direction, d.stopLoss, d.takeProfit, d.maxHoldBars);
         if (!result) { stillOpen++; continue; } // not enough bars elapsed yet — check again next pass
 
-        const entryPrice = d.entryPrice;
-        const returnPct = Math.round((d.direction === "BUY"
-          ? (result.exitPrice - entryPrice) / entryPrice
-          : (entryPrice - result.exitPrice) / entryPrice) * 10000) / 100;
+        const returnPct = computeReturnPct(d.direction, d.entryPrice, result.exitPrice);
         const win = returnPct > 0;
 
         // Source-of-truth write first. If the process dies before the rollup

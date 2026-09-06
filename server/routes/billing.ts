@@ -1,5 +1,6 @@
 import type { Express } from "express";
 import { devicePlanMap, persistPlan, type DevicePlan } from "../plan-enforcement";
+import { recordBillingEvent } from "../lib/billing-events";
 
 const REVENUECAT_WEBHOOK_SECRET = process.env.REVENUECAT_WEBHOOK_SECRET;
 
@@ -43,6 +44,7 @@ export function registerBillingRoutes(app: Express): void {
         const plan = entitlementsToPlan(entitlement_ids ?? []);
         devicePlanMap.set(deviceId, plan);
         persistPlan(deviceId, plan, type);
+        recordBillingEvent(deviceId, type, plan, entitlement_ids ?? []);
         console.log(`[billing] ${type}: device=${deviceId} plan=${plan}`);
         break;
       }
@@ -51,6 +53,7 @@ export function registerBillingRoutes(app: Express): void {
       case "BILLING_ISSUE": {
         devicePlanMap.set(deviceId, "free");
         persistPlan(deviceId, "free", type);
+        recordBillingEvent(deviceId, type, "free", entitlement_ids ?? []);
         console.log(`[billing] ${type}: device=${deviceId} → free`);
         break;
       }

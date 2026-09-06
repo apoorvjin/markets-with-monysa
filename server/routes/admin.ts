@@ -9,11 +9,14 @@
  * Stats:
  *   GET   /api/admin/stats
  *   GET   /api/admin/leader
+ *   GET   /api/admin/health   — optional-integration presence + build fingerprint (booleans only, never secret values)
  *
  * Users (Firestore):
+ *   GET    /api/admin/users/search?email=<exact>
  *   GET    /api/admin/users?limit=50&startAfter=<uid>
  *   GET    /api/admin/users/:uid/alerts
  *   DELETE /api/admin/users/:uid/alerts/:alertId
+ *   GET    /api/admin/users/:uid/billing-events
  *   GET    /api/admin/users/:uid/devices
  *   POST   /api/admin/users/:uid/devices/:deviceId/notify
  *
@@ -22,13 +25,15 @@
  *
  * Subscriptions:
  *   GET   /api/admin/subscriptions?limit=100&startAfter=<deviceId>
+ *   GET   /api/admin/subscriptions/:deviceId
  *   PATCH /api/admin/subscriptions/:deviceId
  *
  * Notifications:
  *   POST  /api/admin/fcm/broadcast
  *
  * Cache busting:
- *   POST  /api/admin/cache/bust   body: { target: "bonds"|"sectors"|"tariffs"|"briefing"|"fear-greed"|"oge"|"heatmap"|"treemap"|"market-quotes" }
+ *   GET   /api/admin/cache/targets
+ *   POST  /api/admin/cache/bust   body: { target: <key from /cache/targets> }
  *
  * OGE pipeline:
  *   POST  /api/admin/oge/refresh
@@ -52,6 +57,7 @@ import { bustGlobalEarningsSnapshotCache } from "../trading";
 import { normaliseRoute } from "../lib/route-normalizer";
 import { pagesFor } from "../lib/page-api-map";
 import { authMiddleware } from "../lib/admin-auth";
+import { recordBillingEvent } from "../lib/billing-events";
 
 // Firestore Timestamps are objects with a toDate() method — convert to ISO string for JSON serialisation.
 function serializeFirestoreDoc(data: Record<string, unknown>): Record<string, unknown> {
@@ -64,6 +70,27 @@ function serializeFirestoreDoc(data: Record<string, unknown>): Record<string, un
     }
   }
   return out;
+}
+
+// Mutates each user object in place, adding `displayName` from Firebase
+// Auth — the Firestore `users/{uid}` doc never stores it (only preferences/
+// email/watchlist/createdAt), so the admin Users list had no name column
+// until this. Batched via auth.getUsers() (100 uids/call) rather than one
+// Auth lookup per row.
+async function attachDisplayNames(users: Record<string, unknown>[]): Promise<void> {
+  const auth = adminAuth();
+  if (!auth || users.length === 0) return;
+  const nameByUid = new Map<string, string | null>();
+  for (let i = 0; i < users.length; i += 100) {
+    const chunk = users.slice(i, i + 100).map((u) => ({ uid: u.uid as string }));
+    try {
+      const result = await auth.getUsers(chunk);
+      for (const rec of result.users) nameByUid.set(rec.uid, rec.displayName ?? null);
+    } catch (e) {
+      console.error("[admin] Failed to batch-fetch displayNames:", e);
+    }
+  }
+  for (const u of users) u.displayName = nameByUid.get(u.uid as string) ?? null;
 }
 
 export function registerAdminRoutes(app: Express): void {
@@ -154,7 +181,67 @@ export function registerAdminRoutes(app: Express): void {
     return res.json({ isLeader: isLeader(), machineId: machineId() });
   });
 
+  // ── System Health ─────────────────────────────────────────────────────────
+  //
+  // 16+ optional integrations degrade silently per CLAUDE.md — the only way
+  // to know one's missing today is to check Fly secrets directly or wait for
+  // a feature to visibly misbehave. Reports presence only, never the value.
+  app.get("/api/admin/health", authMiddleware, (_req, res) => {
+    const configured = (name: string) => !!process.env[name];
+    return res.json({
+      integrations: {
+        finnhub:        configured("FINNHUB_API_KEY"),
+        openai:         configured("AI_INTEGRATIONS_OPENAI_API_KEY"),
+        anthropic:      configured("ANTHROPIC_API_KEY"),
+        alphaVantage:   configured("ALPHA_VANTAGE_API_KEY"),
+        twelveData:     configured("TWELVE_DATA_API_KEY"),
+        fmp:            configured("FMP_API_KEY"),
+        quiver:         configured("QUIVER_API_KEY"),
+        upstashRedis:   configured("UPSTASH_REDIS_REST_URL") && configured("UPSTASH_REDIS_REST_TOKEN"),
+        resend:         configured("RESEND_API_KEY"),
+        aisstream:      configured("AISSTREAM_API_KEY"),
+        revenuecat:     configured("REVENUECAT_WEBHOOK_SECRET"),
+        appSigning:     configured("APP_SIGNING_SECRET"),
+        firebaseAdmin:  configured("FIREBASE_SERVICE_ACCOUNT_JSON"),
+      },
+      leaderStatus: { isLeader: isLeader(), machineId: machineId() },
+      build: {
+        flyAppName: process.env.FLY_APP_NAME ?? null,
+        flyMachineVersion: process.env.FLY_MACHINE_VERSION ?? null,
+        flyAllocId: process.env.FLY_ALLOC_ID ?? null,
+        flyRegion: process.env.FLY_REGION ?? null,
+      },
+    });
+  });
+
   // ── Users ─────────────────────────────────────────────────────────────────
+
+  // Server-side exact-email lookup — the paginated list below only ever
+  // searches whatever page has already been loaded client-side, so a user
+  // who hasn't been paged in yet is invisible to that search. Firebase Admin
+  // doesn't support prefix/fuzzy search, so this is an exact match only.
+  app.get("/api/admin/users/search", authMiddleware, async (req, res) => {
+    const auth = adminAuth();
+    if (!auth) return res.status(503).json({ error: "Firebase Auth unavailable" });
+    const email = req.query.email as string | undefined;
+    if (!email) return res.status(400).json({ error: "email query param required" });
+    try {
+      const userRecord = await auth.getUserByEmail(email);
+      const db = adminFirestore();
+      const doc = db ? await db.collection("users").doc(userRecord.uid).get() : null;
+      const user = {
+        uid: userRecord.uid,
+        email: userRecord.email ?? null,
+        displayName: userRecord.displayName ?? null,
+        createdAt: doc?.exists ? serializeFirestoreDoc(doc.data() as Record<string, unknown>).createdAt ?? userRecord.metadata.creationTime : userRecord.metadata.creationTime,
+        ...(doc?.exists ? serializeFirestoreDoc(doc.data() as Record<string, unknown>) : {}),
+      };
+      return res.json({ user });
+    } catch (e: any) {
+      if (e?.code === "auth/user-not-found") return res.json({ user: null });
+      return res.status(500).json({ error: String(e) });
+    }
+  });
 
   app.get("/api/admin/users", authMiddleware, async (req, res) => {
     const db = adminFirestore();
@@ -172,7 +259,8 @@ export function registerAdminRoutes(app: Express): void {
       const snap = await q.get();
       const hasMore = snap.docs.length > limit;
       const docs = hasMore ? snap.docs.slice(0, limit) : snap.docs;
-      const users = docs.map((d) => ({ uid: d.id, ...serializeFirestoreDoc(d.data()) }));
+      const users = docs.map((d): Record<string, unknown> => ({ uid: d.id, ...serializeFirestoreDoc(d.data()) }));
+      await attachDisplayNames(users);
       return res.json({ users, hasMore });
     } catch (e) {
       return res.status(500).json({ error: String(e) });
@@ -275,6 +363,28 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  // Billing/plan history for one user — RevenueCat webhook events + admin
+  // plan overrides, both written by recordBillingEvent() (lib/billing-events.ts).
+  app.get("/api/admin/users/:uid/billing-events", authMiddleware, async (req, res) => {
+    const db = adminFirestore();
+    if (!db) return res.status(503).json({ error: "Firestore unavailable" });
+    const uid = req.params.uid as string;
+    try {
+      // Sorted in-memory rather than .orderBy("receivedAt") server-side —
+      // that'd need a composite index on a brand-new collection, and
+      // per-user event volume is small (a handful of billing events over
+      // the account's lifetime), so this stays cheap without one.
+      const snap = await db.collection("billing_events").where("deviceId", "==", uid).get();
+      const events = snap.docs
+        .map((d): Record<string, unknown> => ({ id: d.id, ...serializeFirestoreDoc(d.data()) }))
+        .sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))
+        .slice(0, 20);
+      return res.json({ events });
+    } catch (e) {
+      return res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.post("/api/admin/users/:uid/devices/:deviceId/notify", authMiddleware, async (req, res) => {
     const db = adminFirestore();
     const messaging = adminMessaging();
@@ -357,6 +467,22 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  // Single-doc read — the paginated list below is for browsing/auditing;
+  // this is for looking up one known uid/deviceId (e.g. from the Users
+  // page's Plan & Billing section) without paging through the whole list.
+  app.get("/api/admin/subscriptions/:deviceId", authMiddleware, async (req, res) => {
+    const db = adminFirestore();
+    if (!db) return res.status(503).json({ error: "Firestore unavailable" });
+    const deviceId = req.params.deviceId as string;
+    try {
+      const doc = await db.collection("subscriptions").doc(deviceId).get();
+      const sub = doc.exists ? { deviceId, ...serializeFirestoreDoc(doc.data() as Record<string, unknown>) } : null;
+      return res.json({ sub });
+    } catch (e) {
+      return res.status(500).json({ error: String(e) });
+    }
+  });
+
   app.patch("/api/admin/subscriptions/:deviceId", authMiddleware, async (req, res) => {
     const deviceId = req.params.deviceId as string;
     const { plan } = req.body as { plan?: string };
@@ -366,6 +492,7 @@ export function registerAdminRoutes(app: Express): void {
     const typedPlan = plan as DevicePlan;
     devicePlanMap.set(deviceId, typedPlan);
     persistPlan(deviceId, typedPlan, "admin_override");
+    recordBillingEvent(deviceId, "admin_override", typedPlan);
     console.log(`[admin] Plan override: device=${deviceId} → ${plan}`);
     return res.json({ ok: true, deviceId, plan: typedPlan });
   });
@@ -431,22 +558,34 @@ export function registerAdminRoutes(app: Express): void {
   });
 
   // ── Cache Busting ─────────────────────────────────────────────────────────
+  //
+  // Single source of truth for cache targets — both the POST handler below
+  // and GET /cache/targets read from this list, so the admin UI's button
+  // grid no longer has to hand-mirror this set (frontend used to hardcode
+  // its own copy that could silently drift out of sync with this one).
+  const CACHE_TARGETS: { key: string; label: string; bust: () => void | Promise<void> }[] = [
+    { key: "market-quotes", label: "Indices / Commodities / Forex", bust: bustMarketQuotesCache },
+    { key: "heatmap",       label: "Heatmap (regions + assets)",    bust: bustHeatmapCache },
+    { key: "treemap",       label: "Treemap (all indices)",         bust: bustTreemapCache },
+    { key: "sectors",       label: "Sector ETFs + RRG",             bust: bustSectorsCache },
+    { key: "bonds",         label: "Bonds / Yield Curve",           bust: bustBondsCache },
+    { key: "tariffs",       label: "Tariffs",                       bust: bustTariffsCache },
+    { key: "briefing",      label: "AI Briefing",                   bust: bustBriefingCache },
+    { key: "fear-greed",    label: "Fear & Greed",                  bust: bustFearGreedCache },
+    { key: "oge",           label: "OGE Cache + Redis",             bust: bustOgeCache },
+  ];
+
+  app.get("/api/admin/cache/targets", authMiddleware, (_req, res) => {
+    return res.json({ targets: CACHE_TARGETS.map(({ key, label }) => ({ key, label })) });
+  });
 
   app.post("/api/admin/cache/bust", authMiddleware, async (req, res) => {
     const { target } = req.body as { target?: string };
-    switch (target) {
-      case "bonds":         bustBondsCache();         break;
-      case "sectors":       bustSectorsCache();       break;
-      case "tariffs":       bustTariffsCache();       break;
-      case "briefing":      bustBriefingCache();      break;
-      case "fear-greed":    bustFearGreedCache();     break;
-      case "oge":           await bustOgeCache();     break;
-      case "heatmap":       bustHeatmapCache();       break;
-      case "treemap":       bustTreemapCache();       break;
-      case "market-quotes": bustMarketQuotesCache();  break;
-      default:
-        return res.status(400).json({ error: "target must be: bonds|sectors|tariffs|briefing|fear-greed|oge|heatmap|treemap|market-quotes" });
+    const found = CACHE_TARGETS.find((t) => t.key === target);
+    if (!found) {
+      return res.status(400).json({ error: `target must be one of: ${CACHE_TARGETS.map((t) => t.key).join("|")}` });
     }
+    await found.bust();
     console.log(`[admin] Cache busted: ${target}`);
     return res.json({ ok: true, target });
   });

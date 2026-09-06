@@ -25,6 +25,7 @@ export type AdminLeader = z.infer<typeof AdminLeaderSchema>;
 export const AdminUserSchema = z.object({
   uid: z.string(),
   email: z.string().nullish(),
+  displayName: z.string().nullish(),
   createdAt: z.string().nullish(),
   preferences: z.record(z.unknown()).nullish(),
 }).passthrough();
@@ -35,6 +36,28 @@ export const AdminUsersListSchema = z.object({
   hasMore: z.boolean(),
 });
 export type AdminUsersList = z.infer<typeof AdminUsersListSchema>;
+
+export const AdminUserSearchSchema = z.object({
+  user: AdminUserSchema.nullable(),
+});
+export type AdminUserSearch = z.infer<typeof AdminUserSearchSchema>;
+
+// ── Billing Events (audit trail behind the User/Billing lookup) ───────────────
+
+export const BillingEventSchema = z.object({
+  id: z.string(),
+  deviceId: z.string(),
+  type: z.string(),
+  plan: AdminPlan,
+  entitlementIds: z.array(z.string()).nullish(),
+  receivedAt: z.string(),
+}).passthrough();
+export type BillingEvent = z.infer<typeof BillingEventSchema>;
+
+export const BillingEventsListSchema = z.object({
+  events: z.array(BillingEventSchema),
+});
+export type BillingEventsList = z.infer<typeof BillingEventsListSchema>;
 
 // ── Alerts ────────────────────────────────────────────────────────────────────
 
@@ -89,6 +112,11 @@ export const AdminSubscriptionsListSchema = z.object({
 });
 export type AdminSubscriptionsList = z.infer<typeof AdminSubscriptionsListSchema>;
 
+export const AdminSubscriptionSingleSchema = z.object({
+  sub: AdminSubscriptionSchema.nullable(),
+});
+export type AdminSubscriptionSingle = z.infer<typeof AdminSubscriptionSingleSchema>;
+
 // ── Remote Config ─────────────────────────────────────────────────────────────
 
 export const AdminRemoteConfigSchema = z.object({
@@ -112,6 +140,42 @@ export type AdminPasswordReset = z.infer<typeof AdminPasswordResetSchema>;
 
 export const AdminOkSchema = z.object({ ok: z.boolean() }).passthrough();
 export type AdminOk = z.infer<typeof AdminOkSchema>;
+
+// ── System Health ───────────────────────────────────────────────────────────
+
+export const AdminHealthSchema = z.object({
+  integrations: z.object({
+    finnhub: z.boolean(),
+    openai: z.boolean(),
+    anthropic: z.boolean(),
+    alphaVantage: z.boolean(),
+    twelveData: z.boolean(),
+    fmp: z.boolean(),
+    quiver: z.boolean(),
+    upstashRedis: z.boolean(),
+    resend: z.boolean(),
+    aisstream: z.boolean(),
+    revenuecat: z.boolean(),
+    appSigning: z.boolean(),
+    firebaseAdmin: z.boolean(),
+  }),
+  leaderStatus: z.object({ isLeader: z.boolean(), machineId: z.string() }),
+  build: z.object({
+    flyAppName: z.string().nullable(),
+    flyMachineVersion: z.string().nullable(),
+    flyAllocId: z.string().nullable(),
+    flyRegion: z.string().nullable(),
+  }),
+});
+export type AdminHealth = z.infer<typeof AdminHealthSchema>;
+
+// ── Cache Targets ────────────────────────────────────────────────────────────
+
+export const CacheTargetSchema = z.object({ key: z.string(), label: z.string() });
+export type CacheTarget = z.infer<typeof CacheTargetSchema>;
+
+export const CacheTargetsListSchema = z.object({ targets: z.array(CacheTargetSchema) });
+export type CacheTargetsList = z.infer<typeof CacheTargetsListSchema>;
 
 // ── AI Call Usage ─────────────────────────────────────────────────────────
 
@@ -183,6 +247,12 @@ export const SocialBuzzKillSwitchResponseSchema = z.object({
   killSwitch: z.boolean(),
 });
 export type SocialBuzzKillSwitchResponse = z.infer<typeof SocialBuzzKillSwitchResponseSchema>;
+
+export const SocialBuzzCapResponseSchema = z.object({
+  ok: z.boolean(),
+  cap: z.number(),
+});
+export type SocialBuzzCapResponse = z.infer<typeof SocialBuzzCapResponseSchema>;
 
 export const CandidatePostResponseSchema = z.object({
   post: CandidatePostSchema,

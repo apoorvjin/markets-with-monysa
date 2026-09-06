@@ -1,14 +1,36 @@
 import { useQuery } from "@tanstack/react-query";
-import { AdminStatsSchema } from "@monysa/contracts";
+import { AdminHealthSchema, AdminStatsSchema } from "@monysa/contracts";
 import type { ReactNode } from "react";
 import { adminApi } from "../lib/api";
 import { queryClient } from "../lib/query";
 import { IconBell, IconCreditCard, IconUsers } from "../components/Icons";
 
+const INTEGRATION_LABELS: Record<string, string> = {
+  finnhub: "Finnhub (crypto WS)",
+  openai: "OpenAI (briefings)",
+  anthropic: "Anthropic (AI notes)",
+  alphaVantage: "Alpha Vantage",
+  twelveData: "Twelve Data (spot overlay)",
+  fmp: "FMP",
+  quiver: "Quiver",
+  upstashRedis: "Upstash Redis",
+  resend: "Resend (email)",
+  aisstream: "AISstream (vessels)",
+  revenuecat: "RevenueCat webhook secret",
+  appSigning: "App signing (HMAC)",
+  firebaseAdmin: "Firebase Admin SDK",
+};
+
 export function DashboardPage() {
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ["admin", "stats"],
     queryFn: () => adminApi.get("/api/admin/stats", AdminStatsSchema),
+    refetchInterval: 60_000,
+  });
+
+  const healthQ = useQuery({
+    queryKey: ["admin", "health"],
+    queryFn: () => adminApi.get("/api/admin/health", AdminHealthSchema),
     refetchInterval: 60_000,
   });
 
@@ -83,6 +105,36 @@ export function DashboardPage() {
                 &nbsp;—&nbsp;
                 {data?.leaderStatus.isLeader ? "Leader" : "Follower (not leader)"}
               </span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-header">
+          System Health
+          {healthQ.data?.build.flyAppName && (
+            <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}>
+              {healthQ.data.build.flyAppName} · {healthQ.data.build.flyRegion ?? "—"} · machine {healthQ.data.build.flyAllocId?.slice(0, 8) ?? "—"}
+            </span>
+          )}
+        </div>
+        <div className="section-body">
+          {healthQ.isLoading && <div className="empty">Loading…</div>}
+          {healthQ.data && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s3)" }}>
+              {Object.entries(healthQ.data.integrations).map(([key, configured]) => (
+                <span
+                  key={key}
+                  className="badge"
+                  style={{
+                    background: configured ? "rgba(0,212,170,0.12)" : "rgba(255,77,106,0.12)",
+                    color: configured ? "var(--accent)" : "var(--danger)",
+                  }}
+                >
+                  {configured ? "✓" : "✗"} {INTEGRATION_LABELS[key] ?? key}
+                </span>
+              ))}
             </div>
           )}
         </div>

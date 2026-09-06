@@ -1,10 +1,15 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   AdminAlertsListSchema,
   AdminDevicesListSchema,
   AdminOkSchema,
   AdminPasswordResetSchema,
+  AdminSubscriptionSingleSchema,
+  AdminUserSearchSchema,
   AdminUsersListSchema,
+  BillingEventsListSchema,
+  type AdminPlan,
   type AdminUser,
 } from "@monysa/contracts";
 import { useState } from "react";
@@ -32,10 +37,20 @@ function TableSkeleton({ cols, rows = 6 }: { cols: number; rows?: number }) {
 }
 
 export function UsersPage() {
+  const search_ = useSearch({ from: "/users" });
+  const navigate = useNavigate({ from: "/users" });
+
   const [search, setSearch] = useState("");
-  const [selectedUid, setSelectedUid] = useState<string | null>(null);
+  const [selectedUid, setSelectedUidState] = useState<string | null>(search_.uid ?? null);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [allUsers, setAllUsers] = useState<AdminUser[]>([]);
+
+  // Keep the ?uid= query param in sync so a detail panel is linkable/shareable
+  // (e.g. from a billing-event row elsewhere) and survives a page refresh.
+  function setSelectedUid(uid: string | null) {
+    setSelectedUidState(uid);
+    void navigate({ search: (prev) => ({ ...prev, uid: uid ?? undefined }) });
+  }
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin", "users", cursor],
@@ -52,11 +67,30 @@ export function UsersPage() {
     },
   });
 
+  // Deep-linked ?uid= might reference a user not yet paged into `allUsers` —
+  // fall back to the exact-email-independent single-user path isn't
+  // available (only email search exists server-side), so if it's not found
+  // locally after the first page loads, we just leave the panel open with
+  // whatever `selectedUid` is; the detail panel only needs the uid itself.
+
+  const emailSearch = useMutation({
+    mutationFn: (email: string) => adminApi.get(`/api/admin/users/search?email=${encodeURIComponent(email)}`, AdminUserSearchSchema),
+    onSuccess: (res) => {
+      if (!res.user) return;
+      setAllUsers((prev) => (prev.some((u) => u.uid === res.user!.uid) ? prev : [res.user as AdminUser, ...prev]));
+      setSelectedUid(res.user.uid);
+    },
+  });
+
   const filtered = allUsers.filter((u) => {
     if (!search) return true;
     const q = search.toLowerCase();
-    return u.uid.toLowerCase().includes(q) || (u.email ?? "").toLowerCase().includes(q);
+    return u.uid.toLowerCase().includes(q)
+      || (u.email ?? "").toLowerCase().includes(q)
+      || (u.displayName ?? "").toLowerCase().includes(q);
   }) as AdminUser[];
+
+  const noLocalMatch = search.includes("@") && filtered.length === 0 && !isLoading;
 
   return (
     <>
@@ -73,29 +107,47 @@ export function UsersPage() {
         <div className="table-toolbar">
           <input
             className="table-search"
-            placeholder="Search by email or uid…"
+            placeholder="Search by email or uid… (press Enter to look up an exact email not yet loaded)"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && search.includes("@")) emailSearch.mutate(search.trim());
+            }}
           />
+          {noLocalMatch && (
+            <button
+              className="btn btn-ghost btn-sm"
+              disabled={emailSearch.isPending}
+              onClick={() => emailSearch.mutate(search.trim())}
+            >
+              {emailSearch.isPending ? "Looking up…" : "Not loaded yet — look up exact email"}
+            </button>
+          )}
+          {emailSearch.isSuccess && emailSearch.data.user === null && (
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>No account with that email.</span>
+          )}
+          {emailSearch.isError && <span className="error-msg" style={{ padding: "var(--s2) var(--s3)" }}>{String(emailSearch.error)}</span>}
         </div>
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>UID</th>
+                <th>Name</th>
                 <th>Email</th>
                 <th>Created</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && allUsers.length === 0 && <TableSkeleton cols={4} />}
+              {isLoading && allUsers.length === 0 && <TableSkeleton cols={5} />}
               {filtered.length === 0 && !isLoading && (
-                <tr><td colSpan={4} className="empty">No users found.</td></tr>
+                <tr><td colSpan={5} className="empty">No users found.</td></tr>
               )}
               {filtered.map((u) => (
                 <tr key={u.uid} className="clickable" onClick={() => setSelectedUid(u.uid)}>
                   <td className="mono">{u.uid.slice(0, 16)}…</td>
+                  <td>{u.displayName ?? <span style={{ color: "var(--text-faint)" }}>—</span>}</td>
                   <td>{u.email ?? <span style={{ color: "var(--text-faint)" }}>—</span>}</td>
                   <td style={{ color: "var(--text-muted)" }}>
                     {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
@@ -144,6 +196,25 @@ function UserDetailPanel({ uid, onClose }: { uid: string; onClose: () => void })
   const devicesQ = useQuery({
     queryKey: ["admin", "user-devices", uid],
     queryFn: () => adminApi.get(`/api/admin/users/${uid}/devices`, AdminDevicesListSchema),
+  });
+
+  const subQ = useQuery({
+    queryKey: ["admin", "user-sub", uid],
+    queryFn: () => adminApi.get(`/api/admin/subscriptions/${uid}`, AdminSubscriptionSingleSchema),
+  });
+
+  const billingEventsQ = useQuery({
+    queryKey: ["admin", "user-billing-events", uid],
+    queryFn: () => adminApi.get(`/api/admin/users/${uid}/billing-events`, BillingEventsListSchema),
+  });
+
+  const overridePlan = useMutation({
+    mutationFn: (plan: AdminPlan) => adminApi.patch(`/api/admin/subscriptions/${uid}`, { plan }, AdminOkSchema),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "user-sub", uid] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "user-billing-events", uid] });
+      void queryClient.invalidateQueries({ queryKey: ["admin", "subscriptions"] });
+    },
   });
 
   const deleteAlert = useMutation({
@@ -210,6 +281,61 @@ function UserDetailPanel({ uid, onClose }: { uid: string; onClose: () => void })
               })()}
             </div>
           )}
+
+          {/* Plan & Billing */}
+          <div className="section">
+            <div className="section-header">Plan & Billing</div>
+            <div className="section-body">
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--s3)" }}>
+                {subQ.isLoading ? (
+                  <span className="skeleton skeleton-text" style={{ width: 100 }} />
+                ) : (
+                  <span className={`badge badge-${subQ.data?.sub?.plan ?? "free"}`}>
+                    {subQ.data?.sub?.plan ?? "free"}
+                  </span>
+                )}
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                  {subQ.data?.sub ? "has a subscription record" : "no subscription record — defaults to free"}
+                </span>
+                <select
+                  className="select"
+                  style={{ marginLeft: "auto" }}
+                  value={subQ.data?.sub?.plan ?? "free"}
+                  disabled={overridePlan.isPending || subQ.isLoading}
+                  onChange={(e) => overridePlan.mutate(e.target.value as AdminPlan)}
+                >
+                  <option value="free">free</option>
+                  <option value="pro">pro</option>
+                </select>
+              </div>
+              {overridePlan.isError && <div className="error-msg">{String(overridePlan.error)}</div>}
+
+              <div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: "var(--s2)" }}>
+                  Billing history ({billingEventsQ.data?.events.length ?? "—"})
+                </div>
+                {billingEventsQ.isLoading && <div className="empty">Loading…</div>}
+                {billingEventsQ.data?.events.length === 0 && (
+                  <div className="empty">No billing events recorded for this account.</div>
+                )}
+                {billingEventsQ.data?.events.map((ev) => (
+                  <div
+                    key={ev.id}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      padding: "var(--s2) 0", borderBottom: "1px solid var(--border)", gap: "var(--s3)", fontSize: 12,
+                    }}
+                  >
+                    <span>{ev.type}</span>
+                    <span className={`badge badge-${ev.plan}`}>{ev.plan}</span>
+                    <span style={{ color: "var(--text-muted)", marginLeft: "auto" }}>
+                      {new Date(ev.receivedAt).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
 
           {/* Account Actions */}
           <div className="section">

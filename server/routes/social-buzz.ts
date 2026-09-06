@@ -9,6 +9,7 @@
  *   POST  /api/admin/social-buzz/queue/:id/reject
  *   GET   /api/admin/social-buzz/status
  *   POST  /api/admin/social-buzz/kill-switch
+ *   POST  /api/admin/social-buzz/cap
  *   POST  /api/admin/social-buzz/run-once   (debug — manually trigger a poll tick)
  */
 
@@ -18,15 +19,7 @@ import { listCandidates, getCandidate, updateCandidate, countPublishedOrPendingT
 import { publishToInstagram, PLACEHOLDER_IMAGE_URL } from "../lib/social-buzz/meta-client";
 import { tick } from "../lib/social-buzz/poller";
 import type { PostStatus } from "../lib/social-buzz/types";
-
-// In-process override so an operator can halt posting without a redeploy.
-// The SOCIAL_BUZZ_KILL_SWITCH env var still wins on restart.
-let _killSwitchOverride: boolean | null = null;
-
-function killSwitchActive(): boolean {
-  if (_killSwitchOverride !== null) return _killSwitchOverride;
-  return process.env.SOCIAL_BUZZ_KILL_SWITCH === "true";
-}
+import { killSwitchActive, setKillSwitch, dailyCap, setDailyCap } from "../lib/social-buzz/config-override";
 
 export function registerSocialBuzzRoutes(app: Express): void {
   app.get("/api/admin/social-buzz/queue", authMiddleware, async (req, res) => {
@@ -96,16 +89,29 @@ export function registerSocialBuzzRoutes(app: Express): void {
       autoPublishEnabled: process.env.SOCIAL_BUZZ_AUTO_PUBLISH_ENABLED === "true",
       dryRun: process.env.SOCIAL_BUZZ_DRY_RUN !== "false" && !process.env.META_PAGE_ACCESS_TOKEN,
       postsToday: await countPublishedOrPendingToday(),
-      cap: Number(process.env.SOCIAL_BUZZ_MAX_POSTS_PER_DAY) || 3,
+      cap: dailyCap(),
     });
   });
 
   app.post("/api/admin/social-buzz/kill-switch", authMiddleware, async (req, res) => {
     const { enabled } = req.body as { enabled?: boolean };
     if (typeof enabled !== "boolean") return res.status(400).json({ error: "enabled must be boolean" });
-    _killSwitchOverride = enabled;
+    setKillSwitch(enabled);
     console.log(`[social-buzz] kill switch ${enabled ? "ENABLED" : "disabled"} via admin override`);
     return res.json({ ok: true, killSwitch: killSwitchActive() });
+  });
+
+  // In-process override for the daily post cap — same non-redeploy pattern
+  // as the kill switch above. Resets to the SOCIAL_BUZZ_MAX_POSTS_PER_DAY
+  // env default (or 3) on restart.
+  app.post("/api/admin/social-buzz/cap", authMiddleware, async (req, res) => {
+    const { cap } = req.body as { cap?: number };
+    if (typeof cap !== "number" || !Number.isInteger(cap) || cap < 0) {
+      return res.status(400).json({ error: "cap must be a non-negative integer" });
+    }
+    setDailyCap(cap);
+    console.log(`[social-buzz] daily cap set to ${cap} via admin override`);
+    return res.json({ ok: true, cap: dailyCap() });
   });
 
   // Debug-only: manually trigger a poll tick against real live data, useful for

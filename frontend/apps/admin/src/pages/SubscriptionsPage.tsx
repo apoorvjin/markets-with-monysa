@@ -3,6 +3,7 @@ import { AdminOkSchema, AdminSubscriptionsListSchema, type AdminPlan, type Admin
 import { useState } from "react";
 import { adminApi } from "../lib/api";
 import { queryClient } from "../lib/query";
+import { ConfirmButton } from "../components/ConfirmButton";
 
 const PLANS: AdminPlan[] = ["free", "pro"];
 const PLAN_FILTER = ["all", ...PLANS] as const;
@@ -135,13 +136,9 @@ export function SubscriptionsPage() {
                     </select>
                   </td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <button
-                      className="btn btn-danger btn-sm"
-                      disabled={remove.isPending}
-                      onClick={() => remove.mutate(s.deviceId)}
-                    >
+                    <ConfirmButton disabled={remove.isPending} onConfirm={() => remove.mutate(s.deviceId)}>
                       Remove
-                    </button>
+                    </ConfirmButton>
                   </td>
                 </tr>
               ))}

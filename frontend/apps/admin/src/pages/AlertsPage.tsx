@@ -3,6 +3,7 @@ import { AdminAlertsListSchema, AdminOkSchema } from "@monysa/contracts";
 import { useState } from "react";
 import { adminApi } from "../lib/api";
 import { queryClient } from "../lib/query";
+import { ConfirmButton } from "../components/ConfirmButton";
 
 type Filter = "all" | "active" | "triggered";
 
@@ -117,13 +118,12 @@ export function AlertsPage() {
                     {a.createdAt ? new Date(a.createdAt).toLocaleDateString() : "—"}
                   </td>
                   <td>
-                    <button
-                      className="btn btn-danger btn-sm"
+                    <ConfirmButton
                       disabled={deleteAlert.isPending || !a.uid}
-                      onClick={() => a.uid && deleteAlert.mutate({ uid: a.uid, alertId: a.id })}
+                      onConfirm={() => a.uid && deleteAlert.mutate({ uid: a.uid, alertId: a.id })}
                     >
                       Delete
-                    </button>
+                    </ConfirmButton>
                   </td>
                 </tr>
               ))}

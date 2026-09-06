@@ -3,7 +3,9 @@ import {
   SocialBuzzQueueSchema,
   SocialBuzzStatusSchema,
   SocialBuzzKillSwitchResponseSchema,
+  SocialBuzzCapResponseSchema,
   CandidatePostResponseSchema,
+  PostStatusSchema,
   type PostStatus,
 } from "@monysa/contracts";
 import { useState } from "react";
@@ -12,13 +14,17 @@ import { queryClient } from "../lib/query";
 
 type Filter = PostStatus | "all";
 
-const FILTERS: Filter[] = ["pending", "ready_for_manual_post", "published", "rejected", "failed", "all"];
+// Derived from the schema (not hand-copied) so a new status value added to
+// PostStatusSchema is automatically filterable here — this list used to omit
+// "approved" entirely, a status the enum already declared.
+const FILTERS: Filter[] = [...PostStatusSchema.options, "all"];
 
 export function SocialBuzzPage() {
   const [filter, setFilter] = useState<Filter>("pending");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [capInput, setCapInput] = useState<string | null>(null);
 
   const { data: status } = useQuery({
     queryKey: ["admin", "social-buzz", "status"],
@@ -67,6 +73,15 @@ export function SocialBuzzPage() {
     },
   });
 
+  const setCap = useMutation({
+    mutationFn: (cap: number) =>
+      adminApi.post("/api/admin/social-buzz/cap", { cap }, SocialBuzzCapResponseSchema),
+    onSuccess: () => {
+      setCapInput(null);
+      void queryClient.invalidateQueries({ queryKey: ["admin", "social-buzz", "status"] });
+    },
+  });
+
   const copyToClipboard = (id: string, text: string) => {
     void navigator.clipboard.writeText(text).then(() => {
       setCopiedId(id);
@@ -98,8 +113,42 @@ export function SocialBuzzPage() {
             </span>
             <span className="badge">{status.dryRun ? "DRY RUN" : "LIVE"}</span>
             <span className="badge">Auto-publish (IG): {status.autoPublishEnabled ? "on" : "off"}</span>
-            <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              {status.postsToday} / {status.cap} posts today
+            <span style={{ color: "var(--text-muted)", fontSize: 13, display: "flex", alignItems: "center", gap: "var(--s2)" }}>
+              {status.postsToday} /
+              {capInput === null ? (
+                <>
+                  {status.cap}
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => setCapInput(String(status.cap))}
+                  >
+                    Edit cap
+                  </button>
+                </>
+              ) : (
+                <>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    step={1}
+                    style={{ width: 60 }}
+                    value={capInput}
+                    onChange={(e) => setCapInput(e.target.value)}
+                  />
+                  <button
+                    className="btn btn-primary btn-sm"
+                    disabled={setCap.isPending || !/^\d+$/.test(capInput)}
+                    onClick={() => setCap.mutate(Number(capInput))}
+                  >
+                    Save
+                  </button>
+                  <button className="btn btn-ghost btn-sm" onClick={() => setCapInput(null)}>
+                    Cancel
+                  </button>
+                </>
+              )}
+              posts today
             </span>
             <button
               className={`btn btn-sm ${status.killSwitch ? "btn-primary" : "btn-danger"}`}
