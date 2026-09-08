@@ -8295,7 +8295,11 @@ export function createTradingRouter(): Router {
   }
 
   router.get("/earnings-calendar", async (req: Request, res: Response) => {
-    const days = Math.min(parseInt((req.query.days as string) ?? "15", 10), 30);
+    // Cap raised 30->45 (2026-09-08): several major markets' earnings seasons
+    // (e.g. India's Q2 IT-major reporting, TCS/Wipro/Axis Bank) start ~5 weeks
+    // out, just past a strict 30-day window — see the global-earnings snapshot
+    // refresh, which now fetches a matching 45-day range from TradingEconomics.
+    const days = Math.min(parseInt((req.query.days as string) ?? "15", 10), 45);
     const countryParam = req.query.country as string | undefined;
     if (countryParam) {
       return handleGlobalEarningsCalendar(req, res, countryParam, days);
