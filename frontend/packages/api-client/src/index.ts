@@ -23,6 +23,7 @@ import {
   InstitutionalFlowResponse,
   MeResponse,
   MoversResponse,
+  NotificationLogResponse,
   DividendsResponse,
   InsiderTradesResponse,
   InstitutionalHoldingsResponse,
@@ -60,6 +61,7 @@ import {
   MaritimeVesselsResponse,
   MaritimeChokepointsResponse,
   YieldCurveHistoryResponse,
+  SessionStatusResponse,
   type WireDesk,
   type ChartRange,
   type EtfCategory,
@@ -302,6 +304,13 @@ export function createApiClient(opts: ApiClientOptions) {
     getWireItems: (desk: WireDesk, limit?: number) =>
       get(`/api/wire/items${qs({ desk, limit })}`, WireItemsResponse),
     getWireBreaking: () => get("/api/wire/breaking", WireBreakingResponse),
+
+    // ── Notifications (broadcast-push history — bell icon on both clients) ──
+    getNotificationLog: (limit?: number) =>
+      get(`/api/notifications/log${qs({ limit })}`, NotificationLogResponse),
+
+    // ── Market session status (real, holiday-aware exchange open/closed) ──
+    getSessionStatus: () => get("/api/markets/session-status", SessionStatusResponse),
 
     // ── Wire → Intelligence (keyless hazards/maritime/aviation) ─────────
     getIntelQuakes: () => get("/api/intel/quakes", IntelQuakesResponse),

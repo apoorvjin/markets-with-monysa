@@ -83,6 +83,191 @@ server/
     leader.ts           # Multi-machine leader election via Upstash Redis lease.
                        # Gates BacktestWarm + Finnhub WS to one machine when Fly runs >1.
                        # isLeader() returns true without Redis (local dev / single-machine).
+    alert-checker.ts    # Leader-only, every 20s: checks Firestore price alerts against
+                       # latestPrices, sends a targeted (per-uid, multi-device) FCM push
+                       # on trigger. Compare with broadcast-notifier.ts below — that one
+                       # is topic-broadcast (no user targeting), this one is per-user.
+    broadcast-notifier.ts  # Generic engine (2026-09) for leader-gated, broadcast (topic,
+                       # not per-user) push notifications triggered by a server-side
+                       # calculation moving into a new discrete state. registerBroadcastTrigger({
+                       # id, intervalMs, cooldownMs?, check }) registers a trigger; check()
+                       # returns { state, title, body, data? } or null. The engine — not the
+                       # trigger — owns state comparison, Firestore persistence
+                       # (`broadcastTriggers/{id}`, survives restart/leader-failover, unlike the
+                       # old regime-change-notifier's in-memory-only `_lastLabel`), cooldown
+                       # enforcement (`decideAction`, pure + unit-tested in
+                       # broadcast-notifier.test.ts), and the FCM send — all triggers share one
+                       # topic (`BROADCAST_TOPIC = "broadcast-alerts"`) unless a trigger
+                       # overrides it. startBroadcastNotifiers() (called once in index.ts, after
+                       # every registerXTrigger() call) starts each trigger's poll loop. To add a
+                       # new trigger: write a registerXTrigger() function (see
+                       # regime-change-notifier.ts for the pattern) and call it in index.ts
+                       # before startBroadcastNotifiers() — no new poll loop, topic, or
+                       # persistence code needed per trigger.
+    regime-change-notifier.ts  # VIX/VIX3M term-structure trigger registered into
+                       # broadcast-notifier.ts (id "vix-term-structure", every 30 min, 4h
+                       # cooldown). computeTermLabel() maps VIX3M/VIX ratio -> 4-state label
+                       # (strong_contango/contango/flat/backwardation) shown on the Macro
+                       # dashboard. **2026-09: this trigger moved from its own dedicated FCM
+                       # topic ("regime-changes") onto the shared "broadcast-alerts" topic as
+                       # part of the broadcast-notifier.ts migration — a clean cutover, not
+                       # dual-published. Any already-installed app build still subscribed to
+                       # "regime-changes" stops receiving these pushes until it updates to a
+                       # build that subscribes to "broadcast-alerts".** Don't reintroduce
+                       # "regime-changes" anywhere.
+    macro-notifiers.ts  # 4 broadcast triggers (2026-09): yield-curve-status (3M/10Y
+                       # label flip, hourly — reuses `curveStatusOf()` exported from
+                       # routes/economy.ts so the ±0.2 thresholds can't drift from what
+                       # /api/bonds displays), fear-greed-extreme (only the two outer
+                       # bands notify; 3d cooldown), us-debt-milestone ($1T floor
+                       # crossing off Treasury debt_to_penny — already past $40T as of
+                       # 2026-09, so the next push is $41T), extreme-daily-move (±3% on
+                       # a curated 12-instrument headline list, NOT all 46 indices —
+                       # 2% fires most weeks and trains people to ignore it; 8h cooldown).
+                       # Each fetches its own upstream data rather than reading a route's
+                       # in-process cache, because a cache is only warm if a user happened
+                       # to hit that endpoint.
+    positioning-notifiers.ts  # 2 broadcast triggers (2026-09): cot-positioning-flip
+                       # (bull<->bear cross of the CFTC sentiment band on Gold/Silver/
+                       # Crude/Copper/S&P — intensifying within a side is NOT a flip;
+                       # reads `getCotSnapshot()` exported from routes/markets.ts) and
+                       # sector-rotation-quadrant (a sector crossing into Leading or
+                       # Lagging on the RRG via `getSectorQuadrants()`; the noisy
+                       # Improving/Weakening middle transitions are deliberately ignored).
+                       # Both encode a whole map as the state string (`name=label,...`,
+                       # sorted so row order can't fake a change) and diff it in
+                       # shouldNotify.
+    tariff-notifier.ts  # 1 broadcast trigger (2026-09): tariff-action, fires when
+                       # routes/tariff-refresh.ts's Federal Register overlay gains a new
+                       # parsed proclamation. **Currently inert — see the Known Pitfalls
+                       # row: the overlay has processed 59 FR documents and extracted
+                       # ZERO countries, so /api/tariffs still serves the April-2025
+                       # static baseline.** The trigger is correct but has nothing to act
+                       # on until that extraction is fixed. Also note the overlay polls
+                       # at most once per 7 days and only lazily on an /api/tariffs hit,
+                       # so even once fixed a push can lag the proclamation by days.
+    premarket-sector-notifier.ts  # 14 triggers (7 markets x early/near-open) registered
+                       # into broadcast-notifier.ts — "which sectors are gaining" in each
+                       # market's pre-market session (US, India, Hong Kong, Taiwan, South
+                       # Korea, UK, Europe). Timing is RATIO-based, not a flat "+60min" —
+                       # see the file's header comment and computeTriggerMinutes(): the US's
+                       # literal "1hr after pre-market start / 1hr before open" only works
+                       # because the US has a 5.5h pre-market window; every other market's
+                       # window is far shorter (India 15min, HK 30min, Taiwan/Korea/UK/Europe
+                       # 60min-175min), so both trigger instants are fixed % of EACH market's
+                       # own window (~18.2% / ~81.8%, derived from the US numbers) rather than
+                       # an absolute offset — a flat +60min would land at or after several of
+                       # these markets have already opened. Hours were verified against each
+                       # exchange's own published trading-hours page (2026-09) — two of the
+                       # original working estimates were WRONG and got corrected: Taiwan's
+                       # real pre-opening window is 08:00-09:00 (order-entry 08:00-08:30 THEN
+                       # a call auction 08:30-09:00), not just the 08:30-09:00 auction leg;
+                       # the UK's official "Pre-Trading Session" starts 05:05, not 07:00 (the
+                       # 07:50-08:00 slot is only the last "Opening Auction Call" leg). US
+                       # universe = S&P 500 ∪ NASDAQ 100 ∪ DJI ∪ Russell 2000 (deduped by
+                       # ticker); Europe = DAX 40 ∪ EUROSTOXX50_SYMBOLS (new list,
+                       # index_constituents.ts — NOT individually live-verified against Yahoo
+                       # like the 2026-07 batches, sourced from a Wikipedia snapshot instead,
+                       # see that file's comment). aggregateSectorGainers() (pure, unit-tested)
+                       # computes a market-cap-weighted average `preMarketChangePercent` per
+                       # sector — this aggregate did not exist anywhere before (the Heatmap
+                       # treemap only ever groups by sector for tile-layout sizing, never
+                       # computes a per-sector % change). Reuses `fetchYahooQuoteSummaryBatch`
+                       # from heatmap.ts directly rather than the treemap's own cache (avoids
+                       # coupling to treemap-specific FX/buy-volume/sparkline logic it doesn't
+                       # need). **`aggregateSectorGainers()` DROPS stocks with no resolved
+                       # sector — it does NOT bucket them as "Unknown" and rank that bucket
+                       # like a real sector.** Shipped that way originally and it broke in
+                       # production 2026-09-09: enough of the ~580-symbol US universe failed
+                       # Yahoo's per-stock assetProfile sector lookup that "Unknown" outranked
+                       # every real sector in a live push ("Unknown leading +1.5% · Real Estate
+                       # +0.8% · Basic Materials +0.5%"). Fixed two ways — (1) the aggregation
+                       # itself now excludes null-sector stocks unconditionally, so this class
+                       # of bug can't recur regardless of cause; (2) `MarketConfig.getSectorHints`
+                       # lets a market supply a better sector source than Yahoo's per-stock
+                       # lookup — "us" uses it to reuse the sector already present in the S&P
+                       # 500 CSV (`fetchSp500Constituents()`), free and far more reliable than
+                       # re-deriving it per-stock for the largest chunk of the combined universe.
+                       # Copy is finalized: early trigger = Style A ("leading (+X%) ·
+                       # sector +X% · sector +X%"), near-open trigger = Style D ("opens in N
+                       # min" / "opens in 1 hour", computed from the actual remaining minutes
+                       # at fire time — NOT hardcoded to "1 hour", since only the US's
+                       # near-open trigger actually lands exactly 60min before open by
+                       # construction; every other market's near-open trigger lands anywhere
+                       # from ~3min (India) to ~32min (UK) before its own open).
+                       #
+                       # **CONFIRMED DEAD for all 6 non-US markets — not just unverified anymore.**
+                       # Zero Firestore docs (`broadcastTriggers/premarket-sectors-{india,
+                       # hongkong,taiwan,southkorea,uk,europe}-{early,late}`) after THREE real
+                       # trading days in production (2026-09-07/08/09) — `check()` has never once
+                       # returned non-null for any of the 12 non-US triggers. `US` fires
+                       # correctly every day in the same window. Root cause (see the 2026-09
+                       # research this comment used to summarize as unverified): LSE's pre-open
+                       # phases, and Xetra/HKEX/TWSE/KRX/NSE's equivalents, are order-accumulation
+                       # call auctions with NO executions before the opening auction — unlike the
+                       # US's continuously-quoted ECN pre-market (a real traded price the whole
+                       # window), there is likely NO trade price for Yahoo to EVER report as
+                       # `preMarketChangePercent` for these 6 markets, structurally, regardless of
+                       # trigger-clock precision. Fails safe (silently never fires, never sends
+                       # wrong data) but should not be treated as "not yet proven" anymore — 3
+                       # days of zero hits across 6 markets is the disproof.
+                       #
+                       # **Alternative-source seam (2026-09-09): `MarketConfig.getPreMarketChanges`.**
+                       # Returns symbol -> % change from a non-Yahoo source and REPLACES Yahoo's
+                       # null for those symbols; sector + market cap still come from Yahoo (they
+                       # work everywhere, only the pre-market field doesn't). **India is wired
+                       # up** via `fetchNsePreOpenChanges()` — NSE's own keyless
+                       # `/api/market-data-pre-open?key=ALL`, whose `metadata.pChange` IS the
+                       # Indicative Equilibrium Price vs previous close (there's also a raw
+                       # `iep` field). Same header-only pattern as `fetchNseFiiDiiFlows()` in
+                       # routes/markets.ts (unofficial NSE site API, fails soft to an empty map).
+                       # **`key` MUST be `ALL` (or FO/OTHERS/SME) — `key=NIFTY` and
+                       # `key=BANKNIFTY` are NOT valid values and return
+                       # `{"data":[],"msg":"No Data Found"}` at HTTP 200 forever**, which is
+                       # indistinguishable from "outside the pre-open window" unless you log the
+                       # row count. That exact mistake burned a whole India window on 2026-09-10.
+                       # `ALL` returns ~2,200 rows (every NSE equity); the caller joins against
+                       # its own universe, so no server-side filtering is needed. VERIFIED
+                       # end-to-end 2026-09-10: 48/48 of the resolvable Nifty 50 symbols get a
+                       # real pre-market change through this path (was 0/48 on Yahoo alone).
+                       # LTIM.NS and TATAMOTORS.NS don't match — they're stale entries that
+                       # Yahoo doesn't resolve either.
+                       # Researched for the other five (2026-09-09/11). **Hong Kong,
+                       # Europe/Xetra and the UK/LSE are dead ends** — their indicative prices
+                       # are real but only behind paid market-data licences; don't re-research
+                       # these without a budget. **Taiwan and Korea are BUILT but UNPROVEN**,
+                       # both wired through getPreMarketChanges with fail-safe guards:
+                       #   - Taiwan: `fetchTwseAuctionChanges()` — TWSE MIS
+                       #     `mis.twse.com.tw/stock/api/getStockInfo.jsp` (free, keyless,
+                       #     pipe-batched), computing (z - y)/y. TWSE documents disclosing
+                       #     simulated auction prices ~every 5s during 08:30-09:00; whether `z`
+                       #     actually carries it is unproven. Guarded by the row's own `d` date
+                       #     field — a stale previous-session echo is rejected, so a fake
+                       #     0%-everywhere reading can't ship.
+                       #   - Korea: `fetchNaverPreMarketChanges()` — Naver Finance polling API
+                       #     (free, keyless, comma-batched, confirmed NOT geo-blocked from Fly),
+                       #     reading `overMarketPriceInfo.fluctuationsRatio`. That block is real
+                       #     and carries its own ratio; the unknown is what `tradingSessionType`
+                       #     reads during KRX's 08:00-09:00 pre-market (observed AFTER_MARKET
+                       #     out of hours). Guard is deliberately NEGATIVE — reject
+                       #     AFTER_MARKET + require today's date — and it logs every
+                       #     tradingSessionType it sees, so one real window resolves it.
+    signal-ledger.ts    # Forward signal ledger — see "Forward Signal Ledger" section below.
+    exit-detection.ts   # Shared SL/TP/TIMEOUT hit-detection (checkExit) used by BOTH the
+                       # historical backtest (trading.ts) and the ledger's resolution job —
+                       # so "what counts as a stop-loss hit" can't silently diverge between them.
+    signal-ledger-report.ts  # Pure, unit-tested aggregation/readiness math for the ledger
+                       # (splitByVersion, summarizeSeries, readinessVerdict) — no Firestore
+                       # import, consumed by scripts/signal-ledger-status.ts.
+    billing-events.ts   # recordBillingEvent() — audit trail for the admin portal's User/Billing
+                       # lookup; written by both the RevenueCat webhook (billing.ts) and manual
+                       # admin plan overrides (routes/admin.ts). Fire-and-forget, never blocks the caller.
+    social-buzz/
+      config-override.ts # In-process kill-switch + daily-cap overrides the admin portal writes
+                       # to, shared between routes/social-buzz.ts (writer) and poller.ts (reader).
+                       # Extracted 2026-09 after poller.ts was found reading
+                       # SOCIAL_BUZZ_KILL_SWITCH from process.env directly — the admin kill
+                       # switch changed state but never actually stopped the scheduled tick().
 
   providers/            # Chart data provider abstraction
     index.ts            # Provider registry (currently: yahoo only)
@@ -127,6 +312,18 @@ Three coordinated caching layers:
 **`/api/trading/best-setups-sector` skeleton-first pattern**: heavy computation (~5 min cold) is fronted by a fast `cacheWarm: false` skeleton response when the cache is cold. The handler kicks off the compute via `ensureBestSetupsSectorFresh` (in-flight coalesced per version) and returns instantly. The client auto-polls every 30s (capped at 10 polls) until `cacheWarm: true`. Pre-warm runs at boot+3 min on the leader. See `/api/trading/scanner/best-setups` for the original skeleton pattern.
 
 **Disk persistence (Flutter)** via [disk_cache.dart](moby/lib/core/cache/disk_cache.dart) — `SharedPreferences`-backed JSON cache used by `TariffsData`, `HeatmapRepository.fetchTreemap`, `TradingRepository._fetchAndCacheScanner`, and `TradingRepository.fetchSectorBestSetups`. Pattern: hydrate from disk on cold start → fetch network → write disk on success → fall back to `readStale` on network error. Repositories that don't use disk persistence still keep in-memory caches keyed by their TTLs.
+
+### Forward Signal Ledger (2026-08)
+
+Not exposed via any API yet — no client reads it. It exists to answer "is this strategy's edge still alive right now," which the historical backtest (`runBacktestWithSLTP` in `trading.ts`) structurally cannot: that only ever replays history in aggregate.
+
+- **Capture** (`captureSignalsForLedger`, daily at 00:25 UTC, leader-gated): sweeps `TRADING_ASSETS` × all strategies except S9/S9+ (SI=F only, run separately) on the `1d` timeframe, calling `generateSignal` exactly as the live `/signals/:symbol` route does — **except** news-blended strategies (3/6/12/15) are captured on price action alone (Alpha Vantage daily-budget reasoning). A BUY/HOLD/SELL of HOLD is skipped; a fired signal is anchored to **the entry bar's close**, not the live quote (`signal.entry`) — SL/TP shift by the same delta so R:R is preserved exactly. This re-anchoring was added in v2 after v1 (~15% of entries, worse on 24h-traded futures like CT=F/SI=F/HG=F/GC=F) priced trades off a live quote sitting outside the daily bar the resolver actually scans, and every one of those resolved as a loss. A malformed in-progress bar (Yahoo occasionally serves close-above-high / open-below-low on CT=F) is detected via `isValidOhlcBar()` and skipped rather than captured.
+- **Resolution** (`resolveOpenLedgerEntries`, daily at 00:40 UTC, leader-gated): walks every `status:"open"` Firestore doc, groups by symbol, and calls the shared `checkExit()` (SL/TP touched intrabar, SL wins on a same-bar tie; else `TIMEOUT` at `maxHoldBars`). A doc whose `candleSource` no longer matches the symbol's current source is left open, never resolved against a series it wasn't priced on (protects the GC=F spot-vs-futures split — see `resolveSignalCandles`).
+- **Versioning**: `STRATEGY_LOGIC_VERSION` (currently `2` for every strategy id) feeds a `seriesKey` (`"{strategyId}|{timeframe}|{version}"`). Bumping it starts a brand-new track record from zero — the old version's entries and its `signal_ledger_stats` rollup doc are frozen in place and never blended in. Bump only when scoring/threshold/SL-TP logic changes, never for a display-name-only rename.
+- **Storage**: Firestore `signal_ledger` (per-trade docs, doc id `symbol|strategyId|timeframe|barDate`) and `signal_ledger_stats` (one rollup doc per `seriesKey`, commutative counters only — `trades`/`wins`/`losses`/`sumReturnPct`/`sumWinPct`/`sumLossPct`/`sumHoldBars`/`exitSL`/`exitTP`/`exitTIMEOUT`). Max drawdown is deliberately **not** stored — it's path-dependent, so it must be computed at read time over `signal_ledger` ordered by `resolvedAt`.
+- **Kill switch**: remote-config flag `signal_ledger_capture_paused` short-circuits both jobs.
+- **Readiness check**: `npx tsx --env-file=.env scripts/signal-ledger-status.ts` (read-only) reports current-vs-legacy trade counts, per-strategy win rate/avg return, and three pass/fail gates — trade volume ≥300, strategy breadth ≥10, and `exitTIMEOUT > 0` (until at least one cohort completes its full hold, the sample is left-censored toward whichever barrier sits closer to entry — historically the stop-loss — which reads artificially bearish no matter the trade count). All three must pass before the ledger is trustworthy enough to read from anywhere.
+- **Designed for removal**: the whole feature can be deleted by removing `signal-ledger.ts` + `exit-detection.ts` and reverting the `startSignalLedgerJobs()` call in `trading.ts` — nothing else in the app reads these collections yet.
 
 ### API Endpoints
 
@@ -194,13 +391,17 @@ Three coordinated caching layers:
 | `GET /api/wire/desks` | Wire desk metadata → `{ desks: [{id,label,sources}], totalFeeds, lastUpdated }`. 10 desks. Registered via `routes.ts` (`registerWireRoutes`). | 1h |
 | `GET /api/wire/items?desk=&limit=` | Aggregated, deduped, newest-first classified headlines for one desk → `{ desk, items: [WireItem], lastUpdated }`. `desk` must be a valid slug (400 otherwise); `limit` 1–120 (default 50). | 8m |
 | `GET /api/wire/breaking` | Recent (last 20m) breaking/alert items across all desks → `{ items: [WireItem], lastUpdated }`. Consumed by mobile+web alert banners. | 60s |
+| `GET /api/notifications/log?limit=` | History of every `broadcast-notifier.ts` firing (VIX regime changes, pre-market sector gainers, any future trigger) → `{ items: [{id,triggerId,title,body,data,firedAt}], lastUpdated }`. `limit` 1–100 (default 30). Powers the notification bell/history on both clients, independent of whether the OS push was ever seen — see `server/lib/broadcast-notifier.ts`'s `recordNotificationLog()`. Free, unauthenticated, not plan-gated. No pruning — `notification_log` accumulates forever, same as `signal_ledger`/`billing_events`. | 30s |
 | `GET /api/quiver/congress` | Top-10 congress buys (FMP → Quiver, 500 if both fail — no hardcoded snapshot). **Not called by either client since 2026-07** (Congress tab removed — both sources dead); route kept in case a working source appears. | 4h |
 | `GET /api/quiver/lobbying` | Top-10 by QoQ lobbying spend growth (Senate LDA — confirmed live) | 4h |
 | `GET /api/quiver/insider` | Top-10 by insider buy count — 90-day window (SEC EDGAR — confirmed live) | 4h |
 | `GET /api/quiver/congress-trades` | Raw congress trades last 365 days (?ticker=&chamber=&type=) (FMP/Quiver, both dead). **Not called by either client since 2026-07.** | 4h |
 | `GET /api/house-trades` | House PTR trades via FMP (requires FMP_API_KEY, plan doesn't include this data — returns empty). **Not called by either client since 2026-07.** | 4h |
-| `GET /api/oge/trump-transactions` | Presidential transactions ≥ $100K from OGE Form 278-T PDFs | 7d |
+| `GET /api/oge/trump-transactions` | Presidential transactions ≥ $100K from OGE Form 278-T PDFs. Merges pipeline output with any manually-imported rows (see below), deduped by the pipeline's own key. | 7d |
 | `POST /api/oge/trump-transactions/refresh` | Force-bust OGE cache + re-run PDF pipeline | — |
+| `GET /api/oge/trump-transactions/config` | Debug/admin: env-var presence, last pipeline run + failure, Fly Machines API reachability test, imported-row count | — |
+| `POST /api/oge/trump-transactions/import` | Admin (Bearer ADMIN_SECRET): publish rows extracted outside the pipeline for filings it physically cannot read (e.g. a scanned-image PDF with no text layer). Body: `{csv, filingDate, source}` — minimal RFC4180 CSV. Additive, deduped against pipeline output, stored under a separate no-TTL Redis key so a later pipeline run can't wipe it. | — |
+| `DELETE /api/oge/trump-transactions/import` | Admin: remove imported rows (optionally scoped to `?source=<pdf filename>`, else clears all imports) — the only undo path without hand-editing Redis | — |
 | `GET /api/etf/list` | ETF Explorer list. `?category=sector\|broad\|international\|fixed_income\|commodity\|thematic\|leveraged` (omit for all 42). Quote via `fetchYahooPrice`; MoM/QoQ/YoY rolling-window returns via `fetchRangeData` (1mo/3mo/1y, not calendar-quarter-aligned — mirrors `/api/sectors`). No AI signal (removed — not shown in UI). Free, no plan gate. | 60m |
 | `GET /api/etf/:symbol/profile` | ETF fund data — holdings, sector weights, expense ratio, AUM. Via `fetchYahooFundData()` (separate Yahoo `topHoldings`/`fundProfile`/`defaultKeyStatistics` modules, does not touch `fetchYahooQuoteSummary`). | 24h |
 | `GET /api/splc/universe` | Companies with at least one supply-chain edge → `{ companies: [{ticker,name,supplierCount,customerCount}], lastUpdated }`. Discovered by the nightly batch, not curated. Reads one Firestore doc. | `no-cache` (ETag) |
@@ -676,6 +877,13 @@ Separate Vite/React app for production ops — users, subscriptions, remote conf
 - **MUST NEVER be served by the production Express server.** `server/index.ts` has no `/admin` static mount — one existed before and was removed deliberately, because it served `frontend/apps/admin/dist` whenever that folder happened to be present, which would expose this Bearer-token-gated, no-rate-limit ops surface at a guessable path on the public production domain. `frontend/apps/admin/dist/` is also excluded via `.dockerignore` as a second layer of defense, so a stray local build can't leak into the Fly image even if the serving code were ever reintroduced. **Do not re-add `/admin` static serving to `server/index.ts`, and do not remove the `.dockerignore` entry.** If the admin UI ever needs a real URL, deploy it as its own separate app (like `apps/web`/`apps/site` on Vercel) — never bundled into the API's own Docker image.
 - Pages: Dashboard, Users, Subscriptions, Alerts, Remote Config, Ops (cache busting, OGE pipeline refresh, global earnings snapshot refresh — local-dev-only, 403s on Fly by design), Performance, Social Buzz (review queue for the market-buzz auto-posting pipeline — see `server/lib/social-buzz/`).
 - **Performance → API Latency runs `fly logs` from inside the production container itself**: `/api/admin/logs/metrics` (`server/routes/admin.ts`) `spawn()`s the `fly` binary (using the `FLY_API_TOKEN` secret already on this app) to fetch the app's own recent logs and parse `[TIMING]` lines out of them. This is why the `Dockerfile` installs `flyctl` (as both `fly` and `flyctl` on `PATH`) even though nothing else in the app needs a CLI — don't remove that install step as unused/dead weight. `FLY_APP_NAME` doesn't need to be a secret; Fly auto-injects it on every Machine.
+- **Dashboard → System Health** (2026-09, `GET /api/admin/health`): booleans-only presence check for all 12 optional integration env vars (Finnhub/OpenAI/Anthropic/Alpha Vantage/Twelve Data/FMP/Quiver/Upstash Redis/Resend/aisstream/RevenueCat/App Signing/Firebase Admin) plus leader status (`isLeader()` + `machineId()`) and Fly build fingerprint (app name/machine version/alloc id/region). Never returns a secret value, only whether it's set — this is the one place an operator can check "which of the 16+ silently-degrading integrations from CLAUDE.md's Environment Variables section are actually configured on this deploy" without shelling into Fly.
+- **Users → server-side email search** (`GET /api/admin/users/search?email=<exact>`): the paginated user list only searches whatever page has already loaded client-side, so a user who hasn't been paged in yet was invisible to the page's search box. This hits Firebase Admin's `getUserByEmail` directly — **exact match only**, Firebase Admin has no prefix/fuzzy search. `displayName` is now attached to every user row (batch-fetched from Firebase Auth, not stored in Firestore).
+- **Users → Plan & Billing history** (`GET /api/admin/users/:uid/billing-events`): every RevenueCat webhook event and every manual admin plan override now writes an audit row via `recordBillingEvent()` (`server/lib/billing-events.ts`), so "why is this user on Free" is answerable from the portal instead of grepping Fly logs. Also: `GET /api/admin/subscriptions/:deviceId` (single-record lookup for this panel, avoids paging the whole subscriptions list).
+- **Ops → cache targets are now server-driven**: `GET /api/admin/cache/targets` returns the bustable cache keys/labels instead of a hardcoded list in the frontend, so a new cache doesn't need an admin-app deploy to become bustable.
+- **Remote Config gained a `KNOWN_PARAMS` registry** (`RemoteConfigPage.tsx`) — a typed `{type, label, appDefault}` per known flag (`pro_monthly_price_usd`, `alert_limit_free`, `push_notification_cooldown_secs`, `enable_google_signin`, `enable_apple_signin`, `new_strategy_s4_enabled`, `wire_enabled`) so the page shows a human label and the app's actual fallback value instead of a bare key, plus a confirm-before-publish step. Unknown params still render (falls back to the param's own `description`) — this is a display layer, not a whitelist. `signal_ledger_capture_paused` (see Forward Signal Ledger above) is not yet in this registry.
+- **`ConfirmButton`** (`frontend/apps/admin/src/components/ConfirmButton.tsx`): shared two-step arm-then-confirm button, used by Subscriptions "Remove" and Alerts "Delete" (previously single-click destructive actions, inconsistent with Users' delete-account flow which already required a second click). Reuse this for any new destructive admin action rather than a bare single-click button.
+- **Social Buzz kill switch bug fixed (2026-09)**: the in-process kill-switch/daily-cap overrides that the admin portal writes to were extracted into `server/lib/social-buzz/config-override.ts`. Before this, `poller.ts` read `SOCIAL_BUZZ_KILL_SWITCH` from `process.env` directly, so flipping the admin kill switch changed the value `routes/social-buzz.ts` reported back but never actually stopped the scheduled `tick()`. Both the kill switch and the (now also overridable) daily post cap (`POST /api/admin/social-buzz/cap`) must go through `config-override.ts`'s `killSwitchActive()`/`dailyCap()` — don't reintroduce a direct `process.env` read in either the poller or the route.
 
 ---
 
@@ -861,9 +1069,16 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | BacktestWarm + Finnhub WS on multi-machine Fly | running on every machine | Both are gated to leader via `isLeader()` from `server/lib/leader.ts`. Followers skip with a `[BacktestWarm] skipping startup warm — follower` log. Leader election uses Upstash Redis lease; without Redis every process is leader (single-machine assumption). |
 | Yahoo crumb 429 → 15-min hard backoff | flat 15-min backoff on first failure | Escalating backoff `[60s, 5m, 15m, 30m]` keyed off `_yfCrumbConsecutiveFails` in `server/trading.ts`. Resets to 0 on first success. A single transient 429 no longer wipes out quote freshness for 15 minutes. |
 | Express behind Fly's proxy | leaving `trust proxy` unset (default) | `app.set("trust proxy", 1)` in `server/index.ts` — without it, `express-rate-limit` groups all users under Fly's proxy IP and emits `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` warnings. |
+| `push_notification_cooldown_secs` remote-config param | assuming it throttles any push path | It's registered in `RemoteConfigService._defaults` (mobile) and the admin `KNOWN_PARAMS` registry but nothing reads `RemoteConfigService.pushCooldownSecs` anywhere — dead config, unrelated to `broadcast-notifier.ts`'s own per-trigger `cooldownMs`. `alert-checker.ts` still applies no cooldown/debounce beyond its 20s poll interval. Wire this param up before relying on it, don't assume it's already enforced. |
+| `await import(...)` for a module that's ALSO statically imported by a sibling file (server boot) | assuming it's the same module instance either way | **This has broken production twice.** Under tsx, a dynamic `import()` of a file that another statically-imported file ALSO `import`s can resolve to a SEPARATE module instance with its own module-scope state — a second copy of any `_cache`/`_registry`/`Map` at that file's top level, silently diverging from the "real" one other code reads. First hit: `plan-enforcement.ts`'s `devicePlanMap` (see the comment on `server/index.ts`'s static imports). Second hit (2026-09): `server/index.ts` used `await import("./lib/broadcast-notifier")` to get `startBroadcastNotifiers`, while `regime-change-notifier.ts`/`premarket-sector-notifier.ts` statically `import { registerBroadcastTrigger } from "./broadcast-notifier"` — two different `_triggers` arrays, so every trigger registered successfully but `startBroadcastNotifiers()` iterated an empty list. No error, no crash, `isLeader()` true, all data-fetching functions confirmed working individually — it just silently never ticked, for 8+ hours, across every trigger. Diagnosed via `fly ssh console` one-off scripts isolating each layer (leader status → data fetch → bare engine reproduction → the exact production import chain) until the minimal repro (dynamic import of a module elsewhere reached via a sibling's static import) reproduced it outside any of this feature's own logic. **Rule: any module holding shared registration state that's imported by more than one file at boot MUST be imported statically (`import { x } from "./y"`) everywhere, never via `await import("./y")` from one call site and statically from another.** |
+| Profile "disable notifications" toggle | assuming it stops all push | `PushNotificationService.disable()`/`onSignOut()` only deletes the Firestore `devices/{deviceId}` doc, which stops `alert-checker.ts`'s targeted per-uid push (it looks tokens up via that doc). It does **not** call `unsubscribeFromTopic('broadcast-alerts')` — the FCM topic subscription lives on Firebase's servers keyed to the device's FCM token, independent of Firestore, so a user who toggles notifications off in-app keeps receiving every `broadcast-notifier.ts` trigger's pushes (VIX regime changes today, more may be added later). Any topic-based push needs its own explicit unsubscribe call in the same disable flow — still unfixed as of the broadcast-notifier.ts generalization. |
+| Adding a new broadcast trigger | copying regime-change-notifier.ts's old hand-rolled `setInterval` + FCM `.send()` pattern | Register with the shared engine instead — `registerBroadcastTrigger({ id, intervalMs, cooldownMs?, check, shouldNotify?, renderTransition? })` in `server/lib/broadcast-notifier.ts`. The engine owns state-change detection, Firestore persistence (`broadcastTriggers/{id}`), cooldown, and the FCM send; `check()` should be a thin data-fetch + pure classify-to-`state` function, nothing else. **`shouldNotify(from,to)`** records a state change without pushing (leaving an extreme, a calm day, a downward debt revision) — use it instead of returning null from `check()`, which would lose the state. **`renderTransition(from,to,data)`** is for copy that depends on BOTH sides (a curve *inverting* and *re-steepening* are the same trigger reading completely differently); `check()` can't know the previous state, only the engine does. See `regime-change-notifier.ts` for the simple case, `macro-notifiers.ts`/`positioning-notifiers.ts` for both extensions. |
+| Trusting `/api/tariffs` to be live | assuming the Federal Register overlay is enriching it | **As of 2026-09 the overlay contributes nothing**: it has processed 59 FR documents and extracted **zero** countries, so production `/api/tariffs` reports `dataAsOf: "April 2025"` / `source: "USTR Section 301 + WTO Tariff Database"` — the static baseline. The Investing → Exposure tab (and the web equivalent) is therefore showing April-2025 tariff data despite a live-refresh pipeline existing behind it. Documents are marked processed even when extraction yields nothing (`processed.add(...)` before the yield check — "never re-pay" for a Haiku call), so the pipeline will not retry them. Diagnose `extractCountriesFromDoc()` (is the FR query returning non-rate-setting documents? is the Haiku prompt failing to parse them?) before trusting either the tariff data or `tariff-notifier.ts`, which is structurally inert until this is fixed. |
 | Disk-persisted payloads survive a wrong schema | bumping a model shape without bumping `DiskCache._schemaVersion` | DiskCache prefixes keys with `dcache.v$_schemaVersion.`. Bump the version when changing the on-disk shape of *any* persisted payload (tariffs, treemap, scanner, best-sector). Old entries become unreachable and are overwritten on next write. |
 | Server-side ETag for plan-gated endpoints | leaving the default `Cache-Control: public` | `private`-mark plan-gated endpoints (signals, analyst-note, exposure, treemap) so a CDN edge can't serve the response to other devices. Public for unauthenticated content (sectors, bonds, tariffs, etc.). |
 | Live-data endpoint has no real source | adding a hardcoded snapshot/constant so the field is never empty | `/api/quiver/congress` used to fall back to a hardcoded `CONGRESS_SNAPSHOT` array when Quiver+FMP both failed — removed (2026-07). If every live source for a field fails, return `null`/error and let the client show "—" or a retry state (both apps already have these). Never silently substitute a plausible-looking fake number — it's indistinguishable from real data to the user of a paid, marketed-as-real-time app. |
+| Admin-portal in-process override (kill switch, daily cap, etc.) | writing the override in the admin route only | The value has to actually be *read* from the same shared module by whatever background job it's meant to control. Social Buzz's kill switch shipped with the route setting a module-local variable while `poller.ts` kept reading `process.env.SOCIAL_BUZZ_KILL_SWITCH` directly — toggling it in the portal changed what the status endpoint reported but never stopped the scheduled `tick()`. Fixed by extracting both the kill switch and the daily cap into `server/lib/social-buzz/config-override.ts`, imported by both the writer (route) and the reader (poller). Any new "admin can toggle X without a redeploy" feature needs the same shared-module shape — check the consumer, not just the setter. |
+| Forward signal ledger entries | anchoring a captured trade to `signal.entry` (the live quote) | Anchor to **the entry bar's close** instead (`server/lib/signal-ledger.ts`, `captureSignalsForLedger`). For 24h-traded futures the live quote at capture time (00:25 UTC) can sit outside the last completed daily bar the resolver actually scans, silently misaligning SL/TP — this was v1's bug, it affected ~15% of entries (CT=F 90%, SI=F 76%, HG=F 67%, GC=F 57%) and every one of them resolved as a loss. Shift SL/TP by the same delta to preserve R:R exactly; don't recompute them from scratch. See "Forward Signal Ledger" section above. |
 | SEC dataset choice for notes-level facts | the plain **Financial Statement Data Sets** (`financial-statement-data-sets/2026q1.zip`) | Use the **Financial Statement _and Notes_ Data Sets** — `https://www.sec.gov/files/dera/data/financial-statement-notes-data-sets/<KEY>_notes.zip`. **The path has no `and-`**; `financial-statement-and-notes-data-sets` 404s, which reads as "discontinued" but isn't. Cadence: quarterly (`2025q2_notes.zip`) through 2025q2, **monthly after** (`2026_07_notes.zip`), published ~1 month in arrears. Measured: a whole quarter of the plain sets has ~10 filers with customer concentration; one month of Notes has ~270 filings. Layout also differs — `.tsv` not `.txt`, and dimensions are normalised out (join `num.tsv.dimh` → `dim.tsv.dimhash`). |
 | `ConcentrationRiskPercentage1` without reading its benchmark | treating every row as a share of revenue | Always read `ConcentrationRiskByBenchmark`. ~a third of rows are benchmarked to AccountsReceivable / AccountsPayable / Inventories — credit exposure, not supply-chain flow. "40% of receivables" rendered as "40% of revenue" is a wrong number, not a rounding difference. Only revenue-like (customer side) and purchase/COGS-like (supplier side) benchmarks are usable; segment/product-line-scoped ones legitimately sum past 1.0 and are excluded. |
 | USD-denominated rows on the `MajorCustomers` axis | assuming they are all counterparty relationships | Require an explicit `ConcentrationRiskByType`. Measured: of 3,561 USD rows on that axis in one month, the 267 carrying a risk type are real counterparties (Amazon, WalMart); the 3,294 without it are revenue disaggregation by end-market or product line (`IndustrialIndustry`, `LiveAndHistoricalRacing`) and would render as company names. |

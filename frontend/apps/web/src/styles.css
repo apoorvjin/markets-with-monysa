@@ -2606,6 +2606,76 @@ button {
   transform: translateX(14px);
 }
 
+/* Unread-count dot for the notification history section (independent of the
+   settings bell's own 🔔/🔕 enabled-state icon). */
+.wire-bell-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-full);
+  background: var(--danger);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  z-index: 1;
+}
+.wire-bell-divider {
+  height: 1px;
+  background: var(--border);
+  margin: var(--s1) 0;
+}
+.wire-bell-section-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.wire-bell-empty {
+  font-size: var(--fs-xs);
+  color: var(--text-faint);
+  padding: var(--s2) 0;
+}
+.wire-bell-notif-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.wire-bell-notif {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.wire-bell-notif-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s2);
+}
+.wire-bell-notif-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.wire-bell-notif-age {
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+.wire-bell-notif-body {
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
 /* ── Wire — Terminal toolbar (legend + reset) ──────────────────────────── */
 .wire-toolbar {
   display: flex;

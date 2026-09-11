@@ -13,10 +13,12 @@ import '../../data/repositories/volatility_repository.dart';
 import '../../data/repositories/markets_repository.dart';
 import '../../data/repositories/heatmap_repository.dart';
 import '../../services/entitlement_service.dart';
-import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/app_bar_leading.dart';
 import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
+import '../../shared/widgets/market_status.dart';
+import '../../shared/widgets/notification_bell_button.dart';
 import '../../shared/widgets/rrg_quadrant_grid.dart';
 import '../../shared/widgets/shimmer_list.dart';
 import '../../shared/widgets/sparkline_chart.dart';
@@ -164,11 +166,13 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         centerTitle: true,
-        leading: const AppLogoBadge(),
+        leading: const AppBarLeading(),
+        leadingWidth: appBarLeadingWidth,
         title: Text('Macro',
             style: AppTypography.headingLg
                 .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
+        actions: const [MarketStatusButton(), NotificationBellButton()],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,

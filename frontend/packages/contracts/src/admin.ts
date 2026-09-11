@@ -28,6 +28,8 @@ export const AdminUserSchema = z.object({
   displayName: z.string().nullish(),
   createdAt: z.string().nullish(),
   preferences: z.record(z.unknown()).nullish(),
+  pushEnabled: z.boolean().nullish(),
+  deviceCount: z.number().nullish(),
 }).passthrough();
 export type AdminUser = z.infer<typeof AdminUserSchema>;
 

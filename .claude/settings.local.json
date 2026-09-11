@@ -303,5 +303,19 @@
   },
   "enabledMcpjsonServers": [
     "figma"
-  ]
+  ],
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /Users/apoorvjin/markets-with-monysa/.claude/hooks/check-deploy-note.py",
+            "timeout": 15,
+            "statusMessage": "Checking deploy-note requirement..."
+          }
+        ]
+      }
+    ]
+  }
 }

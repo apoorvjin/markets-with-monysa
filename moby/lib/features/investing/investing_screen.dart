@@ -12,11 +12,13 @@ import '../../data/models/treemap_stock.dart';
 import '../../data/repositories/heatmap_repository.dart';
 import '../../data/repositories/trading_repository.dart';
 import '../../services/entitlement_service.dart';
-import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/app_bar_leading.dart';
 import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
 import '../../shared/widgets/glass_card.dart';
+import '../../shared/widgets/market_status.dart';
+import '../../shared/widgets/notification_bell_button.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 import '../exposure/exposure_screen.dart';
@@ -134,11 +136,13 @@ class _InvestingScreenState extends State<InvestingScreen>
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         centerTitle: true,
-        leading: const AppLogoBadge(),
+        leading: const AppBarLeading(),
+        leadingWidth: appBarLeadingWidth,
         title: Text('Investing',
             style: AppTypography.headingLg
                 .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
+        actions: const [MarketStatusButton(), NotificationBellButton()],
         bottom: TabBar(
           controller: _tab,
           labelColor: c.accent,

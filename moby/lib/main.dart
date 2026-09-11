@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:timezone/data/latest.dart' as tz_data;
 import 'app.dart';
 import 'core/network/chart_renderer_interceptor.dart';
 import 'core/network/device_id.dart';
@@ -21,6 +22,7 @@ import 'services/remote_config_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  tz_data.initializeTimeZones();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,

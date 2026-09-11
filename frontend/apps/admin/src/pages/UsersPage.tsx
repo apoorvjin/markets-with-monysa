@@ -135,20 +135,32 @@ export function UsersPage() {
                 <th>UID</th>
                 <th>Name</th>
                 <th>Email</th>
+                <th>Push</th>
                 <th>Created</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {isLoading && allUsers.length === 0 && <TableSkeleton cols={5} />}
+              {isLoading && allUsers.length === 0 && <TableSkeleton cols={6} />}
               {filtered.length === 0 && !isLoading && (
-                <tr><td colSpan={5} className="empty">No users found.</td></tr>
+                <tr><td colSpan={6} className="empty">No users found.</td></tr>
               )}
               {filtered.map((u) => (
                 <tr key={u.uid} className="clickable" onClick={() => setSelectedUid(u.uid)}>
                   <td className="mono">{u.uid.slice(0, 16)}…</td>
                   <td>{u.displayName ?? <span style={{ color: "var(--text-faint)" }}>—</span>}</td>
                   <td>{u.email ?? <span style={{ color: "var(--text-faint)" }}>—</span>}</td>
+                  <td>
+                    {u.pushEnabled == null ? (
+                      <span style={{ color: "var(--text-faint)" }}>—</span>
+                    ) : u.pushEnabled ? (
+                      <span style={{ color: "var(--accent)", fontSize: 12 }}>
+                        ✓ {u.deviceCount ?? ""} {u.deviceCount === 1 ? "device" : "devices"}
+                      </span>
+                    ) : (
+                      <span style={{ color: "var(--text-faint)", fontSize: 12 }}>✗ off</span>
+                    )}
+                  </td>
                   <td style={{ color: "var(--text-muted)" }}>
                     {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}
                   </td>

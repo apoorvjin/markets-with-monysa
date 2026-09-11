@@ -93,6 +93,27 @@ async function attachDisplayNames(users: Record<string, unknown>[]): Promise<voi
   for (const u of users) u.displayName = nameByUid.get(u.uid as string) ?? null;
 }
 
+// Mutates each user object in place, adding `pushEnabled` (true if at least
+// one of their devices has a registered FCM token) and `deviceCount` — the
+// same computation UserDetailPanel already does per-user from
+// GET /users/:uid/devices, just parallelised across the current page so the
+// list view can show it without opening every user's detail panel.
+async function attachPushStatus(users: Record<string, unknown>[]): Promise<void> {
+  const db = adminFirestore();
+  if (!db || users.length === 0) return;
+  await Promise.all(users.map(async (u) => {
+    try {
+      const snap = await db.collection("users").doc(u.uid as string).collection("devices").get();
+      u.deviceCount = snap.size;
+      u.pushEnabled = snap.docs.some((d) => !!d.data().fcmToken);
+    } catch (e) {
+      console.error(`[admin] Failed to fetch devices for uid=${u.uid}:`, e);
+      u.pushEnabled = null;
+      u.deviceCount = null;
+    }
+  }));
+}
+
 export function registerAdminRoutes(app: Express): void {
 
   // ── Remote Config ─────────────────────────────────────────────────────────
@@ -236,6 +257,7 @@ export function registerAdminRoutes(app: Express): void {
         createdAt: doc?.exists ? serializeFirestoreDoc(doc.data() as Record<string, unknown>).createdAt ?? userRecord.metadata.creationTime : userRecord.metadata.creationTime,
         ...(doc?.exists ? serializeFirestoreDoc(doc.data() as Record<string, unknown>) : {}),
       };
+      await attachPushStatus([user]);
       return res.json({ user });
     } catch (e: any) {
       if (e?.code === "auth/user-not-found") return res.json({ user: null });
@@ -260,7 +282,7 @@ export function registerAdminRoutes(app: Express): void {
       const hasMore = snap.docs.length > limit;
       const docs = hasMore ? snap.docs.slice(0, limit) : snap.docs;
       const users = docs.map((d): Record<string, unknown> => ({ uid: d.id, ...serializeFirestoreDoc(d.data()) }));
-      await attachDisplayNames(users);
+      await Promise.all([attachDisplayNames(users), attachPushStatus(users)]);
       return res.json({ users, hasMore });
     } catch (e) {
       return res.status(500).json({ error: String(e) });

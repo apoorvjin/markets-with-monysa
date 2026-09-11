@@ -7,9 +7,12 @@ import '../../core/theme/app_spacing.dart';
 import '../../core/theme/app_typography.dart';
 import '../../data/models/wire.dart';
 import '../../data/repositories/wire_repository.dart';
+import '../../shared/widgets/app_bar_leading.dart';
 import '../../shared/widgets/app_shell_insets.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
+import '../../shared/widgets/market_status.dart';
+import '../../shared/widgets/notification_bell_button.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/shimmer_list.dart';
 import '../../shared/widgets/theme_toggle.dart';
@@ -60,8 +63,10 @@ class _WireScreenState extends State<WireScreen> {
     final c = context.colors;
     return Scaffold(
       appBar: AppBar(
+        leading: const AppBarLeading(),
+        leadingWidth: appBarLeadingWidth,
         title: const Text('Wire'),
-        actions: const [ThemeToggleButton()],
+        actions: const [ThemeToggleButton(), MarketStatusButton(), NotificationBellButton()],
       ),
       body: MaxWidthLayout(
         child: Column(

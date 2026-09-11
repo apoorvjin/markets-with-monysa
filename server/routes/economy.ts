@@ -305,6 +305,21 @@ function quadrantOf(rsRatio: number | null, rsMomentum: number | null): RrgQuadr
 // Returns the 11 SECTOR_ETFS keyed by their `name`, each tagged with its
 // current RRG quadrant. Uses the same SPX-relative rsRatio/rsMomentum formulas
 // as /api/sectors and shares the 15-minute sectorsCache when warm.
+export type CurveStatus = "inverted" | "flat" | "normal";
+
+/**
+ * 3M/10Y spread → discrete curve label. Pure. Shared by /api/bonds and
+ * lib/macro-notifiers.ts's yield-curve trigger so the ±0.2 thresholds can't
+ * drift between what the app displays and what fires a push (same rationale
+ * as exit-detection.ts sitting between the backtest and the ledger).
+ */
+export function curveStatusOf(spread3m10y: number | null): CurveStatus | null {
+  if (spread3m10y == null) return null;
+  if (spread3m10y < -0.2) return "inverted";
+  if (spread3m10y <= 0.2) return "flat";
+  return "normal";
+}
+
 export async function getSectorQuadrants(): Promise<Map<string, SectorRrg>> {
   // Reuse the cached /api/sectors payload when fresh — the route stores its
   // result in sectorsCache below as { sectors: [...], lastUpdated }.
@@ -759,12 +774,7 @@ export function registerEconomyRoutes(app: Express): void {
         ? parseFloat((us10y - us3m).toFixed(4))
         : null;
 
-      let curveStatus: "inverted" | "flat" | "normal" | null = null;
-      if (spread3m10y != null) {
-        if (spread3m10y < -0.2) curveStatus = "inverted";
-        else if (spread3m10y <= 0.2) curveStatus = "flat";
-        else curveStatus = "normal";
-      }
+      const curveStatus = curveStatusOf(spread3m10y);
 
       const result = {
         us3m,

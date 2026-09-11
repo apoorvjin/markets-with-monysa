@@ -16,12 +16,14 @@ import '../../data/repositories/trading_repository.dart';
 import '../../providers/strategy_provider.dart';
 import '../../providers/strategy_defs.dart';
 import '../../providers/alert_provider.dart';
-import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/app_bar_leading.dart';
 import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/glass_card.dart';
 import '../../shared/widgets/signal_badge.dart';
 import '../../shared/widgets/error_view.dart';
 import '../../shared/widgets/freshness_bar.dart';
+import '../../shared/widgets/market_status.dart';
+import '../../shared/widgets/notification_bell_button.dart';
 import '../../shared/widgets/max_width_layout.dart';
 import '../../shared/widgets/shimmer_list.dart';
 import '../../providers/watchlist_provider.dart';
@@ -152,11 +154,13 @@ class _TradingScreenState extends State<TradingScreen>
       backgroundColor: c.background,
       appBar: AppBar(
         centerTitle: true,
-        leading: const AppLogoBadge(),
+        leading: const AppBarLeading(),
+        leadingWidth: appBarLeadingWidth,
         title: Text('Trading',
             style: AppTypography.headingLg
                 .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
+        actions: const [MarketStatusButton(), NotificationBellButton()],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,

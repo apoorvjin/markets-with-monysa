@@ -18,7 +18,7 @@ import '../../providers/theme_provider.dart';
 import '../../services/auth_service.dart';
 import '../../services/entitlement_service.dart';
 import '../../services/push_notification_service.dart';
-import '../../shared/widgets/app_logo_badge.dart';
+import '../../shared/widgets/app_bar_leading.dart';
 import '../../shared/widgets/upgrade_sheet.dart';
 
 class ProfileScreen extends ConsumerWidget {
@@ -31,7 +31,8 @@ class ProfileScreen extends ConsumerWidget {
       backgroundColor: c.background,
       appBar: AppBar(
         centerTitle: true,
-        leading: const AppLogoBadge(),
+        leading: const AppBarLeading(),
+        leadingWidth: appBarLeadingWidth,
         title: Text('Profile',
             style: AppTypography.headingLg
                 .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),

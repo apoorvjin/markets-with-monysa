@@ -7,6 +7,7 @@ import {
   type ActiveAlert,
   type AlertSeverity,
 } from "../lib/wireAlerts";
+import { markNotificationsRead, useReadNotificationIds } from "../lib/notifications";
 import { api } from "../lib/api";
 
 /* ───────────────────────────── runtime ─────────────────────────────────── */
@@ -203,6 +204,19 @@ export function WireAlertBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  // Broadcast-notifier history (VIX regime changes, pre-market sector
+  // gainers, any future trigger) — independent of the breaking-alert
+  // settings above, which only govern the ephemeral in-app banner.
+  const { data } = useQuery({
+    queryKey: ["notifications-log"],
+    queryFn: () => api.getNotificationLog(30),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
+  const notifications = data?.items ?? [];
+  const readIds = useReadNotificationIds();
+  const unreadCount = notifications.filter((n) => !readIds.has(n.id)).length;
+
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
@@ -212,15 +226,27 @@ export function WireAlertBell() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
+  const toggleOpen = () => {
+    setOpen((v) => {
+      const next = !v;
+      // Opening the panel is "seen" — matches the mobile bell's behavior.
+      if (next && notifications.length > 0) {
+        markNotificationsRead(notifications.map((n) => n.id));
+      }
+      return next;
+    });
+  };
+
   return (
     <div className="wire-bell" ref={ref}>
+      {unreadCount > 0 && <span className="wire-bell-dot">{unreadCount > 9 ? "9+" : unreadCount}</span>}
       <button
         type="button"
         className="wire-bell-btn"
         data-on={settings.enabled ? "true" : "false"}
-        onClick={() => setOpen((v) => !v)}
-        aria-label="Breaking-alert settings"
-        title="Breaking alerts"
+        onClick={toggleOpen}
+        aria-label="Alerts and notifications"
+        title="Alerts and notifications"
       >
         {settings.enabled ? "🔔" : "🔕"} Alerts
       </button>
@@ -247,6 +273,23 @@ export function WireAlertBell() {
               })
             }
           />
+          <div className="wire-bell-divider" />
+          <div className="wire-bell-section-label">Recent notifications</div>
+          {notifications.length === 0 ? (
+            <div className="wire-bell-empty">Nothing yet today.</div>
+          ) : (
+            <div className="wire-bell-notif-list">
+              {notifications.map((n) => (
+                <div key={n.id} className="wire-bell-notif">
+                  <div className="wire-bell-notif-head">
+                    <span className="wire-bell-notif-title">{n.title}</span>
+                    <span className="wire-bell-notif-age">{ageLabel(n.firedAt)}</span>
+                  </div>
+                  <div className="wire-bell-notif-body">{n.body}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

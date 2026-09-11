@@ -830,6 +830,77 @@ const CHART_INTERVAL_BY_RANGE: Record<string, string> = {
   "5y":  "1wk",
 };
 
+/**
+ * Cached-or-fetched CFTC COT payload — the exact object /api/futures/cot-metals
+ * serves. Exported so lib/positioning-notifiers.ts's COT trigger reads the same
+ * data (and the same 4h cache) the clients see, instead of re-implementing the
+ * two-dataset CFTC pipeline and drifting from it.
+ */
+export async function getCotSnapshot(): Promise<CotSnapshot> {
+  if (cotMetalsCache && Date.now() - cotMetalsCache.timestamp < COT_CACHE_DURATION) {
+    return cotMetalsCache.data as CotSnapshot;
+  }
+  const [disaggResults, legacyResults, regionalFlows] = await Promise.all([
+    fetchCotAssets(
+      COT_DISAGGREGATED,
+      "https://publicreporting.cftc.gov/resource/kh3c-gbw2.json",
+      "m_money_positions_long_all",
+      "m_money_positions_short_all"
+    ),
+    fetchCotAssets(
+      COT_LEGACY,
+      "https://publicreporting.cftc.gov/resource/6dca-aqww.json",
+      "noncomm_positions_long_all",
+      "noncomm_positions_short_all"
+    ),
+    getRegionalFlows(),
+  ]);
+
+  const all = [...disaggResults, ...legacyResults].filter(Boolean) as NonNullable<Awaited<ReturnType<typeof fetchCotAssets>>[number]>[];
+  const group = (cat: string) => all.filter(r => r.category === cat);
+
+  const reportDate = all.find(r => r.reportDate)?.reportDate ?? null;
+  const responseData: CotSnapshot = {
+    metals:      group("metals"),
+    indicesRates: [...group("indices"), ...group("rates")],
+    currencies:  group("currencies"),
+    energy:      group("energy"),
+    agriculture: group("agriculture"),
+    regionalFlows,
+    reportDate,
+    lastUpdated: new Date().toISOString(),
+    source: "CFTC Commitments of Traders Report",
+    sourceUrl: "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm",
+  };
+  cotMetalsCache = { data: responseData, timestamp: Date.now() };
+  return responseData;
+}
+
+/** One COT row as served — only the fields the notifier reads are named. */
+export interface CotRow {
+  name: string;
+  emoji?: string;
+  symbol?: string;
+  category?: string;
+  longPct?: number;
+  netPosition?: number;
+  sentiment?: string;
+  reportDate?: string | null;
+}
+
+export interface CotSnapshot {
+  metals: CotRow[];
+  indicesRates: CotRow[];
+  currencies: CotRow[];
+  energy: CotRow[];
+  agriculture: CotRow[];
+  regionalFlows: RegionalFlowGroup[];
+  reportDate: string | null;
+  lastUpdated: string;
+  source: string;
+  sourceUrl: string;
+}
+
 // ─── Stale-While-Revalidate helper for futures endpoints ─────────────────────
 // Returns stale cache immediately and triggers a background refresh so the
 // next request gets fresh data without a loading spinner.
@@ -1063,44 +1134,8 @@ export function registerMarketsRoutes(app: Express): void {
 
   app.get("/api/futures/cot-metals", async (_req, res) => {
     res.set("Cache-Control", "public, max-age=7200, stale-while-revalidate=14400"); // 2h / 4h SWR (weekly upstream)
-    if (cotMetalsCache && Date.now() - cotMetalsCache.timestamp < COT_CACHE_DURATION) {
-      return res.json(cotMetalsCache.data);
-    }
     try {
-      const [disaggResults, legacyResults, regionalFlows] = await Promise.all([
-        fetchCotAssets(
-          COT_DISAGGREGATED,
-          "https://publicreporting.cftc.gov/resource/kh3c-gbw2.json",
-          "m_money_positions_long_all",
-          "m_money_positions_short_all"
-        ),
-        fetchCotAssets(
-          COT_LEGACY,
-          "https://publicreporting.cftc.gov/resource/6dca-aqww.json",
-          "noncomm_positions_long_all",
-          "noncomm_positions_short_all"
-        ),
-        getRegionalFlows(),
-      ]);
-
-      const all = [...disaggResults, ...legacyResults].filter(Boolean) as NonNullable<Awaited<ReturnType<typeof fetchCotAssets>>[number]>[];
-      const group = (cat: string) => all.filter(r => r.category === cat);
-
-      const reportDate = all.find(r => r.reportDate)?.reportDate ?? null;
-      const responseData = {
-        metals:      group("metals"),
-        indicesRates: [...group("indices"), ...group("rates")],
-        currencies:  group("currencies"),
-        energy:      group("energy"),
-        agriculture: group("agriculture"),
-        regionalFlows,
-        reportDate,
-        lastUpdated: new Date().toISOString(),
-        source: "CFTC Commitments of Traders Report",
-        sourceUrl: "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm",
-      };
-      cotMetalsCache = { data: responseData, timestamp: Date.now() };
-      res.json(responseData);
+      res.json(await getCotSnapshot());
     } catch (e) {
       console.error("COT data error:", e);
       res.status(500).json({ error: "Failed to fetch CFTC COT data" });

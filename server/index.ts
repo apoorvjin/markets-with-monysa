@@ -14,6 +14,27 @@ import { startLeaderElection, machineId } from "./lib/leader";
 // the boot seed + admin override wrote while `/api/me` read the (empty) static one.
 import { loadPlansFromFirestore } from "./plan-enforcement";
 import { registerAdminRoutes } from "./routes/admin";
+// Static for the same reason as plan-enforcement.ts above: broadcast-notifier.ts
+// is a shared registry (`_triggers` array) that regime-change-notifier.ts and
+// premarket-sector-notifier.ts ALSO statically import from. Dynamically
+// importing it again here created a second module instance with its own empty
+// `_triggers` — registerBroadcastTrigger() populated one copy, startBroadcastNotifiers()
+// iterated the other, so every trigger silently registered but never ticked.
+// Confirmed via production SSH diagnostics (2026-09-07) before this fix.
+import { registerVixTermStructureTrigger } from "./lib/regime-change-notifier";
+import { registerPremarketSectorTriggers } from "./lib/premarket-sector-notifier";
+import {
+  registerYieldCurveTrigger,
+  registerFearGreedTrigger,
+  registerDebtMilestoneTrigger,
+  registerExtremeMoveTrigger,
+} from "./lib/macro-notifiers";
+import {
+  registerCotPositioningTrigger,
+  registerSectorRotationTrigger,
+} from "./lib/positioning-notifiers";
+import { registerTariffActionTrigger } from "./lib/tariff-notifier";
+import { startBroadcastNotifiers } from "./lib/broadcast-notifier";
 
 const app = express();
 const log = console.log;
@@ -458,9 +479,21 @@ function setupErrorHandler(app: express.Application) {
   const { startAlertChecker } = await import("./lib/alert-checker");
   startAlertChecker();
 
-  // Start VIX term-structure regime-change notifier (leader-only; sends FCM topic push).
-  const { startRegimeChangeNotifier } = await import("./lib/regime-change-notifier");
-  startRegimeChangeNotifier();
+  // Register broadcast-notification triggers, then start the generic engine
+  // (leader-only; sends FCM topic pushes on "broadcast-alerts"). To add a new
+  // trigger: write a registerXTrigger() elsewhere (statically imported above —
+  // see the comment on those imports) and call it here before
+  // startBroadcastNotifiers() — see regime-change-notifier.ts.
+  registerVixTermStructureTrigger();
+  registerPremarketSectorTriggers();
+  registerYieldCurveTrigger();
+  registerFearGreedTrigger();
+  registerDebtMilestoneTrigger();
+  registerExtremeMoveTrigger();
+  registerCotPositioningTrigger();
+  registerSectorRotationTrigger();
+  registerTariffActionTrigger();
+  startBroadcastNotifiers();
 
   // Start SPLC (Supply Chain Analysis) nightly batch (leader-only; requires Firestore).
   const { startSplcJobs } = await import("./lib/splc/derivation-batch");

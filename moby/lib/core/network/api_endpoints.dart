@@ -137,6 +137,14 @@ abstract final class ApiEndpoints {
       '$baseUrl/api/wire/items?desk=${Uri.encodeComponent(desk)}&limit=$limit';
   static String get wireBreaking => '$baseUrl/api/wire/breaking';
 
+  // Notifications — broadcast-push history (bell icon on all main tabs).
+  static String notificationLog({int limit = 30}) =>
+      '$baseUrl/api/notifications/log?limit=$limit';
+
+  // Exchange session status (Market Status button) — real, holiday-aware
+  // open/closed per exchange, sourced server-side from a live Yahoo quote.
+  static String get marketSessionStatus => '$baseUrl/api/markets/session-status';
+
   static String etfList({String? category}) => category == null
       ? '$baseUrl/api/etf/list'
       : '$baseUrl/api/etf/list?category=$category';

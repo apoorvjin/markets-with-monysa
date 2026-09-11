@@ -1,9 +1,17 @@
-/** Global exchange session table + open/closed logic.
+/** Global exchange session table + local-time/fallback open-closed logic.
  *
  * Extracted from MarketStatus.tsx so the nav pill and the Markets session
  * strip read from ONE table — two copies would drift the moment an exchange
  * changes hours. Mirrors the marketing site's `.mkt` widget
- * (frontend/apps/site/src/components/Nav.astro). */
+ * (frontend/apps/site/src/components/Nav.astro).
+ *
+ * `isOpen()`'s open/closed result is a pure day-of-week + time-of-day check —
+ * it has no concept of exchange holidays (NYSE closed for Thanksgiving still
+ * reads as "open" by this math alone). MarketStatus.tsx overlays the real,
+ * live-quote-derived status from `/api/markets/session-status` on top of
+ * this, so callers of `isOpen`/`sessionStatuses` directly (e.g. the Markets
+ * session strip) inherit the same holiday blind spot — only the nav pill is
+ * holiday-aware today. */
 
 export interface MarketDef {
   city: string;

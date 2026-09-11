@@ -48,8 +48,10 @@ abstract final class PushNotificationService {
       sound: true,
     );
 
-    // Subscribe to VIX regime-change alerts (server sends when contango ↔ backwardation flips).
-    await _fcm.subscribeToTopic('regime-changes').catchError((_) {});
+    // Subscribe to the generic server-broadcast topic — every broadcast-style
+    // trigger (VIX regime changes today, more may be added later) publishes
+    // here; the payload's `data.triggerId` identifies which one fired.
+    await _fcm.subscribeToTopic('broadcast-alerts').catchError((_) {});
   }
 
   static Future<void> _refreshToken() async {

@@ -216,6 +216,27 @@ export const STI_SYMBOLS: string[] = [
   "Y92.SI", "U11.SI", "V03.SI", "F34.SI", "U14.SI", "BS6.SI",
 ];
 
+// EURO STOXX 50 — pan-Eurozone blue chips across France/Germany/Netherlands/
+// Spain/Italy/Belgium/Finland exchanges. Mixed Yahoo suffixes (.DE/.PA/.AS/
+// .MC/.MI/.BR/.HE) — no single-suffix convention like the other lists above.
+// Sourced from Wikipedia's EURO STOXX 50 constituents table (snapshot dated
+// 2025-09-22) cross-checked against a second source (chartmill.com) for the
+// first 30 entries — NOT individually live-verified against Yahoo one-by-one
+// like the 2026-07 batches above. STOXX rebalances quarterly (3rd Friday of
+// Mar/Jun/Sep/Dec); Yahoo silently drops any ticker that's since rotated out,
+// same as every other list in this file — refresh after a rebalance if a
+// name looks obviously stale.
+export const EUROSTOXX50_SYMBOLS: string[] = [
+  "ADS.DE",  "ADYEN.AS","AD.AS",   "AI.PA",   "AIR.PA",  "ALV.DE",  "ABI.BR",
+  "ARGX.BR", "ASML.AS", "CS.PA",   "BAS.DE",  "BAYN.DE", "BBVA.MC", "SAN.MC",
+  "BMW.DE",  "BNP.PA",  "BN.PA",   "DBK.DE",  "DB1.DE",  "DHL.DE",  "DTE.DE",
+  "ENEL.MI", "ENI.MI",  "EL.PA",   "RACE.MI", "RMS.PA",  "IBE.MC",  "ITX.MC",
+  "IFX.DE",  "INGA.AS", "ISP.MI",  "OR.PA",   "MC.PA",   "MBG.DE",  "MUV2.DE",
+  "NDA-FI.HE","PRX.AS", "RHM.DE",  "SAF.PA",  "SGO.PA",  "SAN.PA",  "SAP.DE",
+  "SU.PA",   "SIE.DE",  "ENR.DE",  "TTE.PA",  "DG.PA",   "UCG.MI",  "VOW.DE",
+  "WKL.AS",
+];
+
 export const INDEX_SYMBOLS: Record<string, string[]> = {
   ndx:        NDX_SYMBOLS,
   dji:        DJI_SYMBOLS,

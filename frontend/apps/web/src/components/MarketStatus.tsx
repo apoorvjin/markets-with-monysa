@@ -1,9 +1,17 @@
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useReducer, useRef, useState } from "react";
+import { api } from "../lib/api";
 import { MARKETS, sessionStatuses } from "../lib/sessions";
 
 /** Global exchange-session status pill — mirrors the marketing site's .mkt
-    widget (frontend/apps/site/src/components/Nav.astro), same session table
-    and open/closed logic, ported to React with a 30s re-render tick. */
+    widget (frontend/apps/site/src/components/Nav.astro) for layout, but
+    open/closed comes from the server's `/api/markets/session-status` (a
+    real, live Yahoo quote per exchange — see server/routes/market-status.ts)
+    rather than sessionStatuses()' pure day/time math, so an exchange holiday
+    is reflected correctly. sessionStatuses() still supplies the per-city
+    local-time string and is also the fallback open/closed guess if the
+    server fetch hasn't resolved yet or fails — same pattern as the mobile
+    MarketStatusButton (moby/lib/shared/widgets/market_status.dart). */
 export function MarketStatus() {
   const [, retick] = useReducer((n: number) => n + 1, 0);
   const [open, setOpen] = useState(false);
@@ -24,7 +32,19 @@ export function MarketStatus() {
     return () => document.removeEventListener("click", onDocClick);
   }, []);
 
-  const statuses = sessionStatuses();
+  // Matches the server's own 10m cache TTL — no point polling faster.
+  const { data: liveStatus } = useQuery({
+    queryKey: ["market-session-status"],
+    queryFn: () => api.getSessionStatus(),
+    refetchInterval: 5 * 60_000,
+    staleTime: 5 * 60_000,
+  });
+  const liveOpenByCity = new Map(liveStatus?.exchanges.map((e) => [e.city, e.open]));
+
+  const statuses = sessionStatuses().map((s) => ({
+    ...s,
+    open: liveOpenByCity.get(s.city) ?? s.open,
+  }));
   const openCount = statuses.filter((s) => s.open).length;
   const label = openCount > 0 ? `${openCount} of ${MARKETS.length} open` : "All markets closed";
 
@@ -65,7 +85,7 @@ export function MarketStatus() {
             </div>
           ))}
         </div>
-        <p className="mkt__foot">Regular trading hours · local exchange time. Holidays not shown.</p>
+        <p className="mkt__foot">Live session status · local exchange time.</p>
       </div>
     </div>
   );
