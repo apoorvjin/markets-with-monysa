@@ -79,6 +79,7 @@ abstract final class EntitlementService {
     'country_top_stocks': {Plan.pro},
     'macro_performance_timeframes': {Plan.pro},
     'macro_correlation_timeframes': {Plan.pro},
+    'country_financial_conditions': {Plan.pro},
   };
 
   static String get requiredPlanLabel => 'Pro';

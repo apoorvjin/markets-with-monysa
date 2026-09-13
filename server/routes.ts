@@ -20,6 +20,7 @@ import { registerDatacentersRoutes } from "./routes/datacenters";
 import { registerMaritimeRoutes } from "./routes/maritime";
 import { registerNotificationsRoutes } from "./routes/notifications";
 import { registerMarketStatusRoutes } from "./routes/market-status";
+import { registerBisRoutes } from "./routes/bis";
 import { getAvailableProviders } from "./providers";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -50,6 +51,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerMaritimeRoutes(app);
   registerNotificationsRoutes(app);
   registerMarketStatusRoutes(app);
+  registerBisRoutes(app);
 
   app.use("/api/trading", createTradingRouter());
 

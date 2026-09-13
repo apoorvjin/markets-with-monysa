@@ -56,6 +56,12 @@ server/
     shared.ts           # Shared utilities
     volatility.ts       # GET /api/volatility/assets, POST /api/volatility/briefing,
                        #   GET /api/volatility/fear-greed
+    bis.ts              # GET /api/macro/country-health/coverage (free), GET /api/macro/country-health/:code
+                       #   (Pro+ plan-gated, 403 otherwise), GET /api/macro/currency-valuation (FIN-21,
+                       #   free — REER valuation per Forex currency, reuses buildReerMetric()). Thin
+                       #   route layer over lib/bis/ — 24h in-process cache of all 6 BIS dataflows,
+                       #   in-flight-coalesced. Country-code filtering for coverage unions tariffs.json's
+                       #   list with a hardcoded "US" — see Known Pitfalls (tariffs.json excludes the US itself).
 
   data/                 # Static data tables bundled with the server
     index_constituents.ts  # Hardcoded symbol lists for DJI 30 / NASDAQ 100 / FTSE 100 / Nifty 50 /
@@ -65,6 +71,9 @@ server/
                            # fixed_income/commodity/thematic/leveraged). Sector category imports SECTOR_ETFS
                            # from routes/economy.ts rather than duplicating it. ETF_ROTATION_CATEGORIES limits
                            # the RRG rotation view to equity-like categories (sector/broad/international/thematic).
+    currency_areas.ts      # CURRENCY_AREAS (FIN-21): currency -> BIS REF_AREA map for every currency in
+                           # FOREX_PAIRS (routes/markets.ts), derived from each pair's Yahoo symbol.
+                           # EUR maps to BIS's "XM" euro-area series but flagCountryCode "EU" for display.
 
   lib/                  # Shared server utilities
     chart-renderer.ts   # Per-device chart-provider preference middleware
@@ -80,6 +89,25 @@ server/
       cost-buckets.ts   #   Haiku COGS/CAPEX/RD/SGA classification, cached forever per CIK
       usaspending.ts    #   federal contract awards as edges (free, no key)
       derivation-batch.ts  # nightly leader-gated job -> Firestore. Universe is DISCOVERED, not curated.
+    bis/                # Country Health (2026-09) — BIS (Bank for International Settlements) macro
+                       # conditions per country. Free, keyless SDMX API — verified live dataflow IDs
+                       # (not guessed): WS_CBPOL (policy rates), WS_TC (private credit/GDP),
+                       # WS_CREDIT_GAP (BIS's own published actual-minus-trend gap — used directly
+                       # rather than re-deriving a trend ourselves), WS_DSR (debt service ratios),
+                       # WS_SPP (property prices), WS_EER (REER). Each dataflow is fetched ONCE for
+                       # ALL countries (empty REF_AREA/BORROWERS_CTY key position = wildcard), not
+                       # per-country — 6 requests total per refresh.
+      bis-fetch.ts      #   fetchAllBisSeries() — bulk CSV pull + minimal RFC-4180 parse (same
+                       #   file-local parseCsvLine convention as heatmap.ts/oge.ts/markets.ts) for
+                       #   all 6 dataflows in parallel. ~13Y history (2013-01 start) for a full
+                       #   trailing-10Y window at any point in the year.
+      bis-derive.ts     #   Pure, unit-tested (bis-derive.test.ts). Every metric row is a raw value
+                       #   + ONE mechanical comparison (vs. its own trailing 10Y average, or vs.
+                       #   BIS's own published credit-gap trend) + a label from a FIXED threshold —
+                       #   deliberately NO weighted/blended composite score (see Country Health
+                       #   scoping discussion: an invented 0-10 risk score has no BIS methodology
+                       #   behind it). A country/metric BIS has no data for returns
+                       #   available:false with every other field null — never a fabricated value.
     leader.ts           # Multi-machine leader election via Upstash Redis lease.
                        # Gates BacktestWarm + Finnhub WS to one machine when Fly runs >1.
                        # isLeader() returns true without Redis (local dev / single-machine).
@@ -407,6 +435,9 @@ Not exposed via any API yet — no client reads it. It exists to answer "is this
 | `GET /api/splc/universe` | Companies with at least one supply-chain edge → `{ companies: [{ticker,name,supplierCount,customerCount}], lastUpdated }`. Discovered by the nightly batch, not curated. Reads one Firestore doc. | `no-cache` (ETag) |
 | `GET /api/splc/:symbol` | One company's graph → `{ ticker, found, cik, name, suppliers: [SplcEdge], customers: [SplcEdge], coverage:{disclosedCount,derivedCount}, lastUpdated }`. `suppliers` = who sells TO this ticker, `customers` = who buys FROM it (reader's perspective, NOT the edge's own supplierCik/customerCik roles). | `no-cache` (ETag) |
 | `GET /api/etf/rotation` | RRG rotation view for sector/broad/international/thematic ETFs (leveraged/fixed_income/commodity excluded — not meaningful on an SPX-relative RRG). Via `getEtfRotationQuadrants()` in `economy.ts` (separate from `getSectorQuadrants()` — does not touch `/api/sectors`). | 15m |
+| `GET /api/macro/country-health/coverage` | Free, unauthenticated. Which ISO2 country codes have at least one BIS series (`server/lib/bis/`) → `{ countries: string[], lastUpdated }`. Powers the Country Health picker so it never offers a country with nothing behind it. | 24h (server-side BIS cache) |
+| `GET /api/macro/country-health/:code` | Country Health panel (Pro+ plan-gated, 403 otherwise): policy rate, private credit/GDP, debt service ratio, property prices, REER — one BIS-published number + one mechanical comparison + a fixed-threshold label per row, deliberately no blended score. `code` must be a 2-letter ISO country code (400 otherwise). | 12h client cache; 24h server-side BIS cache |
+| `GET /api/macro/currency-valuation` | FIN-21 — free, unauthenticated. REER-based "historically rich/cheap/neutral" valuation context for every currency in `FOREX_PAIRS` (Markets → Forex), via `server/data/currency_areas.ts`'s currency→BIS-area map + the same `buildReerMetric()` Country Health's REER row uses. | 12h client cache; 24h server-side BIS cache |
 
 ### Exact API Response Shapes
 
@@ -505,6 +536,23 @@ GET /api/etf/:symbol/profile  → { symbol, expenseRatio, aum, family, holdings:
 GET /api/etf/rotation         → { items: [EtfRotationItem], lastUpdated }
                                   EtfRotationItem: { symbol, name, emoji, category, rsRatio, rsMomentum,
                                                      quadrant("Leading"|"Improving"|"Weakening"|"Lagging"|null) }
+GET /api/macro/country-health/coverage → { countries: string[], lastUpdated }
+GET /api/macro/country-health/:code    → { countryCode, metrics: [CountryHealthMetric], lastUpdated }
+                                  CountryHealthMetric: { key("policy_rate"|"credit_gdp"|"debt_service_ratio"|
+                                                          "property_price_yoy"|"reer"), label, available,
+                                                          value, unit, change3m, change12m, deviation10y,
+                                                          tag, asOf }
+                                  available:false means BIS has no series for that country/metric —
+                                  value/tag/asOf are null, never a fabricated 0 or fallback number.
+                                  change3m/change12m (policy rate only, basis points); deviation10y
+                                  (all others) is vs. the metric's own trailing 10Y average, in pp or %
+                                  — NOT a weighted/blended score. See server/lib/bis/bis-derive.ts.
+GET /api/macro/currency-valuation → { currencies: [CurrencyValuation], lastUpdated }
+                                  CurrencyValuation: { code, name, flagCountryCode, available, value,
+                                                        deviation10y, tag, asOf }
+                                  Same REER math/thresholds as Country Health's "reer" row, keyed by
+                                  currency (via currency_areas.ts) instead of country. EUR uses BIS's
+                                  "XM" euro-area series but flagCountryCode is "EU" for rendering.
 ```
 
 Plan-gated endpoints return `403 { error: "...", code: "PLAN_REQUIRED" }` when the device lacks entitlement.
@@ -644,6 +692,12 @@ moby/lib/
                                    # /api/etf/rotation. Uses etf.dart models + EtfRepository (DiskCache pattern).
     exposure/exposure_screen.dart  # ExposureScreen — embedded as "Exposure" tab inside InvestingScreen
     volatility/volatility_screen.dart  # MacroScreen (class name!) — /macro route; also still has old VolatilityScreen import path
+    volatility/country_health_tab.dart  # CountryHealthTab (2026-09) — 7th Macro tab. Country picker (TariffsData +
+                                   # synthetic "United States" entry, since tariffs.json excludes the US — filtered
+                                   # to /api/macro/country-health/coverage) + 5-row BIS panel. Pro-gated
+                                   # (country_financial_conditions): checks EntitlementService.can() BEFORE calling
+                                   # the country-health endpoint (it 403s server-side), same reasoning as the AI
+                                   # Macro Briefing — never fire a request guaranteed to fail.
     usa_debt/usa_debt_screen.dart  # UsaDebtScreen — embedded inside MacroScreen tabs
     country/country_detail_screen.dart
     country/country_stocks_screen.dart
@@ -730,7 +784,7 @@ REDIRECTS (app_router.dart handles these automatically):
 
 ### Screen Notes
 
-**Markets** (`/markets`): 5 sub-tabs — **Heatmap** (default) / Indices / Commodities / Forex / CFTC. Each price tab has inline search; forex is grouped by region when not searching, flat list when searching; CFTC metals section hides during search; tap any row → `ChartModal` bottom sheet. The Heatmap tab is a market-cap-weighted treemap with index-selector chips (17 indices — see the Treemap index count row in Known Pitfalls) and timeframe chips (1D / 1W / 1M / YTD). Tile size = USD-normalised market cap (`effectiveMarketCap`), tile colour = % change for selected timeframe. Tap a tile → centred tooltip card. **The Heatmap tab itself is free** — all 17 indexes + the 1D timeframe are open to everyone; only the 1W/1M/YTD timeframe chips are Pro-gated (`heatmap_extended_timeframes`, lock icon shown on the chip for free users, tapping shows the paywall instead of switching). Forex rows show a rate-comparison sub-label (`_FxDifferential` — base vs quote central-bank rate) that is Pro-gated (`forex_rate_comparison`): free users see it blurred with a green/red tint (matching the differential's sign) and an "Upgrade to Pro" overlay via `ProBlurOverlay` (shared/widgets/pro_blur_overlay.dart). CFTC category chip order is Metals / Energy / Indices & Rates / Agriculture / Currencies / **Regional Flows**; within each of the first five categories only the first asset is shown with real values (`cftc_categories` gate) — the rest are blurred the same way, regardless of which category chip is active. **Regional Flows is not gated** (small, fixed dataset — nothing meaningful to blur) and renders cards, not the COT table, since it's a different metric (see Known Pitfalls: "CFTC COT is US-only").
+**Markets** (`/markets`): 5 sub-tabs — **Heatmap** (default) / Indices / Commodities / Forex / CFTC. Each price tab has inline search; forex is grouped by region when not searching, flat list when searching; CFTC metals section hides during search; tap any row → `ChartModal` bottom sheet. The Heatmap tab is a market-cap-weighted treemap with index-selector chips (17 indices — see the Treemap index count row in Known Pitfalls) and timeframe chips (1D / 1W / 1M / YTD). Tile size = USD-normalised market cap (`effectiveMarketCap`), tile colour = % change for selected timeframe. Tap a tile → centred tooltip card. **The Heatmap tab itself is free** — all 17 indexes + the 1D timeframe are open to everyone; only the 1W/1M/YTD timeframe chips are Pro-gated (`heatmap_extended_timeframes`, lock icon shown on the chip for free users, tapping shows the paywall instead of switching). Forex rows show a rate-comparison sub-label (`_FxDifferential` — base vs quote central-bank rate) that is Pro-gated (`forex_rate_comparison`): free users see it blurred with a green/red tint (matching the differential's sign) and an "Upgrade to Pro" overlay via `ProBlurOverlay` (shared/widgets/pro_blur_overlay.dart). CFTC category chip order is Metals / Energy / Indices & Rates / Agriculture / Currencies / **Regional Flows**; within each of the first five categories only the first asset is shown with real values (`cftc_categories` gate) — the rest are blurred the same way, regardless of which category chip is active. **Regional Flows is not gated** (small, fixed dataset — nothing meaningful to blur) and renders cards, not the COT table, since it's a different metric (see Known Pitfalls: "CFTC COT is US-only"). **Forex also has a "Currency Valuation" strip** (FIN-21, 2026-09, free): a horizontal scroll of currency chips above the pair list — flag + code + a rich/cheap/neutral dot, tap for a sheet with REER level, % vs. its own 10Y average, and an explicit "not a trading signal" note. Per-currency, not per-pair (REER is basket-relative), so it's a separate strip rather than a per-row label like the rate-comparison sub-label. Mobile: `_CurrencyValuationStrip` in `markets_screen.dart`. Web mirrors it as `CurrencyValuationStrip` in `MarketsPage.tsx`.
 
 **Trading** (`/trading`): **five** sub-tabs — Instruments / Dashboard / Power Moves / Signals / Alerts.
 - Instruments (`_DashboardTab`): category chips (in order, NO "All"): ★ Watchlist / Commodities / Indices / Stocks / Forex / Crypto. "Stocks" chip switches to full-text search (debounced 400ms, calls `/api/search`). Other chips show 49 live asset rows with 30s auto-refresh.
@@ -749,7 +803,7 @@ REDIRECTS (app_router.dart handles these automatically):
 
 **Trading** (`/trading`) Power Moves tab: 4th tab. Scanner for Indices/Forex/Commodities/Crypto assets with v1/v2/v3 Pine variants. Auto-selects correct v3 version when type changes (Indices→v3, Forex→v3f, Crypto→v3crypto). Backtest link (v1/v2 only) uses `/trading/10x-backtest?version=&type=assets`. Info sheet explains each version's signals.
 
-**Macro** (`/macro`, class `MacroScreen` in `volatility_screen.dart`): **5 sub-tabs** — Dashboard / Crisis / Debt / Calendar / **Correlation**.
+**Macro** (`/macro`, class `MacroScreen` in `volatility_screen.dart`): **7 sub-tabs** — Dashboard / Correlation / Adv Correlation / Economic Calendar / Crisis / US Debt / **Country Health** (2026-09; BIS-sourced per-country macro panel — pick a country, see policy rate/credit-GDP/debt-service/property/REER as raw numbers + fixed-threshold labels, Pro-gated. See `country_health_tab.dart` / `CountryHealthTab` in web's `MacroPage.tsx`).
 - Dashboard: Market Stress Meter, Fear & Greed gauge, VIX gauge, crisis assets sparklines, yield curve section with info icon (Normal/Flat/Inverted), sector rotation RRG quadrant panel, geopolitical infographic, AI briefing button.
 - Crisis: Historical crisis playbook (CRISIS_DATA array).
 - Debt: UsaDebtScreen — live US debt clock.
@@ -934,6 +988,7 @@ if (!EntitlementService.can('signals_advanced')) {
 | `country_top_stocks` | Pro+ (Investing → Exposure → Country Detail: the "View Top Listed Stocks" button, for every one of the 113+ countries — everything else on the detail screen (tariff rate, layman explanation, sector rates, debt exposure) stays free; free users see a lock icon on the button and tapping opens the paywall instead of navigating to `/country/:code/stocks`) |
 | `macro_performance_timeframes` | Pro+ (Macro → Dashboard → Market Performance heatmap: 1D/1W are free, 1M/3M/6M/1Y/3Y/5Y are Pro. Timeframe chips always stay tappable and switch state for every user — only the resulting tile grid is blurred for free users on a gated timeframe, via `ProBlurOverlay`. Mobile-only: web's equivalent card (`MarketHeatmapsCard`) has no timeframe toggle at all, so there's nothing to gate there.) |
 | `macro_correlation_timeframes` | Pro+ (Macro → Adv Correlation: 1M is free, 3M/6M/1Y are Pro. Window chips always stay tappable — only the correlation matrix is blurred for a gated window, via `ProBlurOverlay`/`ProBlur`. Web mirrors this as a permanent teaser (no purchase flow); the blurred preview is height-capped (440px / `max-height` on `.adv-corr-blur`) so the "Upgrade to Pro" text stays visible instead of being centered somewhere off-screen in the ~180-asset matrix.) |
+| `country_financial_conditions` | Pro+ (Macro → Country Health: the picker and coverage lookup are free; selecting a country's panel is gated. Server-side 403 (`/api/macro/country-health/:code`), not a client-side blur-after-fetch — the client checks the entitlement BEFORE calling the endpoint, same reasoning as the AI Macro Briefing, so a free device never fires a request that's guaranteed to fail.) |
 
 **Dev bypass**: pass `--dart-define=DEV_PLAN=pro` to skip all plan gates.
 
@@ -1028,7 +1083,8 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | Crisis `dataAsOf` hardcoded | `"May 2026"` string literal | Constant `CRISIS_DATA_REVIEWED_AT` in `economy.ts` — update the constant (not a raw string) when CRISIS_DATA changes |
 | Tariff data bundled in Flutter | `rootBundle.loadString('assets/data/tariffs.json')` | Tariff data now served from `GET /api/tariffs`; update `server/data/tariffs.json` and bump `TARIFFS_DATA_AS_OF` in `economy.ts` to refresh without an app release |
 | `TariffsData.instance.load()` loads assets | Old approach used `dart:convert` + `rootBundle` | Now calls `ApiClient.instance.get(ApiEndpoints.tariffs)` — `TariffsData.instance.lastUpdated` and `.dataAsOf` are populated after the first `load()` call |
-| MacroScreen class location | `volatility_screen.dart` sounds wrong | Correct — `MacroScreen` lives in `features/volatility/volatility_screen.dart`. Has 5 tabs: Dashboard/Crisis/Debt/Calendar/Correlation. |
+| MacroScreen class location | `volatility_screen.dart` sounds wrong | Correct — `MacroScreen` lives in `features/volatility/volatility_screen.dart`. Has 7 tabs: Dashboard/Correlation/Adv Correlation/Economic Calendar/Crisis/US Debt/Country Health. |
+| BIS country codes vs. `tariffs.json`'s country list | using `tariffs.json`'s `countryCode` set as a general "valid country" allowlist | `tariffs.json` is "countries the US tariffs" and deliberately **excludes the US itself** — joining BIS coverage against it silently drops the single most BIS-complete economy from the Country Health picker (caught via curl during build: `US` was missing from `/api/macro/country-health/coverage` even though `/api/macro/country-health/US` returned full data). `server/routes/bis.ts` unions `tariffs.json`'s codes with a hardcoded `"US"` — don't remove that union, and don't reuse `tariffs.json` as a general country allowlist elsewhere without the same fix. |
 | OGE response shape | `OgeTransaction[]` array directly | `{ transactions, total, lastUpdated, loading? }` — wrapped; `loading=true` while PDF pipeline runs |
 | OGE transaction fields | `filer, position, ticker, exchange` | `description, type, date, amount, amountMidpoint, filingDate, source` |
 | House trades response | raw array | `{ trades, total, lastUpdated }` — wrapped |
@@ -1099,7 +1155,7 @@ AppRadius.xs=6   sm=8  md=12  lg=16  full=100
 | **Markets** `/markets` | 5 sub-tabs: **Heatmap** (default; market-cap-weighted treemap of 17 indices with timeframe selector 1D/1W/1M/YTD), Indices (46 global), Commodities (23), Forex (44 pairs grouped by region, rate-comparison sub-label), CFTC metals (hedge fund COT positions, 6 chips: Metals/Energy/**Indices & Rates** (now includes Nikkei 225)/Agriculture/Currencies/**Regional Flows** (NSE India FII/DII cash-market net buy-sell — a different metric, its own card layout, not folded into the COT table)). Inline search per price tab. Tap any row → candlestick chart modal; tap a treemap tile → tooltip card. | `/api/futures/indices` `/api/futures/commodities` `/api/futures/forex` `/api/futures/cot-metals` `/api/central-bank-rates` `/api/heatmap/treemap` | **Free**: Heatmap tab (all indexes, 1D), Indices, Commodities, Forex prices, CFTC (1 asset/category), Regional Flows (all rows, no gate). **Pro**: Heatmap 1W/1M/YTD (`heatmap_extended_timeframes`), Forex rate-comparison label (`forex_rate_comparison`), CFTC remaining assets per category (`cftc_categories`) — all three render as a blurred teaser with an "Upgrade to Pro" overlay for free users. |
 | **Trading** `/trading` | 4 sub-tabs: Dashboard (49 live assets, 30s refresh; category chips; Stocks chip = full-text search), AI Signals (S1–S3 strategy selector; BUY/HOLD/SELL per asset), Alerts (price alerts, 10s poll), Power Moves (scanner: Indices/Forex/Commodities/Crypto with v1/v2/v3 Pine variants). | `/api/trading/quotes` `/api/search` `/api/trading/signals/:symbol` `/api/trading/strategies` `/api/trading/scanner/10x-v3/assets` `/api/trading/scanner/10x-v3/commodities` `/api/trading/scanner/10x-v3/forex` `/api/trading/scanner/10x-v3/crypto` `/api/trading/scanner/10x/assets` `/api/trading/scanner/10x-v2/assets` | **Free**: S1–S3 signals, basic alerts, Power Moves. **Pro** (`signals_advanced`): S4–S8/advanced strategies. **Pro** (`alerts_unlimited`): more than 3 active alerts. |
 | **Investing** `/investing` | 7 sub-tabs (Exposure is default): Exposure (tariff country browser — free), Dashboard (Best Setups — Pro+), Multibaggers, Presidential (newest filing batch Pro-gated), Smart $ (Lobbying Growth + Insider Buys), Earnings Calendar, ETFs (MoM/QoQ/YoY strip Pro-gated). Congress/House Trades tabs removed 2026-07 (dead data sources — see Known Pitfalls). | `/api/tariffs` `/api/trading/scanner/best-setups` `/api/trading/best-setups-sector` `/api/trading/scanner/10x-v2/assets` `/api/search` `/api/oge/trump-transactions` `/api/quiver/lobbying` `/api/quiver/insider` `/api/trading/earnings-calendar` `/api/etf/list` `/api/etf/:symbol/profile` `/api/etf/rotation` | **Free**: Exposure, Smart $, Multibaggers, Earnings Calendar, ETFs (quote/price always; perf strip only for 1 randomly-picked ETF), Presidential (all but the newest filing). **Pro**: Dashboard tab (`best_setups`); Presidential's newest filing batch (`presidential_latest_filing`); every other ETF's perf strip (`etf_performance_metrics`). |
-| **Macro** `/macro` | 5 sub-tabs: Dashboard (Market Stress Meter, Fear & Greed, VIX gauge, crisis assets sparklines, yield curve, sector rotation RRG, geopolitical infographic, AI macro briefing button), Crisis (historical crisis playbook), Debt (US live debt clock), Calendar (dynamic FOMC/CPI/NFP events from FF Calendar), Correlation (asset correlation matrix). | `/api/volatility/assets` `/api/volatility/fear-greed` `POST /api/volatility/briefing` `/api/bonds` `/api/sectors` `/api/heatmap` `/api/heatmap/assets` `/api/crises` `/api/usa-debt` `/api/economy/yield-curve-history` `/api/economy/events` `/api/trading/correlation` | **Free**: all content. **Pro** (`analyst_notes_unlimited`): AI Macro Briefing button (GPT-4o-mini stress analysis). |
+| **Macro** `/macro` | 7 sub-tabs: Dashboard (Market Stress Meter, Fear & Greed, VIX gauge, crisis assets sparklines, yield curve, sector rotation RRG, geopolitical infographic, AI macro briefing button), Correlation, Adv Correlation, Economic Calendar (dynamic FOMC/CPI/NFP events from FF Calendar), Crisis (historical crisis playbook), US Debt (live debt clock), Country Health (pick a country → BIS policy rate/credit-GDP/debt-service/property/REER, raw numbers + fixed-threshold labels, no composite score). | `/api/volatility/assets` `/api/volatility/fear-greed` `POST /api/volatility/briefing` `/api/bonds` `/api/sectors` `/api/heatmap` `/api/heatmap/assets` `/api/crises` `/api/usa-debt` `/api/economy/yield-curve-history` `/api/economy/events` `/api/trading/correlation` `/api/macro/country-health/coverage` `/api/macro/country-health/:code` | **Free**: all content except Country Health panel and AI Macro Briefing. **Pro** (`analyst_notes_unlimited`): AI Macro Briefing button. **Pro** (`country_financial_conditions`): Country Health panel (picker itself is free). |
 | **Asset Detail** `/asset/:symbol` | 5 sub-tabs for any Yahoo Finance symbol: Chart (inline TradingView or Yahoo candlestick + fullscreen modal), Signal (AI BUY/HOLD/SELL with entry/SL/TP/reasoning), Indicators (fundamentals data), Backtest (walk-forward S1/S2/S3 results), News (headlines + sentiment). | `/api/chart/:symbol` `/api/trading/signals/:symbol` `/api/trading/backtest/:symbol` `/api/trading/news/:symbol` `/api/trading/analyst-note/:symbol` `/api/trading/fundamentals/:symbol` | **Free**: Chart, Signal, Backtest, News. **Pro** (`analyst_notes_unlimited`): Analyst Note inside Signal tab. |
 | **Country Detail / Stocks** `/country/:code` `/country/:code/stocks` | Country overview (GDP, trade balance, military data from World Bank). Stocks list for that country; India has NSE/BSE exchange tabs. Tap stock row → Asset Detail (not a chart modal). | `/api/country-data/:code` `/api/stocks/:countryCode` | **All free.** |
 | **Multibaggers** `/trading/multibaggers` | Full-screen country-specific 10X stock scanner. Country chips: 🇺🇸 US (default) / 🇮🇳 India / 🇬🇧 UK / 🇯🇵 Japan / 🇭🇰 HK / 🇨🇳 China / 🇪🇺 Euronext. v1/v2 version toggle. Min-signals filter. Country-aware stock search (type a name → suggestions filtered by selected country → tap → single-symbol scan). Three build modes: normal list / search suggestions / single-scan. | `/api/trading/scanner/10x/{country}` `/api/trading/scanner/10x-v2/{country}` `/api/trading/scanner/10x/single` `/api/search` | **All free.** |

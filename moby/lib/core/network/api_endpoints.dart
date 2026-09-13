@@ -25,6 +25,7 @@ abstract final class ApiEndpoints {
     final url = '$baseUrl/api/trading/backtest/$symbol';
     return timeframe != null ? '$url?timeframe=$timeframe' : url;
   }
+
   static String tradingNews(String symbol) =>
       '$baseUrl/api/trading/news/$symbol';
   static String nasdaqPressReleases(String symbol) =>
@@ -42,32 +43,52 @@ abstract final class ApiEndpoints {
   static String get tenXAssets => '$baseUrl/api/trading/scanner/10x/assets';
   static String get tenXStocks => '$baseUrl/api/trading/scanner/10x/stocks';
   static String get tenXIndiaStocks => '$baseUrl/api/trading/scanner/10x/india';
-  static String get tenXV2IndiaStocks => '$baseUrl/api/trading/scanner/10x-v2/india';
-  static String get tenXUKStocks         => '$baseUrl/api/trading/scanner/10x/uk';
-  static String get tenXV2UKStocks       => '$baseUrl/api/trading/scanner/10x-v2/uk';
-  static String get tenXJapanStocks      => '$baseUrl/api/trading/scanner/10x/japan';
-  static String get tenXV2JapanStocks    => '$baseUrl/api/trading/scanner/10x-v2/japan';
-  static String get tenXHKStocks         => '$baseUrl/api/trading/scanner/10x/hongkong';
-  static String get tenXV2HKStocks       => '$baseUrl/api/trading/scanner/10x-v2/hongkong';
-  static String get tenXChinaStocks      => '$baseUrl/api/trading/scanner/10x/china';
-  static String get tenXV2ChinaStocks    => '$baseUrl/api/trading/scanner/10x-v2/china';
-  static String get tenXEuronextStocks   => '$baseUrl/api/trading/scanner/10x/euronext';
-  static String get tenXV2EuronextStocks => '$baseUrl/api/trading/scanner/10x-v2/euronext';
+  static String get tenXV2IndiaStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/india';
+  static String get tenXUKStocks => '$baseUrl/api/trading/scanner/10x/uk';
+  static String get tenXV2UKStocks => '$baseUrl/api/trading/scanner/10x-v2/uk';
+  static String get tenXJapanStocks => '$baseUrl/api/trading/scanner/10x/japan';
+  static String get tenXV2JapanStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/japan';
+  static String get tenXHKStocks => '$baseUrl/api/trading/scanner/10x/hongkong';
+  static String get tenXV2HKStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/hongkong';
+  static String get tenXChinaStocks => '$baseUrl/api/trading/scanner/10x/china';
+  static String get tenXV2ChinaStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/china';
+  static String get tenXEuronextStocks =>
+      '$baseUrl/api/trading/scanner/10x/euronext';
+  static String get tenXV2EuronextStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/euronext';
   // Wave 3 additions — Yahoo screener coverage confirmed live before building.
-  static String get tenXCanadaStocks     => '$baseUrl/api/trading/scanner/10x/canada';
-  static String get tenXV2CanadaStocks   => '$baseUrl/api/trading/scanner/10x-v2/canada';
-  static String get tenXAustraliaStocks  => '$baseUrl/api/trading/scanner/10x/australia';
-  static String get tenXV2AustraliaStocks => '$baseUrl/api/trading/scanner/10x-v2/australia';
-  static String get tenXBrazilStocks     => '$baseUrl/api/trading/scanner/10x/brazil';
-  static String get tenXV2BrazilStocks   => '$baseUrl/api/trading/scanner/10x-v2/brazil';
-  static String get tenXSingaporeStocks  => '$baseUrl/api/trading/scanner/10x/singapore';
-  static String get tenXV2SingaporeStocks => '$baseUrl/api/trading/scanner/10x-v2/singapore';
-  static String get tenXV2Assets => '$baseUrl/api/trading/scanner/10x-v2/assets';
-  static String get tenXV3Assets => '$baseUrl/api/trading/scanner/10x-v3/assets';
-  static String get tenXV3CommoditiesAssets => '$baseUrl/api/trading/scanner/10x-v3/commodities';
-  static String get tenXV3ForexAssets => '$baseUrl/api/trading/scanner/10x-v3/forex';
-  static String get tenXV3CryptoAssets => '$baseUrl/api/trading/scanner/10x-v3/crypto';
-  static String get tenXV2Stocks => '$baseUrl/api/trading/scanner/10x-v2/stocks';
+  static String get tenXCanadaStocks =>
+      '$baseUrl/api/trading/scanner/10x/canada';
+  static String get tenXV2CanadaStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/canada';
+  static String get tenXAustraliaStocks =>
+      '$baseUrl/api/trading/scanner/10x/australia';
+  static String get tenXV2AustraliaStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/australia';
+  static String get tenXBrazilStocks =>
+      '$baseUrl/api/trading/scanner/10x/brazil';
+  static String get tenXV2BrazilStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/brazil';
+  static String get tenXSingaporeStocks =>
+      '$baseUrl/api/trading/scanner/10x/singapore';
+  static String get tenXV2SingaporeStocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/singapore';
+  static String get tenXV2Assets =>
+      '$baseUrl/api/trading/scanner/10x-v2/assets';
+  static String get tenXV3Assets =>
+      '$baseUrl/api/trading/scanner/10x-v3/assets';
+  static String get tenXV3CommoditiesAssets =>
+      '$baseUrl/api/trading/scanner/10x-v3/commodities';
+  static String get tenXV3ForexAssets =>
+      '$baseUrl/api/trading/scanner/10x-v3/forex';
+  static String get tenXV3CryptoAssets =>
+      '$baseUrl/api/trading/scanner/10x-v3/crypto';
+  static String get tenXV2Stocks =>
+      '$baseUrl/api/trading/scanner/10x-v2/stocks';
   static String tenXSingleScan({required String symbol, String? name}) =>
       '$baseUrl/api/trading/scanner/10x/single?symbol=${Uri.encodeComponent(symbol)}'
       '${(name != null && name.isNotEmpty) ? "&name=${Uri.encodeComponent(name)}" : ""}';
@@ -84,7 +105,8 @@ abstract final class ApiEndpoints {
 
   static String get volatilityAssets => '$baseUrl/api/volatility/assets';
   static String get volatilityBriefing => '$baseUrl/api/volatility/briefing';
-  static String get vixTermStructure => '$baseUrl/api/volatility/vix-term-structure';
+  static String get vixTermStructure =>
+      '$baseUrl/api/volatility/vix-term-structure';
 
   static String get usaDebt => '$baseUrl/api/usa-debt';
   static String get debtComparison => '$baseUrl/api/economy/debt-comparison';
@@ -105,31 +127,48 @@ abstract final class ApiEndpoints {
   static String heatmapMovers({String index = 'sp500'}) =>
       '$baseUrl/api/heatmap/movers?index=$index';
 
-  static String get quiverLobbying         => '$baseUrl/api/quiver/lobbying';
-  static String get quiverInsider          => '$baseUrl/api/quiver/insider';
-  static String get ogeTrumpTransactions   => '$baseUrl/api/oge/trump-transactions';
+  static String get quiverLobbying => '$baseUrl/api/quiver/lobbying';
+  static String get quiverInsider => '$baseUrl/api/quiver/insider';
+  static String get ogeTrumpTransactions =>
+      '$baseUrl/api/oge/trump-transactions';
 
-  static String get regimeSummary    => '$baseUrl/api/trading/regime-summary';
-  static String get earningsCalendar => '$baseUrl/api/trading/earnings-calendar?days=15';
+  static String get countryHealthCoverage =>
+      '$baseUrl/api/macro/country-health/coverage';
+  static String get countryHealthRanking =>
+      '$baseUrl/api/macro/country-health/ranking';
+  static String countryHealth(String code) =>
+      '$baseUrl/api/macro/country-health/$code';
+  static String get currencyValuation =>
+      '$baseUrl/api/macro/currency-valuation';
+
+  static String get regimeSummary => '$baseUrl/api/trading/regime-summary';
+  static String get earningsCalendar =>
+      '$baseUrl/api/trading/earnings-calendar?days=15';
   static String earningsCalendarDays(int days, {String? country}) {
     final base = '$baseUrl/api/trading/earnings-calendar?days=$days';
-    return country == null ? base : '$base&country=${Uri.encodeComponent(country)}';
+    return country == null
+        ? base
+        : '$base&country=${Uri.encodeComponent(country)}';
   }
-  static String get correlation      => '$baseUrl/api/trading/correlation';
+
+  static String get correlation => '$baseUrl/api/trading/correlation';
   static String advCorrelation({String window = '3m'}) =>
       '$baseUrl/api/trading/correlation/advanced?window=$window';
-  static String advCorrelationCustom({required List<String> symbols, String window = '3m'}) =>
+  static String advCorrelationCustom(
+          {required List<String> symbols, String window = '3m'}) =>
       '$baseUrl/api/trading/correlation/advanced/custom'
       '?symbols=${Uri.encodeComponent(symbols.join(","))}&window=$window';
   static String advCorrelationHistory({required String a, required String b}) =>
       '$baseUrl/api/trading/correlation/advanced/history'
       '?a=${Uri.encodeComponent(a)}&b=${Uri.encodeComponent(b)}';
-  static String get yieldCurveHistory => '$baseUrl/api/economy/yield-curve-history';
-  static String get economyEvents     => '$baseUrl/api/economy/events';
-  static String get tariffs           => '$baseUrl/api/tariffs';
-  static String get fearGreed         => '$baseUrl/api/volatility/fear-greed';
+  static String get yieldCurveHistory =>
+      '$baseUrl/api/economy/yield-curve-history';
+  static String get economyEvents => '$baseUrl/api/economy/events';
+  static String get tariffs => '$baseUrl/api/tariffs';
+  static String get fearGreed => '$baseUrl/api/volatility/fear-greed';
 
-  static String get sendVerificationEmail => '$baseUrl/api/auth/send-verification-email';
+  static String get sendVerificationEmail =>
+      '$baseUrl/api/auth/send-verification-email';
 
   // Wire — News/OSINT terminal (server route registered via routes.ts).
   static String get wireDesks => '$baseUrl/api/wire/desks';
@@ -143,7 +182,8 @@ abstract final class ApiEndpoints {
 
   // Exchange session status (Market Status button) — real, holiday-aware
   // open/closed per exchange, sourced server-side from a live Yahoo quote.
-  static String get marketSessionStatus => '$baseUrl/api/markets/session-status';
+  static String get marketSessionStatus =>
+      '$baseUrl/api/markets/session-status';
 
   static String etfList({String? category}) => category == null
       ? '$baseUrl/api/etf/list'

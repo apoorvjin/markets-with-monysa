@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import type { Sector } from "@monysa/contracts";
+import type { Sector, CountryHealthMetric } from "@monysa/contracts";
 import { PERF_TIMEFRAMES, perfFor, type PerfTimeframe } from "@monysa/contracts";
 import { MultiLineChart, Sparkline } from "@monysa/charts";
 import {
@@ -21,7 +21,15 @@ import { useIsPro } from "../../lib/session";
 import { Gauge } from "../../components/Gauge";
 import { HeatmapGrid } from "../../components/HeatmapGrid";
 
-const TABS = ["Dashboard", "Correlation", "Adv Correlation", "Economic Calendar", "Crisis", "US Debt"] as const;
+const TABS = [
+  "Dashboard",
+  "Correlation",
+  "Adv Correlation",
+  "Economic Calendar",
+  "Crisis",
+  "US Debt",
+  "Country Health",
+] as const;
 type Tab = (typeof TABS)[number];
 
 export function MacroPage() {
@@ -42,6 +50,7 @@ export function MacroPage() {
       {tab === "Economic Calendar" && <CalendarTab />}
       {tab === "Crisis" && <CrisisTab />}
       {tab === "US Debt" && <DebtTab />}
+      {tab === "Country Health" && <CountryHealthTab />}
     </div>
   );
 }
@@ -1213,5 +1222,255 @@ function AdvCorrelationTab() {
         </div>
       )}
     </>
+  );
+}
+
+// ── Country Health ────────────────────────────────────────────────────────────
+// BIS (Bank for International Settlements) macro conditions, one country at a
+// time. Every row is a real published number + one mechanical comparison +
+// a label from a fixed threshold — deliberately no blended 0-10 "risk score"
+// (see the scoping discussion this was built from). BIS covers a subset of
+// major/emerging economies, not FinBrio's full 113-country tariff list, so
+// the picker is restricted to codes the free /coverage endpoint reports.
+
+function countryFlagEmoji(countryCode: string): string {
+  return [...countryCode.toUpperCase()]
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
+}
+
+function CountryHealthMetricRow({ metric }: { metric: CountryHealthMetric }) {
+  if (!metric.available) {
+    return (
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+        <span style={{ color: "var(--text-muted)" }}>{metric.label}</span>
+        <span style={{ color: "var(--text-faint, var(--text-muted))", fontSize: "0.85em" }}>Not available</span>
+      </div>
+    );
+  }
+
+  const comparison =
+    metric.change12m != null
+      ? `${metric.change3m?.toFixed(0) ?? "—"}bp (3M) · ${metric.change12m.toFixed(0)}bp (12M)`
+      : metric.deviation10y != null
+        ? `${metric.deviation10y >= 0 ? "+" : ""}${metric.deviation10y.toFixed(1)} vs 10Y avg`
+        : null;
+
+  return (
+    <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <span style={{ fontWeight: 600 }}>{metric.label}</span>
+        <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
+          {metric.value?.toFixed(2)} {metric.unit}
+        </span>
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+        <span style={{ fontSize: "0.85em", color: "var(--text-muted)" }}>{comparison}</span>
+        {metric.tag && (
+          <span
+            style={{
+              fontSize: "0.75em",
+              fontWeight: 600,
+              color: "var(--accent)",
+              background: "color-mix(in srgb, var(--accent) 15%, transparent)",
+              borderRadius: 999,
+              padding: "2px 8px",
+            }}
+          >
+            {metric.tag}
+          </span>
+        )}
+      </div>
+      {metric.asOf && (
+        <div style={{ fontSize: "0.75em", color: "var(--text-faint, var(--text-muted))", marginTop: 2 }}>as of {metric.asOf}</div>
+      )}
+    </div>
+  );
+}
+
+function CountryHealthPanelSkeleton() {
+  return <SkeletonList rows={5} height={56} />;
+}
+
+function CountryHealthPanel({ code, isPro }: { code: string; isPro: boolean }) {
+  const q = useQuery({
+    queryKey: ["country-health", code],
+    queryFn: () => api.getCountryHealth(code),
+    // Server 403s for non-Pro devices — never fire a request guaranteed to fail.
+    enabled: isPro,
+  });
+
+  if (!isPro) {
+    return (
+      <ProBlur positive unlocked={false}>
+        <CountryHealthPanelSkeleton />
+      </ProBlur>
+    );
+  }
+
+  if (q.isLoading) return <CountryHealthPanelSkeleton />;
+  if (q.isError || !q.data) return <ErrorView message="Could not load Country Health data" onRetry={() => q.refetch()} />;
+
+  const anyAvailable = q.data.metrics.some((m) => m.available);
+  if (!anyAvailable) {
+    return (
+      <div style={{ color: "var(--text-muted)", padding: "12px 0" }}>
+        Financial conditions data not available for this country — BIS covers a subset of major and emerging economies.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {q.data.metrics.map((m) => (
+        <CountryHealthMetricRow key={m.key} metric={m} />
+      ))}
+    </div>
+  );
+}
+
+// "N of M flagged" is a plain COUNT of metrics landing on their single
+// most-stressed label — never a weighted score. Pro-gated server-side, so
+// this is only ever rendered when isPro is already true (see CountryHealthTab
+// below) — skipped entirely for free users rather than shown as a teaser.
+function MostFlaggedSection({ onSelect }: { onSelect: (code: string, name: string) => void }) {
+  const { data } = useQuery({
+    queryKey: ["country-health-ranking"],
+    queryFn: () => api.getCountryHealthRanking(),
+  });
+  const top = (data?.rankings ?? []).slice(0, 8);
+  if (top.length === 0) return null;
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontWeight: 600 }}>Most Flagged</div>
+      <div style={{ fontSize: "0.8em", color: "var(--text-muted)", marginBottom: 8 }}>
+        Count of stressed metrics, not a weighted score
+      </div>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
+        {top.map((r) => (
+          <button
+            key={r.countryCode}
+            type="button"
+            onClick={() => onSelect(r.countryCode, r.countryName)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "6px 10px",
+              borderRadius: 999,
+              border: "1px solid var(--border)",
+              background: "var(--surface)",
+              color: "var(--text-primary)",
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+              cursor: "pointer",
+            }}
+          >
+            <span>{countryFlagEmoji(r.countryCode)}</span>
+            <span>{r.countryName}</span>
+            <strong style={{ color: r.flaggedCount > 0 ? "var(--danger)" : "var(--text-muted)" }}>
+              {r.flaggedCount}/{r.availableCount}
+            </strong>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CountryHealthTab() {
+  const isPro = useIsPro();
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<{ code: string; name: string } | null>(null);
+
+  const tariffs = useQuery({ queryKey: ["tariffs"], queryFn: () => api.getTariffs() });
+  const coverage = useQuery({ queryKey: ["bis-coverage"], queryFn: () => api.getBisCoverage() });
+
+  const options = useMemo(() => {
+    if (!tariffs.data || !coverage.data) return [];
+    const coveredSet = new Set(coverage.data.countries);
+    // tariffs.json is "countries the US tariffs" and deliberately excludes
+    // the US itself — add it back so it's pickable here.
+    const all = [{ countryName: "United States", countryCode: "US" }, ...tariffs.data.countries];
+    return all
+      .filter((c) => coveredSet.has(c.countryCode))
+      .sort((a, b) => a.countryName.localeCompare(b.countryName));
+  }, [tariffs.data, coverage.data]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter(
+      (c) => c.countryName.toLowerCase().includes(q) || c.countryCode.toLowerCase().includes(q),
+    );
+  }, [options, query]);
+
+  return (
+    <div>
+      <Card>
+        <h3 style={{ marginTop: 0 }}>Country Health</h3>
+        <p style={{ color: "var(--text-muted)", marginTop: 0 }}>BIS macro conditions — one country at a time</p>
+        <input
+          type="text"
+          placeholder="Search a country…"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setSelected(null);
+          }}
+          style={{
+            width: "100%",
+            padding: "10px 12px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--surface)",
+            color: "var(--text-primary)",
+            marginBottom: 12,
+          }}
+        />
+        {!selected && !query && isPro && <MostFlaggedSection onSelect={(c, n) => setSelected({ code: c, name: n })} />}
+        {selected && !query ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+            <span style={{ fontWeight: 600, fontSize: "1.1em" }}>
+              {countryFlagEmoji(selected.code)} {selected.name}
+            </span>
+            <button type="button" onClick={() => setSelected(null)} style={{ color: "var(--accent)" }}>
+              Change
+            </button>
+          </div>
+        ) : tariffs.isLoading || coverage.isLoading ? (
+          <SkeletonList rows={6} height={32} />
+        ) : tariffs.isError || coverage.isError ? (
+          <ErrorView message="Could not load country list" />
+        ) : filtered.length === 0 ? (
+          <div style={{ color: "var(--text-muted)" }}>No matching country has BIS data</div>
+        ) : (
+          <div style={{ maxHeight: 320, overflowY: "auto" }}>
+            {filtered.map((c) => (
+              <div
+                key={c.countryCode}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setSelected({ code: c.countryCode, name: c.countryName });
+                  setQuery("");
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    setSelected({ code: c.countryCode, name: c.countryName });
+                    setQuery("");
+                  }
+                }}
+                style={{ padding: "8px 4px", cursor: "pointer", display: "flex", gap: 8, alignItems: "center" }}
+              >
+                <span>{countryFlagEmoji(c.countryCode)}</span>
+                <span>{c.countryName}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {selected && !query && <CountryHealthPanel code={selected.code} isPro={isPro} />}
+      </Card>
+    </div>
   );
 }

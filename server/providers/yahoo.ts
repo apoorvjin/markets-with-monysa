@@ -54,6 +54,34 @@ async function yfGet(url: string): Promise<unknown> {
   return promise;
 }
 
+// Yahoo occasionally serves the just-closed session's daily/weekly/monthly bar
+// with null OHLC for hours before its backfill job runs — even though the same
+// response's `meta` already carries that session's finalized quote. Without
+// this, the null bar gets filtered out and every consumer (chart, signal
+// entry price, backtest) silently falls back to the PRIOR day's close.
+// Reconstructs the bar in place from meta when its date matches.
+function patchFinalBarFromMeta(
+  bars: { open: number | null; high: number | null; low: number | null; close: number | null; volume: number | null }[],
+  lastTimestampSec: number | undefined,
+  meta: any,
+  isIntraday: boolean,
+): void {
+  if (isIntraday || bars.length === 0 || !meta || lastTimestampSec == null) return;
+  const last = bars[bars.length - 1];
+  if (last.close != null) return;
+  const price = meta.regularMarketPrice;
+  if (typeof price !== "number") return;
+  if (typeof meta.regularMarketTime !== "number") return;
+  const barDate  = new Date(lastTimestampSec * 1000).toISOString().split("T")[0];
+  const metaDate = new Date(meta.regularMarketTime * 1000).toISOString().split("T")[0];
+  if (barDate !== metaDate) return;
+  last.open   = last.open ?? meta.chartPreviousClose ?? price;
+  last.high   = Math.max(meta.regularMarketDayHigh ?? price, last.high ?? price);
+  last.low    = Math.min(meta.regularMarketDayLow ?? price, last.low ?? price);
+  last.close  = price;
+  last.volume = last.volume ?? meta.regularMarketVolume ?? null;
+}
+
 export const yahooProvider: ChartProvider = {
   name: "yahoo",
   label: "Yahoo Finance",
@@ -119,18 +147,20 @@ export const yahooProvider: ChartProvider = {
     const volumes = (quote.volume ?? []) as (number | null)[];
 
     const isIntraday = interval !== "1d" && interval !== "1wk" && interval !== "1mo";
-    return timestamps
-      .map((ts, i) => ({
-        time:   isIntraday
-          ? new Date(ts * 1000).toISOString()
-          : new Date(ts * 1000).toISOString().split("T")[0],
-        open:   opens[i]   as number,
-        high:   highs[i]   as number,
-        low:    lows[i]    as number,
-        close:  closes[i]  as number,
-        volume: volumes[i] ?? null,
-      }))
-      .filter(c => c.open != null && c.high != null && c.low != null && c.close != null);
+    const bars = timestamps.map((ts, i) => ({
+      time:   isIntraday
+        ? new Date(ts * 1000).toISOString()
+        : new Date(ts * 1000).toISOString().split("T")[0],
+      open:   opens[i]   as number | null,
+      high:   highs[i]   as number | null,
+      low:    lows[i]    as number | null,
+      close:  closes[i]  as number | null,
+      volume: volumes[i] ?? null,
+    }));
+    patchFinalBarFromMeta(bars, timestamps[timestamps.length - 1], result.meta, isIntraday);
+    return bars.filter(
+      c => c.open != null && c.high != null && c.low != null && c.close != null,
+    ) as OHLCVCandle[];
   },
 
   async fetchHistoryCandles(symbol: string, interval: string, range: string): Promise<OHLCVCandle[]> {
@@ -144,16 +174,19 @@ export const yahooProvider: ChartProvider = {
       const timestamps: number[] = result.timestamp ?? [];
       const quotes = result.indicators?.quote?.[0] ?? { open: [], high: [], low: [], close: [], volume: [] };
 
-      return timestamps
-        .map((t, i) => ({
-          time:   t,
-          open:   (quotes.open[i]   as number | null) ?? 0,
-          high:   (quotes.high[i]   as number | null) ?? 0,
-          low:    (quotes.low[i]    as number | null) ?? 0,
-          close:  (quotes.close[i]  as number | null) ?? 0,
-          volume: (quotes.volume[i] as number | null) ?? 0,
-        }))
-        .filter(c => c.open && c.high && c.low && c.close);
+      const isIntraday = interval !== "1d" && interval !== "1wk" && interval !== "1mo";
+      const bars = timestamps.map((t, i) => ({
+        time:   t,
+        open:   quotes.open[i]   as number | null,
+        high:   quotes.high[i]   as number | null,
+        low:    quotes.low[i]    as number | null,
+        close:  quotes.close[i]  as number | null,
+        volume: (quotes.volume[i] as number | null) ?? 0,
+      }));
+      patchFinalBarFromMeta(bars, timestamps[timestamps.length - 1], result.meta, isIntraday);
+      return bars.filter(
+        c => c.open != null && c.high != null && c.low != null && c.close != null,
+      ) as OHLCVCandle[];
     } catch {
       return [];
     }

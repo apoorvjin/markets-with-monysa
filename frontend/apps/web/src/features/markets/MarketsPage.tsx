@@ -9,6 +9,7 @@ import {
   type TreemapIndexParam,
   type TreemapTimeframe,
   type TreemapStock,
+  type CurrencyValuation,
 } from "@monysa/contracts";
 import { CanvasTreemap, tileColor } from "@monysa/charts";
 import {
@@ -708,8 +709,140 @@ function FuturesTab(props: { kind: "indices" | "commodities" | "forex" }) {
   if (isLoading || !data) return <SkeletonList rows={12} />;
   return (
     <>
+      {props.kind === "forex" && <CurrencyValuationStrip />}
       <FreshnessBar lastUpdated={data.lastUpdated} />
       <MarketTable items={data.items} kind={props.kind} />
+    </>
+  );
+}
+
+// ── Currency Valuation (FIN-21) ───────────────────────────────────────────────
+// REER-based "historically rich/cheap/neutral" context per currency — distinct
+// from the per-pair rows in MarketTable (REER is basket-relative, not
+// bilateral), so it's its own compact strip rather than a column on the table.
+// Free for everyone; valuation context, not a trading signal.
+
+function currencyFlagEmoji(countryCode: string): string {
+  return [...countryCode.toUpperCase()]
+    .map((c) => String.fromCodePoint(127397 + c.charCodeAt(0)))
+    .join("");
+}
+
+function CurrencyValuationStrip() {
+  const [selected, setSelected] = useState<CurrencyValuation | null>(null);
+  const { data } = useQuery({
+    queryKey: ["currency-valuation"],
+    queryFn: () => api.getCurrencyValuation(),
+    staleTime: 12 * 60 * 60_000, // REER updates monthly at the source
+  });
+
+  const available = (data?.currencies ?? []).filter((v) => v.available);
+  if (available.length === 0) return null;
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 8, overflowX: "auto", padding: "8px 0 12px" }}>
+        {available.map((v) => {
+          const tagColor =
+            v.tag === "Historically rich"
+              ? "var(--danger)"
+              : v.tag === "Historically cheap"
+                ? "var(--positive)"
+                : "var(--text-muted)";
+          return (
+            <button
+              key={v.code}
+              type="button"
+              onClick={() => setSelected(v)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "6px 10px",
+                borderRadius: 999,
+                border: "1px solid var(--border)",
+                background: "var(--surface)",
+                color: "var(--text-primary)",
+                whiteSpace: "nowrap",
+                flexShrink: 0,
+                cursor: "pointer",
+              }}
+            >
+              <span>{currencyFlagEmoji(v.flagCountryCode)}</span>
+              <span style={{ fontWeight: 700, fontSize: "0.85em" }}>{v.code}</span>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: tagColor }} />
+            </button>
+          );
+        })}
+      </div>
+      {selected && (
+        <div
+          role="dialog"
+          onClick={() => setSelected(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: "var(--surface)",
+              borderRadius: "16px 16px 0 0",
+              padding: 20,
+              width: "100%",
+              maxWidth: 480,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: "1.5em" }}>{currencyFlagEmoji(selected.flagCountryCode)}</span>
+              <strong style={{ fontSize: "1.1em" }}>
+                {selected.name} ({selected.code})
+              </strong>
+            </div>
+            <div style={{ color: "var(--text-muted)", fontSize: "0.85em" }}>
+              Real Effective Exchange Rate (REER)
+            </div>
+            <div style={{ fontSize: "1.4em", fontWeight: 700, margin: "2px 0 8px" }}>
+              {selected.value?.toFixed(2)} <span style={{ fontSize: "0.6em", fontWeight: 400 }}>(index, 2020=100)</span>
+            </div>
+            <div style={{ color: "var(--text-secondary)" }}>
+              {selected.deviation10y != null && selected.deviation10y >= 0 ? "+" : ""}
+              {selected.deviation10y?.toFixed(1)}% vs its own 10-year average — {selected.tag}
+            </div>
+            {selected.asOf && (
+              <div style={{ fontSize: "0.8em", color: "var(--text-faint, var(--text-muted))", marginTop: 4 }}>
+                as of {selected.asOf}
+              </div>
+            )}
+            <div
+              style={{
+                marginTop: 12,
+                padding: 10,
+                borderRadius: 8,
+                background: "color-mix(in srgb, var(--accent) 15%, transparent)",
+                color: "var(--accent)",
+                fontSize: "0.8em",
+              }}
+            >
+              REER is a valuation anchor, not a trading signal — a currency can stay "rich" or "cheap" for
+              years. Source: BIS (Bank for International Settlements).
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelected(null)}
+              style={{ marginTop: 12, width: "100%", padding: 10, color: "var(--text-muted)" }}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -6,9 +6,12 @@ import '../../core/theme/app_palette.dart';
 import '../../core/theme/app_typography.dart';
 import '../../core/theme/app_spacing.dart';
 import '../../data/models/market_item.dart';
+import '../../data/models/currency_valuation.dart';
+import '../../data/repositories/bis_repository.dart';
 import '../../data/repositories/markets_repository.dart';
 import '../../services/entitlement_service.dart';
 import '../../shared/widgets/app_bar_leading.dart';
+import '../../shared/widgets/app_shell_insets.dart';
 import '../../shared/widgets/chart_modal.dart';
 import '../../shared/widgets/chip_row.dart';
 import '../../shared/widgets/error_view.dart';
@@ -32,8 +35,12 @@ final _commoditiesProvider = FutureProvider<List<MarketItem>>(
 final _forexProvider = FutureProvider<List<MarketItem>>(
     (_) => MarketsRepository.instance.fetchForex());
 
-final _cotProvider = FutureProvider<CotData>(
-    (_) => MarketsRepository.instance.fetchCotData());
+// FIN-21 — free, server-cached ~12h (REER updates monthly at the source).
+final _currencyValuationProvider = FutureProvider<List<CurrencyValuation>>(
+    (_) => BisRepository.instance.fetchCurrencyValuation());
+
+final _cotProvider =
+    FutureProvider<CotData>((_) => MarketsRepository.instance.fetchCotData());
 
 final _cbRatesProvider = FutureProvider<Map<String, CbRateInfo>>(
     (_) => MarketsRepository.instance.fetchCentralBankRates());
@@ -90,7 +97,11 @@ class _MarketsScreenState extends ConsumerState<MarketsScreen>
             style: AppTypography.headingLg
                 .copyWith(color: c.textPrimary, fontWeight: FontWeight.w800)),
         backgroundColor: c.headerBg,
-        actions: const [_AboutButton(), MarketStatusButton(), NotificationBellButton()],
+        actions: const [
+          _AboutButton(),
+          MarketStatusButton(),
+          NotificationBellButton()
+        ],
         bottom: TabBar(
           controller: _tab,
           isScrollable: true,
@@ -257,8 +268,8 @@ class _SortBtn extends StatelessWidget {
                 : MainAxisAlignment.start,
         children: [
           Text(label,
-              style: AppTypography.labelXs.copyWith(
-                  color: active ? c.accent : c.textMuted)),
+              style: AppTypography.labelXs
+                  .copyWith(color: active ? c.accent : c.textMuted)),
           if (active)
             Icon(
               ascending ? Icons.arrow_upward : Icons.arrow_downward,
@@ -349,7 +360,8 @@ class _IndicesTabState extends ConsumerState<_IndicesTab> {
         final grouped = _sortBy == _MarketSort.relevance && _query.isEmpty;
         return Column(
           children: [
-            _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
+            _SearchField(
+                onChanged: (v) => setState(() => _query = v.toLowerCase())),
             _SortHeader(
               sortBy: _sortBy,
               ascending: _ascending,
@@ -437,8 +449,8 @@ class _IndexGroupSection extends StatelessWidget {
               ),
               const SizedBox(width: AppSpacing.s2),
               Text(label.toUpperCase(),
-                  style: AppTypography.labelSm.copyWith(
-                      color: c.textSecondary, letterSpacing: 0.4)),
+                  style: AppTypography.labelSm
+                      .copyWith(color: c.textSecondary, letterSpacing: 0.4)),
             ],
           ),
         ),
@@ -465,7 +477,10 @@ class _FlatIndexList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
-      padding: EdgeInsets.fromLTRB(AppSpacing.s4, AppSpacing.s3, AppSpacing.s4,
+      padding: EdgeInsets.fromLTRB(
+          AppSpacing.s4,
+          AppSpacing.s3,
+          AppSpacing.s4,
           MediaQuery.of(context).padding.bottom +
               MediaQuery.of(context).viewInsets.bottom +
               AppSpacing.s3),
@@ -520,7 +535,8 @@ class _IndexCard extends StatelessWidget {
                 color: c.surface,
                 borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              child: Text(item.flag ?? '', style: const TextStyle(fontSize: 18)),
+              child:
+                  Text(item.flag ?? '', style: const TextStyle(fontSize: 18)),
             ),
             const SizedBox(width: AppSpacing.s3),
             SizedBox(
@@ -530,7 +546,8 @@ class _IndexCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(item.name,
-                      style: AppTypography.labelLg.copyWith(color: c.textPrimary),
+                      style:
+                          AppTypography.labelLg.copyWith(color: c.textPrimary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
@@ -561,7 +578,8 @@ class _IndexCard extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(_formatPrice(item.price, null),
-                      style: AppTypography.numericLg.copyWith(color: c.textPrimary)),
+                      style: AppTypography.numericLg
+                          .copyWith(color: c.textPrimary)),
                   const SizedBox(height: 5),
                   Container(
                     padding:
@@ -639,7 +657,8 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
         final sorted = _sortItems(filtered, _sortBy, _ascending);
         return Column(
           children: [
-            _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
+            _SearchField(
+                onChanged: (v) => setState(() => _query = v.toLowerCase())),
             _SortHeader(
               sortBy: _sortBy,
               ascending: _ascending,
@@ -647,7 +666,8 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
               assetLabel: 'COMMODITY',
             ),
             if (repo.isCommoditiesStale)
-              _StaleBanner(onRefresh: () => ref.invalidate(_commoditiesProvider))
+              _StaleBanner(
+                  onRefresh: () => ref.invalidate(_commoditiesProvider))
             else if (repo.commoditiesLastUpdated != null)
               FreshnessBar(lastUpdated: repo.commoditiesLastUpdated!),
             Expanded(
@@ -659,17 +679,18 @@ class _CommoditiesTabState extends ConsumerState<_CommoditiesTab> {
                       onRefresh: () => ref.refresh(_commoditiesProvider.future),
                       child: ListView.builder(
                         padding: EdgeInsets.fromLTRB(
-                            AppSpacing.s4, AppSpacing.s3, AppSpacing.s4,
+                            AppSpacing.s4,
+                            AppSpacing.s3,
+                            AppSpacing.s4,
                             MediaQuery.of(context).padding.bottom +
                                 MediaQuery.of(context).viewInsets.bottom +
                                 AppSpacing.s3),
                         itemCount: sorted.length,
                         itemBuilder: (ctx, i) => Padding(
-                              padding: const EdgeInsets.only(bottom: AppSpacing.s2),
-                              child: _IndexCard(
-                                  key: ValueKey(sorted[i].symbol),
-                                  item: sorted[i]),
-                            ),
+                          padding: const EdgeInsets.only(bottom: AppSpacing.s2),
+                          child: _IndexCard(
+                              key: ValueKey(sorted[i].symbol), item: sorted[i]),
+                        ),
                       ),
                     ),
             ),
@@ -730,7 +751,9 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
         final repo = MarketsRepository.instance;
         return Column(
           children: [
-            _SearchField(onChanged: (v) => setState(() => _query = v.toLowerCase())),
+            const _CurrencyValuationStrip(),
+            _SearchField(
+                onChanged: (v) => setState(() => _query = v.toLowerCase())),
             _SortHeader(
               sortBy: _sortBy,
               ascending: _ascending,
@@ -744,66 +767,233 @@ class _ForexTabState extends ConsumerState<_ForexTab> {
               child: filtered.isEmpty && _query.isNotEmpty
                   ? _NoSearchResults(query: _query)
                   : RefreshIndicator(
-                color: c.accent,
-                backgroundColor: c.surface,
-                onRefresh: () => ref.refresh(_forexProvider.future),
-                child: _query.isEmpty
-                    ? ListView(
-                        padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).padding.bottom +
-                                MediaQuery.of(context).viewInsets.bottom +
-                                AppSpacing.s3),
-                        children: (() {
-                          final grouped = <String, List<MarketItem>>{};
-                          for (final item in items) {
-                            (grouped[item.category ?? 'Other'] ??= []).add(item);
-                          }
-                          // Sort within each group
-                          for (final key in grouped.keys) {
-                            grouped[key] = _sortItems(grouped[key]!, _sortBy, _ascending);
-                          }
-                          var revealed = false;
-                          return grouped.entries.expand((entry) => [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                  AppSpacing.s5, AppSpacing.s5, AppSpacing.s5, AppSpacing.s2),
-                              child: Text(
-                                entry.key.toUpperCase(),
-                                style: AppTypography.labelSm
-                                    .copyWith(color: c.textMuted, letterSpacing: 1.2),
-                              ),
-                            ),
-                            ...entry.value.map((item) {
-                              final reveal = !revealed;
-                              revealed = true;
-                              return _MarketRow(
-                                  key: ValueKey(item.symbol),
-                                  item: item,
+                      color: c.accent,
+                      backgroundColor: c.surface,
+                      onRefresh: () => ref.refresh(_forexProvider.future),
+                      child: _query.isEmpty
+                          ? ListView(
+                              padding: EdgeInsets.only(
+                                  bottom: MediaQuery.of(context)
+                                          .padding
+                                          .bottom +
+                                      MediaQuery.of(context).viewInsets.bottom +
+                                      AppSpacing.s3),
+                              children: (() {
+                                final grouped = <String, List<MarketItem>>{};
+                                for (final item in items) {
+                                  (grouped[item.category ?? 'Other'] ??= [])
+                                      .add(item);
+                                }
+                                // Sort within each group
+                                for (final key in grouped.keys) {
+                                  grouped[key] = _sortItems(
+                                      grouped[key]!, _sortBy, _ascending);
+                                }
+                                var revealed = false;
+                                return grouped.entries
+                                    .expand((entry) => [
+                                          Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                                AppSpacing.s5,
+                                                AppSpacing.s5,
+                                                AppSpacing.s5,
+                                                AppSpacing.s2),
+                                            child: Text(
+                                              entry.key.toUpperCase(),
+                                              style: AppTypography.labelSm
+                                                  .copyWith(
+                                                      color: c.textMuted,
+                                                      letterSpacing: 1.2),
+                                            ),
+                                          ),
+                                          ...entry.value.map((item) {
+                                            final reveal = !revealed;
+                                            revealed = true;
+                                            return _MarketRow(
+                                                key: ValueKey(item.symbol),
+                                                item: item,
+                                                isForex: true,
+                                                revealFxLabel: reveal);
+                                          }),
+                                        ])
+                                    .toList();
+                              })(),
+                            )
+                          : ListView.builder(
+                              padding: EdgeInsets.only(
+                                  bottom: MediaQuery.of(context)
+                                          .padding
+                                          .bottom +
+                                      MediaQuery.of(context).viewInsets.bottom +
+                                      AppSpacing.s3),
+                              itemCount: sorted.length,
+                              itemBuilder: (ctx, i) => _MarketRow(
+                                  key: ValueKey(sorted[i].symbol),
+                                  item: sorted[i],
                                   isForex: true,
-                                  revealFxLabel: reveal);
-                            }),
-                          ]).toList();
-                        })(),
-                      )
-                    : ListView.builder(
-                        padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).padding.bottom +
-                                MediaQuery.of(context).viewInsets.bottom +
-                                AppSpacing.s3),
-                        itemCount: sorted.length,
-                        itemBuilder: (ctx, i) => _MarketRow(
-                              key: ValueKey(sorted[i].symbol),
-                              item: sorted[i],
-                              isForex: true,
-                              revealFxLabel: i == 0),
-                      ),
-              ),
+                                  revealFxLabel: i == 0),
+                            ),
+                    ),
             ),
           ],
         );
       },
     );
   }
+}
+
+// ── Currency Valuation (FIN-21) ───────────────────────────────────────────────
+// REER-based "historically rich/cheap/neutral" context per currency — distinct
+// from the per-pair rows below (REER is basket-relative, not bilateral), so it
+// gets its own compact horizontal strip rather than a row-per-currency list.
+// Free for everyone; not a trading signal — see the scoping discussion this
+// was built from (valuation context, multi-year mean-reversion, not a timing tool).
+
+class _CurrencyValuationStrip extends ConsumerWidget {
+  const _CurrencyValuationStrip();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final async = ref.watch(_currencyValuationProvider);
+    return async.when(
+      loading: () => const SizedBox(height: 44),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (currencies) {
+        final available = currencies.where((v) => v.available).toList();
+        if (available.isEmpty) return const SizedBox.shrink();
+        return Container(
+          height: 52,
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.s2),
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.s5),
+            itemCount: available.length,
+            separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.s2),
+            itemBuilder: (ctx, i) {
+              final v = available[i];
+              final tagColor = v.tag == 'Historically rich'
+                  ? c.danger
+                  : v.tag == 'Historically cheap'
+                      ? c.positive
+                      : c.textMuted;
+              return GestureDetector(
+                onTap: () => _showCurrencyValuationSheet(context, v),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.s3, vertical: AppSpacing.s2),
+                  decoration: BoxDecoration(
+                    color: c.surfaceCard,
+                    borderRadius: BorderRadius.circular(AppRadius.full),
+                    border: Border.all(color: c.border),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(v.flag, style: const TextStyle(fontSize: 14)),
+                      const SizedBox(width: 6),
+                      Text(v.code,
+                          style: AppTypography.labelSm.copyWith(
+                              color: c.textPrimary,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(width: 6),
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                            color: tagColor, shape: BoxShape.circle),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+void _showCurrencyValuationSheet(BuildContext context, CurrencyValuation v) {
+  showAppBottomSheet(
+    context: context,
+    builder: (sheetContext) {
+      final c = sheetContext.colors;
+      // showAppBottomSheet sets the modal's own Material background to
+      // transparent (so its rounded corners paint cleanly, no rectangular
+      // flash) — the content is responsible for its own opaque surface.
+      // Forgetting this Container here was the bug: the sheet rendered
+      // see-through, straight over the Forex list underneath it.
+      return Container(
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
+        ),
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(AppSpacing.s5, AppSpacing.s5,
+              AppSpacing.s5, AppSpacing.s5 + appShellBottomInset(sheetContext)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: AppSpacing.s4),
+                  decoration: BoxDecoration(
+                      color: c.border, borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              Row(
+                children: [
+                  Text(v.flag, style: const TextStyle(fontSize: 24)),
+                  const SizedBox(width: AppSpacing.s3),
+                  Expanded(
+                    child: Text('${v.name} (${v.code})',
+                        style: AppTypography.headingMd
+                            .copyWith(color: c.textPrimary)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.s4),
+              Text('Real Effective Exchange Rate (REER)',
+                  style: AppTypography.labelSm.copyWith(color: c.textMuted)),
+              const SizedBox(height: 2),
+              Text('${v.value?.toStringAsFixed(2)} (index, 2020=100)',
+                  style:
+                      AppTypography.numericXl.copyWith(color: c.textPrimary)),
+              const SizedBox(height: AppSpacing.s3),
+              Text(
+                '${v.deviation10y != null && v.deviation10y! >= 0 ? "+" : ""}${v.deviation10y?.toStringAsFixed(1)}% vs its own 10-year average — ${v.tag}',
+                style: AppTypography.sm.copyWith(color: c.textSecondary),
+              ),
+              if (v.asOf != null) ...[
+                const SizedBox(height: 4),
+                Text('as of ${v.asOf}',
+                    style: AppTypography.xs.copyWith(color: c.textFaint)),
+              ],
+              const SizedBox(height: AppSpacing.s4),
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.s3),
+                decoration: BoxDecoration(
+                  color: c.accent.withAlpha(20),
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: Text(
+                  'REER is a valuation anchor, not a trading signal — a currency can stay '
+                  '"rich" or "cheap" for years. Source: BIS (Bank for International Settlements).',
+                  style: AppTypography.xs.copyWith(color: c.accent),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
 }
 
 // ── Market Row ────────────────────────────────────────────────────────────────
@@ -817,6 +1007,7 @@ class _MarketRow extends StatefulWidget {
   });
   final MarketItem item;
   final bool isForex;
+
   /// When true, shows the FX rate-comparison label unblurred even for free
   /// users — exactly one row (the first rendered) is always free.
   final bool revealFxLabel;
@@ -837,9 +1028,8 @@ class _MarketRowState extends State<_MarketRow> {
     if (oldPrice != null && newPrice != null && oldPrice != newPrice) {
       final c = context.colors;
       final isUp = newPrice > oldPrice;
-      setState(() => _flashColor = isUp
-          ? c.positive.withAlpha(36)
-          : c.danger.withAlpha(36));
+      setState(() => _flashColor =
+          isUp ? c.positive.withAlpha(36) : c.danger.withAlpha(36));
       Future.delayed(const Duration(milliseconds: 700), () {
         if (mounted) setState(() => _flashColor = null);
       });
@@ -853,9 +1043,8 @@ class _MarketRowState extends State<_MarketRow> {
     final pct = item.changePercent;
     final isUp = (pct ?? 0) >= 0;
     final pctColor = isUp ? c.positive : c.danger;
-    final pctStr = pct == null
-        ? '--'
-        : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
+    final pctStr =
+        pct == null ? '--' : '${isUp ? '+' : ''}${pct.toStringAsFixed(2)}%';
 
     return InkWell(
       onTap: () {
@@ -878,8 +1067,8 @@ class _MarketRowState extends State<_MarketRow> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(item.name,
-                      style: AppTypography.labelLg
-                          .copyWith(color: c.textPrimary),
+                      style:
+                          AppTypography.labelLg.copyWith(color: c.textPrimary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 2),
@@ -888,8 +1077,7 @@ class _MarketRowState extends State<_MarketRow> {
                   if (widget.isForex) ...[
                     const SizedBox(height: 2),
                     _FxDifferential(
-                        symbol: item.symbol,
-                        forceReveal: widget.revealFxLabel),
+                        symbol: item.symbol, forceReveal: widget.revealFxLabel),
                   ],
                 ],
               ),
@@ -904,7 +1092,8 @@ class _MarketRowState extends State<_MarketRow> {
                   child: Text(
                     _formatPrice(item.price, item.unit),
                     key: ValueKey(item.price),
-                    style: AppTypography.numericLg.copyWith(color: c.textPrimary),
+                    style:
+                        AppTypography.numericLg.copyWith(color: c.textPrimary),
                   ),
                 ),
               ),
@@ -921,8 +1110,8 @@ class _MarketRowState extends State<_MarketRow> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(pctStr,
-                    style: AppTypography.sm.copyWith(
-                        color: pctColor, fontWeight: FontWeight.w600),
+                    style: AppTypography.sm
+                        .copyWith(color: pctColor, fontWeight: FontWeight.w600),
                     textAlign: TextAlign.center),
               ),
             ),
@@ -1015,26 +1204,31 @@ class _CotCard extends StatelessWidget {
           Row(
             children: [
               Text('${metal.emoji} ${metal.name}',
-                  style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                  style:
+                      AppTypography.headingSm.copyWith(color: c.textPrimary)),
               const Spacer(),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: sentimentColor.withAlpha(30),
                       borderRadius: BorderRadius.circular(AppRadius.full),
                     ),
                     child: Text(metal.sentiment,
-                        style: AppTypography.sm
-                            .copyWith(color: sentimentColor, fontWeight: FontWeight.w600)),
+                        style: AppTypography.sm.copyWith(
+                            color: sentimentColor,
+                            fontWeight: FontWeight.w600)),
                   ),
                   if (metal.usdBias != null) ...[
                     const SizedBox(height: 3),
                     Text(metal.usdBias!,
                         style: AppTypography.xs.copyWith(
-                            color: metal.netPosition >= 0 ? c.positive : c.danger)),
+                            color: metal.netPosition >= 0
+                                ? c.positive
+                                : c.danger)),
                   ],
                 ],
               ),
@@ -1046,10 +1240,15 @@ class _CotCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _Stat('Long', '${metal.longContracts.toStringAsFixed(0)}', c.positive, c),
-              _Stat('Short', '${metal.shortContracts.toStringAsFixed(0)}', c.danger, c),
-              _Stat('Net', '${metal.netPosition > 0 ? '+' : ''}${metal.netPosition}',
-                  metal.netPosition >= 0 ? c.positive : c.danger, c),
+              _Stat('Long', '${metal.longContracts.toStringAsFixed(0)}',
+                  c.positive, c),
+              _Stat('Short', '${metal.shortContracts.toStringAsFixed(0)}',
+                  c.danger, c),
+              _Stat(
+                  'Net',
+                  '${metal.netPosition > 0 ? '+' : ''}${metal.netPosition}',
+                  metal.netPosition >= 0 ? c.positive : c.danger,
+                  c),
             ],
           ),
         ],
@@ -1083,8 +1282,10 @@ class _RegionalFlowCard extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: Text('${group.flag ?? ''} ${group.region} — ${group.market}',
-                    style: AppTypography.headingSm.copyWith(color: c.textPrimary)),
+                child: Text(
+                    '${group.flag ?? ''} ${group.region} — ${group.market}',
+                    style:
+                        AppTypography.headingSm.copyWith(color: c.textPrimary)),
               ),
               if (group.date != null)
                 Text(group.date!,
@@ -1103,17 +1304,21 @@ class _RegionalFlowCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(item.label,
-                              style: AppTypography.sm.copyWith(color: c.textPrimary)),
+                              style: AppTypography.sm
+                                  .copyWith(color: c.textPrimary)),
                           Text('(${item.category})',
-                              style: AppTypography.xs.copyWith(color: c.textMuted)),
+                              style: AppTypography.xs
+                                  .copyWith(color: c.textMuted)),
                         ],
                       ),
                     ),
                     Expanded(
-                      child: _Stat('Buy', item.buyValue.toStringAsFixed(2), c.positive, c),
+                      child: _Stat('Buy', item.buyValue.toStringAsFixed(2),
+                          c.positive, c),
                     ),
                     Expanded(
-                      child: _Stat('Sell', item.sellValue.toStringAsFixed(2), c.danger, c),
+                      child: _Stat('Sell', item.sellValue.toStringAsFixed(2),
+                          c.danger, c),
                     ),
                     Expanded(
                       child: _Stat(
@@ -1194,7 +1399,8 @@ class _Stat extends StatelessWidget {
       children: [
         Text(label, style: AppTypography.xs.copyWith(color: palette.textMuted)),
         Text(value,
-            style: AppTypography.sm.copyWith(color: color, fontWeight: FontWeight.w600)),
+            style: AppTypography.sm
+                .copyWith(color: color, fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -1253,7 +1459,14 @@ class _FxDifferential extends ConsumerWidget {
 
 // ── CFTC Positions Tab ────────────────────────────────────────────────────────
 
-enum _CotCategory { metals, energy, agriculture, currencies, indices, regionalFlows }
+enum _CotCategory {
+  metals,
+  energy,
+  agriculture,
+  currencies,
+  indices,
+  regionalFlows
+}
 
 class _CftcTab extends ConsumerStatefulWidget {
   const _CftcTab();
@@ -1266,11 +1479,11 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
   _CotCategory _category = _CotCategory.metals;
 
   static const _chips = [
-    (_CotCategory.metals,        'Metals'),
-    (_CotCategory.energy,        'Energy'),
-    (_CotCategory.indices,       'Indices & Rates'),
-    (_CotCategory.agriculture,   'Agriculture'),
-    (_CotCategory.currencies,    'Currencies'),
+    (_CotCategory.metals, 'Metals'),
+    (_CotCategory.energy, 'Energy'),
+    (_CotCategory.indices, 'Indices & Rates'),
+    (_CotCategory.agriculture, 'Agriculture'),
+    (_CotCategory.currencies, 'Currencies'),
     (_CotCategory.regionalFlows, 'Regional Flows'),
   ];
 
@@ -1287,11 +1500,11 @@ class _CftcTabState extends ConsumerState<_CftcTab> {
       data: (cot) {
         final isRegionalFlows = _category == _CotCategory.regionalFlows;
         final items = switch (_category) {
-          _CotCategory.metals        => cot.metals,
-          _CotCategory.energy        => cot.energy,
-          _CotCategory.agriculture   => cot.agriculture,
-          _CotCategory.currencies    => cot.currencies,
-          _CotCategory.indices       => cot.indicesRates,
+          _CotCategory.metals => cot.metals,
+          _CotCategory.energy => cot.energy,
+          _CotCategory.agriculture => cot.agriculture,
+          _CotCategory.currencies => cot.currencies,
+          _CotCategory.indices => cot.indicesRates,
           _CotCategory.regionalFlows => const <CotMetal>[],
         };
 
@@ -1431,13 +1644,13 @@ void _showAbout(BuildContext context) {
       return Container(
         decoration: BoxDecoration(
           color: c.surface,
-          borderRadius: const BorderRadius.vertical(
-              top: Radius.circular(AppRadius.lg)),
+          borderRadius:
+              const BorderRadius.vertical(top: Radius.circular(AppRadius.lg)),
         ),
         child: SafeArea(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(
-              AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s5),
+                AppSpacing.s5, AppSpacing.s4, AppSpacing.s5, AppSpacing.s5),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1453,9 +1666,11 @@ void _showAbout(BuildContext context) {
                 ),
                 const SizedBox(height: AppSpacing.s5),
                 Text('FinBrio — Market Intelligence',
-                    style: AppTypography.headingMd.copyWith(color: c.textPrimary)),
+                    style:
+                        AppTypography.headingMd.copyWith(color: c.textPrimary)),
                 const SizedBox(height: AppSpacing.s2),
-                Text('Real-time tariff exposure, global markets, and AI trading signals.',
+                Text(
+                    'Real-time tariff exposure, global markets, and AI trading signals.',
                     style: AppTypography.sm.copyWith(color: c.textSecondary)),
                 const SizedBox(height: AppSpacing.s5),
                 Text('DATA SOURCES',

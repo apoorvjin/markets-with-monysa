@@ -1143,9 +1143,45 @@ export function registerMarketsRoutes(app: Express): void {
   });
 
   // ── Central Bank Policy Rates ──────────────────────────────────────────────
-  // Rates are maintained server-side so they can be updated without an app
-  // release. The lastUpdated timestamp lets clients detect when rates changed.
-  const CB_RATES: Record<string, { label: string; rate: number }> = {
+  // Live-sourced from the BIS (Bank for International Settlements) "Central
+  // bank policy rates" dataflow (WS_CBPOL) — one free, keyless SDMX API
+  // covering ~40 monetary authorities. Verified live:
+  // https://stats.bis.org/api/v1/data/WS_CBPOL/D/all?format=csv&lastNObservations=1
+  // Every currency below is covered except SGD — the Monetary Authority of
+  // Singapore doesn't target a policy rate (it manages an FX band instead),
+  // so BIS has no series for it; SGD always comes from the hand-maintained
+  // fallback map below, which also acts as the whole-response fallback if
+  // BIS itself is ever unreachable.
+  const BIS_CBPOL_URL =
+    "https://stats.bis.org/api/v1/data/WS_CBPOL/D/all?format=csv&lastNObservations=1";
+
+  // BIS REF_AREA -> currency code + display label (labels kept identical to
+  // the prior hardcoded map so no UI copy changes).
+  const CB_REF_AREA: Record<string, { currency: string; label: string }> = {
+    US: { currency: "USD", label: "Fed" },
+    XM: { currency: "EUR", label: "ECB" },
+    GB: { currency: "GBP", label: "BoE" },
+    JP: { currency: "JPY", label: "BoJ" },
+    CH: { currency: "CHF", label: "SNB" },
+    AU: { currency: "AUD", label: "RBA" },
+    NZ: { currency: "NZD", label: "RBNZ" },
+    CA: { currency: "CAD", label: "BoC" },
+    SE: { currency: "SEK", label: "Riksbank" },
+    NO: { currency: "NOK", label: "Norges" },
+    DK: { currency: "DKK", label: "DN" },
+    CN: { currency: "CNY", label: "PBoC" },
+    HK: { currency: "HKD", label: "HKMA" },
+    KR: { currency: "KRW", label: "BoK" },
+    MX: { currency: "MXN", label: "Banxico" },
+    BR: { currency: "BRL", label: "BCB" },
+    IN: { currency: "INR", label: "RBI" },
+    ZA: { currency: "ZAR", label: "SARB" },
+    TR: { currency: "TRY", label: "CBRT" },
+  };
+
+  // Last-resort fallback: used for SGD always (not in BIS), and for every
+  // currency if the BIS fetch fails outright and no prior live cache exists.
+  const CB_RATES_FALLBACK: Record<string, { label: string; rate: number }> = {
     USD: { label: "Fed",   rate: 4.33 },
     EUR: { label: "ECB",   rate: 2.40 },
     GBP: { label: "BoE",   rate: 4.25 },
@@ -1167,17 +1203,104 @@ export function registerMarketsRoutes(app: Express): void {
     ZAR: { label: "SARB",  rate: 7.50 },
     TRY: { label: "CBRT",  rate: 42.50 },
   };
+  const CB_RATES_FALLBACK_DATE = "2026-05-23T00:00:00.000Z";
 
-  // Rates change infrequently — 6 hour client cache is safe.
-  const CB_LAST_UPDATED = "2026-05-23T00:00:00.000Z";
+  // Minimal RFC-4180 CSV line parser — handles quoted fields with embedded
+  // commas (BIS's free-text COMPILATION/TITLE columns contain them). Kept
+  // file-local, same convention as heatmap.ts's parseCsvLine / oge.ts's
+  // splitCsvLine — no shared csv-utils module exists in this codebase.
+  function parseCbCsvLine(line: string): string[] {
+    const out: string[] = [];
+    let cur = "";
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQ) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') inQ = false;
+        else cur += ch;
+      } else {
+        if (ch === ",") { out.push(cur); cur = ""; }
+        else if (ch === '"') inQ = true;
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out;
+  }
 
-  app.get("/api/central-bank-rates", (_req, res) => {
-    // Editorial data, refreshes on deploy — long edge TTL is safe.
+  async function fetchLiveCentralBankRates(): Promise<
+    { rates: Record<string, { label: string; rate: number }>; lastUpdated: string } | null
+  > {
+    try {
+      const res = await fetch(BIS_CBPOL_URL, { headers: { "User-Agent": "Mozilla/5.0" } });
+      if (!res.ok) return null;
+      const text = await res.text();
+      const lines = text.trim().split("\n");
+      if (lines.length < 2) return null;
+
+      const header = parseCbCsvLine(lines[0]!);
+      const refAreaIdx = header.indexOf("REF_AREA");
+      const periodIdx = header.indexOf("TIME_PERIOD");
+      const valueIdx = header.indexOf("OBS_VALUE");
+      if (refAreaIdx < 0 || periodIdx < 0 || valueIdx < 0) return null;
+
+      const rates: Record<string, { label: string; rate: number }> = { ...CB_RATES_FALLBACK };
+      let latestPeriod = "";
+      for (const line of lines.slice(1)) {
+        if (!line.trim()) continue;
+        const cols = parseCbCsvLine(line);
+        const meta = CB_REF_AREA[cols[refAreaIdx] ?? ""];
+        if (!meta) continue; // a BIS country we don't display (e.g. AR, BE, CL...)
+        const rate = parseFloat(cols[valueIdx] ?? "");
+        if (!Number.isFinite(rate)) continue;
+        rates[meta.currency] = { label: meta.label, rate };
+        const period = cols[periodIdx] ?? "";
+        if (period > latestPeriod) latestPeriod = period;
+      }
+      // Sanity floor: require at least the two most-watched majors before
+      // trusting this fetch, so a truncated/garbled response can't silently
+      // blank out well-known rates.
+      if (!rates.USD || !rates.EUR) return null;
+      return {
+        rates,
+        lastUpdated: latestPeriod ? `${latestPeriod}T00:00:00.000Z` : new Date().toISOString(),
+      };
+    } catch (e) {
+      console.error("[central-bank-rates] BIS fetch failed:", e);
+      return null;
+    }
+  }
+
+  let cbRatesCache: {
+    data: { rates: Record<string, { label: string; rate: number }>; lastUpdated: string };
+    timestamp: number;
+  } | null = null;
+  const CB_RATES_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24h — policy rates move on scheduled meeting dates, not intraday
+
+  app.get("/api/central-bank-rates", async (_req, res) => {
     res.set("Cache-Control", "public, max-age=21600, stale-while-revalidate=43200"); // 6h / 12h SWR
+
+    if (cbRatesCache && Date.now() - cbRatesCache.timestamp < CB_RATES_CACHE_DURATION) {
+      return res.json({ ...cbRatesCache.data, source: "BIS central bank policy rates (stats.bis.org)" });
+    }
+
+    const live = await fetchLiveCentralBankRates();
+    if (live) {
+      cbRatesCache = { data: live, timestamp: Date.now() };
+      return res.json({ ...live, source: "BIS central bank policy rates (stats.bis.org)" });
+    }
+
+    // BIS unreachable this cycle — prefer the last good live cache (even
+    // stale) over the static map; only fall all the way back if we've never
+    // had a successful live fetch since boot.
+    if (cbRatesCache) {
+      return res.json({ ...cbRatesCache.data, source: "BIS central bank policy rates (stats.bis.org, cached)" });
+    }
     res.json({
-      rates: CB_RATES,
-      lastUpdated: CB_LAST_UPDATED,
-      source: "Central bank official policy rates",
+      rates: CB_RATES_FALLBACK,
+      lastUpdated: CB_RATES_FALLBACK_DATE,
+      source: "Central bank official policy rates (fallback — BIS unreachable)",
     });
   });
 }

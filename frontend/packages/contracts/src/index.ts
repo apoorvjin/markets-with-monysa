@@ -14,3 +14,4 @@ export * from "./auth";
 export * from "./datacenters";
 export * from "./maritime";
 export * from "./session-status";
+export * from "./bis";

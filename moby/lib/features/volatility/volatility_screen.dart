@@ -29,6 +29,7 @@ import '../../shared/widgets/upgrade_sheet.dart';
 import '../usa_debt/usa_debt_screen.dart';
 import 'adv_correlation_tab.dart';
 import 'correlation_tab.dart';
+import 'country_health_tab.dart';
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
@@ -140,7 +141,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
   @override
   void initState() {
     super.initState();
-    _tab = TabController(length: 6, vsync: this);
+    _tab = TabController(length: 7, vsync: this);
   }
 
   @override
@@ -190,6 +191,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
             Tab(text: 'Economic Calendar'),
             Tab(text: 'Crisis'),
             Tab(text: 'US Debt'),
+            Tab(text: 'Country Health'),
           ],
         ),
       ),
@@ -202,6 +204,7 @@ class _MacroScreenState extends ConsumerState<MacroScreen>
           _MacroCalendarTab(),
           _MacroCrisisTab(),
           _MacroDebtTab(),
+          CountryHealthTab(),
         ],
       ),
     );

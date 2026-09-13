@@ -41,6 +41,10 @@ import {
   SectorsResponse,
   SplcGraphResponse,
   SplcUniverseResponse,
+  CountryHealthResponse,
+  CountryHealthRankingResponse,
+  BisCoverageResponse,
+  CurrencyValuationResponse,
   TariffsResponse,
   TradingSignal,
   TreemapResponse,
@@ -298,6 +302,20 @@ export function createApiClient(opts: ApiClientOptions) {
       get("/api/splc/universe", SplcUniverseResponse, { revalidate: true }),
     getSplcGraph: (symbol: string) =>
       get(`/api/splc/${encodeURIComponent(symbol)}`, SplcGraphResponse, { revalidate: true }),
+
+    getBisCoverage: () =>
+      get("/api/macro/country-health/coverage", BisCoverageResponse),
+    // Server 403s for non-Pro devices — callers must check useIsPro() before
+    // calling this (see CountryHealthTab), same as the AI Macro Briefing
+    // pattern, so a locked feature never fires a request that's guaranteed
+    // to fail.
+    getCountryHealth: (code: string) =>
+      get(`/api/macro/country-health/${encodeURIComponent(code)}`, CountryHealthResponse),
+    // Pro-gated server-side — same caller obligation as getCountryHealth.
+    getCountryHealthRanking: () =>
+      get("/api/macro/country-health/ranking", CountryHealthRankingResponse),
+    getCurrencyValuation: () =>
+      get("/api/macro/currency-valuation", CurrencyValuationResponse),
 
     // ── Wire (News/OSINT & gov-feed terminal) ───────────────────────────
     getWireDesks: () => get("/api/wire/desks", WireDesksResponse),
